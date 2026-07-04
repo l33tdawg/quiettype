@@ -1,0 +1,239 @@
+{
+  "schema_version": 1,
+  "description": "Evaluation fixtures for an offline, privacy-first macOS dictation assistant semantic editor and correction pipeline.",
+  "cases": [
+    {
+      "id": "slack-standup-correction-thursday-to-friday",
+      "context": {
+        "app": "Slack",
+        "surface": "team_channel",
+        "audience": "coworkers",
+        "style": "concise",
+        "privacy": "offline_only"
+      },
+      "input": {
+        "raw_transcript": "update for the release thread colon I can ship the SAGE CometBFT integration by Thursday correction Friday if Ollama smoke tests pass",
+        "selected_text": "",
+        "cursor_context": "Team is coordinating a release in a Slack channel."
+      },
+      "expected": {
+        "edited_text": "Update for the release thread: I can ship the SAGE CometBFT integration by Friday if Ollama smoke tests pass.",
+        "corrections": [
+          {
+            "from": "Thursday",
+            "to": "Friday",
+            "reason": "Explicit spoken correction overrides the earlier date."
+          }
+        ],
+        "preserve_terms": [
+          "SAGE",
+          "CometBFT",
+          "Ollama"
+        ]
+      },
+      "assertions": {
+        "must_include": [
+          "Friday",
+          "SAGE",
+          "CometBFT",
+          "Ollama"
+        ],
+        "must_not_include": [
+          "Thursday"
+        ],
+        "format": "single_sentence"
+      }
+    },
+    {
+      "id": "email-polished-meeting-followup",
+      "context": {
+        "app": "Mail",
+        "surface": "email_body",
+        "audience": "external_partner",
+        "style": "polished",
+        "privacy": "offline_only"
+      },
+      "input": {
+        "raw_transcript": "hi maya comma thanks for meeting today period please send the Utimaco quote and the CSe100 data sheet before Friday period I will review the Ed25519 signing requirements after that period best comma lee",
+        "selected_text": "",
+        "cursor_context": "Composing a follow-up email to a hardware security partner."
+      },
+      "expected": {
+        "edited_text": "Hi Maya,\n\nThanks for meeting today. Please send the Utimaco quote and the CSe100 data sheet before Friday. I will review the Ed25519 signing requirements after that.\n\nBest,\nLee",
+        "corrections": [],
+        "preserve_terms": [
+          "Utimaco",
+          "CSe100",
+          "Ed25519"
+        ]
+      },
+      "assertions": {
+        "must_include": [
+          "Utimaco",
+          "CSe100",
+          "Ed25519",
+          "Best,\nLee"
+        ],
+        "must_not_include": [
+          "utimaco",
+          "cse one hundred",
+          "ed two five five one nine"
+        ],
+        "format": "email"
+      }
+    },
+    {
+      "id": "notes-shopping-list-formatting",
+      "context": {
+        "app": "Notes",
+        "surface": "note_body",
+        "audience": "self",
+        "style": "structured_list",
+        "privacy": "offline_only"
+      },
+      "input": {
+        "raw_transcript": "shopping list new line eggs new line oat milk new line coffee beans new line apples new line and toothpaste",
+        "selected_text": "",
+        "cursor_context": "Creating a quick personal shopping list in Apple Notes."
+      },
+      "expected": {
+        "edited_text": "Shopping list:\n- Eggs\n- Oat milk\n- Coffee beans\n- Apples\n- Toothpaste",
+        "corrections": [],
+        "preserve_terms": []
+      },
+      "assertions": {
+        "must_include": [
+          "Shopping list:",
+          "- Eggs",
+          "- Oat milk",
+          "- Coffee beans",
+          "- Apples",
+          "- Toothpaste"
+        ],
+        "must_not_include": [
+          "new line"
+        ],
+        "format": "markdown_bullets"
+      }
+    },
+    {
+      "id": "code-editor-comment-vocabulary-preservation",
+      "context": {
+        "app": "CodeEditor",
+        "surface": "source_comment",
+        "audience": "engineers",
+        "style": "technical",
+        "privacy": "offline_only",
+        "language": "swift"
+      },
+      "input": {
+        "raw_transcript": "slash slash todo colon keep SAGE replay deterministic while CometBFT is offline and route Ollama retries through the local queue",
+        "selected_text": "",
+        "cursor_context": "Cursor is inside a Swift source file above retry logic."
+      },
+      "expected": {
+        "edited_text": "// TODO: Keep SAGE replay deterministic while CometBFT is offline and route Ollama retries through the local queue.",
+        "corrections": [],
+        "preserve_terms": [
+          "SAGE",
+          "CometBFT",
+          "Ollama"
+        ]
+      },
+      "assertions": {
+        "must_include": [
+          "// TODO:",
+          "SAGE",
+          "CometBFT",
+          "Ollama"
+        ],
+        "must_not_include": [
+          "sage",
+          "comet b f t",
+          "olama"
+        ],
+        "format": "code_comment"
+      }
+    },
+    {
+      "id": "code-editor-symbolic-edit-with-security-terms",
+      "context": {
+        "app": "CodeEditor",
+        "surface": "source_code",
+        "audience": "engineers",
+        "style": "literal",
+        "privacy": "offline_only",
+        "language": "swift"
+      },
+      "input": {
+        "raw_transcript": "let signer equals Ed25519 signer open paren key id colon quote CSe100 quote close paren",
+        "selected_text": "",
+        "cursor_context": "Cursor is on an empty line in a Swift file."
+      },
+      "expected": {
+        "edited_text": "let signer = Ed25519Signer(keyID: \"CSe100\")",
+        "corrections": [],
+        "preserve_terms": [
+          "Ed25519",
+          "CSe100"
+        ]
+      },
+      "assertions": {
+        "must_include": [
+          "Ed25519Signer",
+          "keyID",
+          "\"CSe100\""
+        ],
+        "must_not_include": [
+          "ed25519signer",
+          "CSE100",
+          "open paren"
+        ],
+        "format": "code"
+      }
+    },
+    {
+      "id": "notes-vocabulary-preservation-research-note",
+      "context": {
+        "app": "Notes",
+        "surface": "note_body",
+        "audience": "self",
+        "style": "technical_note",
+        "privacy": "offline_only"
+      },
+      "input": {
+        "raw_transcript": "research note colon compare SAGE memory recall with CometBFT consensus logs comma Ollama local inference comma Utimaco hardware keys comma CSe100 provisioning comma and Ed25519 signatures",
+        "selected_text": "",
+        "cursor_context": "Appending a technical research note."
+      },
+      "expected": {
+        "edited_text": "Research note: compare SAGE memory recall with CometBFT consensus logs, Ollama local inference, Utimaco hardware keys, CSe100 provisioning, and Ed25519 signatures.",
+        "corrections": [],
+        "preserve_terms": [
+          "SAGE",
+          "CometBFT",
+          "Ollama",
+          "Utimaco",
+          "CSe100",
+          "Ed25519"
+        ]
+      },
+      "assertions": {
+        "must_include": [
+          "SAGE",
+          "CometBFT",
+          "Ollama",
+          "Utimaco",
+          "CSe100",
+          "Ed25519"
+        ],
+        "must_not_include": [
+          "sage memory",
+          "comet bft",
+          "ollama local inference,"
+        ],
+        "format": "single_sentence"
+      }
+    }
+  ]
+}

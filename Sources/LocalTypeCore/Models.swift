@@ -1,0 +1,165 @@
+import Foundation
+
+public enum AppProfile: String, Codable, Sendable {
+    case messaging
+    case email
+    case notes
+    case codeEditor
+    case browser
+    case balanced
+}
+
+public struct AppContext: Codable, Equatable, Sendable {
+    public var appName: String
+    public var windowTitle: String?
+    public var selectedText: String?
+    public var nearbyText: String?
+    public var profile: AppProfile
+    public var isSecureInput: Bool
+
+    public init(
+        appName: String,
+        windowTitle: String? = nil,
+        selectedText: String? = nil,
+        nearbyText: String? = nil,
+        profile: AppProfile = .balanced,
+        isSecureInput: Bool = false
+    ) {
+        self.appName = appName
+        self.windowTitle = windowTitle
+        self.selectedText = selectedText
+        self.nearbyText = nearbyText
+        self.profile = profile
+        self.isSecureInput = isSecureInput
+    }
+}
+
+public struct VocabularyEntry: Codable, Equatable, Sendable {
+    public var term: String
+    public var spokenForms: [String]
+    public var preferredSpelling: String
+    public var category: String
+    public var confidenceBoost: Double
+
+    public init(
+        term: String,
+        spokenForms: [String],
+        preferredSpelling: String,
+        category: String,
+        confidenceBoost: Double
+    ) {
+        self.term = term
+        self.spokenForms = spokenForms
+        self.preferredSpelling = preferredSpelling
+        self.category = category
+        self.confidenceBoost = confidenceBoost
+    }
+}
+
+public struct ASRConfusion: Codable, Equatable, Sendable {
+    public var heard: String
+    public var corrected: String
+    public var contextTerms: [String]
+    public var confidence: Double
+
+    public init(heard: String, corrected: String, contextTerms: [String] = [], confidence: Double = 1.0) {
+        self.heard = heard
+        self.corrected = corrected
+        self.contextTerms = contextTerms
+        self.confidence = confidence
+    }
+}
+
+public struct DictationProfile: Codable, Equatable, Sendable {
+    public var language: String
+    public var speechRateWPM: Int
+    public var pauseThresholdMS: Int
+    public var vadSensitivity: Double
+    public var activeASRBackend: String
+    public var activeEditorModel: String
+    public var vocabulary: [VocabularyEntry]
+    public var confusions: [ASRConfusion]
+
+    public init(
+        language: String = "en",
+        speechRateWPM: Int = 148,
+        pauseThresholdMS: Int = 420,
+        vadSensitivity: Double = 0.63,
+        activeASRBackend: String = "stub",
+        activeEditorModel: String = "ollama-local",
+        vocabulary: [VocabularyEntry] = [],
+        confusions: [ASRConfusion] = []
+    ) {
+        self.language = language
+        self.speechRateWPM = speechRateWPM
+        self.pauseThresholdMS = pauseThresholdMS
+        self.vadSensitivity = vadSensitivity
+        self.activeASRBackend = activeASRBackend
+        self.activeEditorModel = activeEditorModel
+        self.vocabulary = vocabulary
+        self.confusions = confusions
+    }
+
+    public static let development = DictationProfile(
+        vocabulary: [
+            VocabularyEntry(term: "SAGE", spokenForms: ["sage"], preferredSpelling: "SAGE", category: "technical_term", confidenceBoost: 0.95),
+            VocabularyEntry(term: "CometBFT", spokenForms: ["comet bft", "comet bee eff tee", "comet b f t"], preferredSpelling: "CometBFT", category: "technical_term", confidenceBoost: 0.95),
+            VocabularyEntry(term: "Ollama", spokenForms: ["ollama", "all llama"], preferredSpelling: "Ollama", category: "technical_term", confidenceBoost: 0.92),
+            VocabularyEntry(term: "Utimaco", spokenForms: ["utimaco", "ultimate go"], preferredSpelling: "Utimaco", category: "technical_term", confidenceBoost: 0.92),
+            VocabularyEntry(term: "CSe100", spokenForms: ["cse100", "see as e one hundred"], preferredSpelling: "CSe100", category: "technical_term", confidenceBoost: 0.92),
+            VocabularyEntry(term: "Ed25519", spokenForms: ["ed25519", "ed twenty five five nineteen"], preferredSpelling: "Ed25519", category: "technical_term", confidenceBoost: 0.92)
+        ],
+        confusions: [
+            ASRConfusion(heard: "ultimate go", corrected: "Utimaco", contextTerms: ["HSM", "security", "hardware"], confidence: 0.9),
+            ASRConfusion(heard: "see as e one hundred", corrected: "CSe100", contextTerms: ["Utimaco", "HSM"], confidence: 0.9),
+            ASRConfusion(heard: "ed twenty five five nineteen", corrected: "Ed25519", contextTerms: ["cryptography", "signature", "HSM"], confidence: 0.9)
+        ]
+    )
+}
+
+public struct StableSegment: Codable, Equatable, Sendable {
+    public var text: String
+    public var confidence: Double
+    public var isFinal: Bool
+
+    public init(text: String, confidence: Double = 1.0, isFinal: Bool = false) {
+        self.text = text
+        self.confidence = confidence
+        self.isFinal = isFinal
+    }
+}
+
+public struct EditorRequest: Codable, Equatable, Sendable {
+    public var stableText: String
+    public var unstableTail: String
+    public var rollingPolishedText: String
+    public var appContext: AppContext
+    public var profile: DictationProfile
+    public var isFinal: Bool
+
+    public init(
+        stableText: String,
+        unstableTail: String = "",
+        rollingPolishedText: String = "",
+        appContext: AppContext,
+        profile: DictationProfile,
+        isFinal: Bool
+    ) {
+        self.stableText = stableText
+        self.unstableTail = unstableTail
+        self.rollingPolishedText = rollingPolishedText
+        self.appContext = appContext
+        self.profile = profile
+        self.isFinal = isFinal
+    }
+}
+
+public struct EditorResult: Codable, Equatable, Sendable {
+    public var text: String
+    public var latencyMS: Int
+
+    public init(text: String, latencyMS: Int = 0) {
+        self.text = text
+        self.latencyMS = latencyMS
+    }
+}
