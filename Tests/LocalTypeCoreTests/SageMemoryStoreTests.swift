@@ -63,4 +63,83 @@ final class SageMemoryStoreTests: XCTestCase {
         XCTAssertEqual(results.count, 1)
         XCTAssertEqual(results.first?.payload["term"], "CometBFT")
     }
+
+    func testSQLiteMemoryStorePersistsAcrossInstances() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("quiettype-memory-store-\(UUID().uuidString)", isDirectory: true)
+        let storeURL = directory.appendingPathComponent("memory-store.json")
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let firstStore = SQLiteMemoryStore(storeURL: storeURL)
+        _ = try await firstStore.put(
+            DictationMemory(
+                type: .vocabulary,
+                payload: ["term": "CometBFT", "preferred": "CometBFT"],
+                contexts: ["voice_calibration"],
+                source: "test",
+                confidence: 0.94
+            )
+        )
+
+        let secondStore = SQLiteMemoryStore(storeURL: storeURL)
+        let results = try await secondStore.search(MemorySearchQuery(text: "CometBFT", types: [.vocabulary]))
+
+        XCTAssertEqual(results.first?.payload["preferred"], "CometBFT")
+    }
+
+    func testPersistentDefaultCreatesEncryptedStorePath() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("quiettype-memory-home-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: home)
+        }
+
+        let store = SQLiteMemoryStore.persistentDefault(homeDirectory: home)
+        _ = try await store.put(
+            DictationMemory(
+                type: .transcriptNote,
+                payload: ["raw_transcript": "hello", "polished_text": "Hello."],
+                contexts: ["dictation_review"],
+                source: "test",
+                confidence: 0.82
+            )
+        )
+
+        let storeURL = home
+            .appendingPathComponent("Library/Application Support/QuietType", isDirectory: true)
+            .appendingPathComponent("memory-store.qtmemory")
+        let stored = try Data(contentsOf: storeURL)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: storeURL.path))
+        XCTAssertFalse(String(data: stored, encoding: .utf8)?.contains("hello") == true)
+    }
+
+    func testPersistentDefaultLoadsLegacyJSONStore() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("quiettype-memory-home-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: home)
+        }
+        let directory = home
+            .appendingPathComponent("Library/Application Support/QuietType", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let legacyURL = directory.appendingPathComponent("memory-store.json")
+        let legacyMemory = DictationMemory(
+            id: "legacy-term",
+            type: .vocabulary,
+            payload: ["term": "SAGE", "preferred": "SAGE"],
+            contexts: ["voice_calibration"],
+            source: "legacy",
+            confidence: 0.9
+        )
+        let data = try JSONEncoder().encode(["legacy-term": legacyMemory])
+        try data.write(to: legacyURL)
+
+        let store = SQLiteMemoryStore.persistentDefault(homeDirectory: home)
+        let results = try await store.search(MemorySearchQuery(text: "SAGE", types: [.vocabulary]))
+
+        XCTAssertEqual(results.first?.payload["preferred"], "SAGE")
+    }
 }

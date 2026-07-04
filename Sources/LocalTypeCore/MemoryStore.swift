@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import Security
 
 public enum MemoryBackendMode: String, Codable, Sendable {
     case sqliteOnly
@@ -76,15 +78,41 @@ public protocol MemoryStore: Sendable {
 }
 
 public actor SQLiteMemoryStore: MemoryStore {
-    private var memories: [String: DictationMemory] = [:]
+    private static let encryptedFilePrefix = Data("QTMS1".utf8)
+    private static let keychainService = "QuietType.MemoryStore"
+    private static let keychainAccount = "quiettype-local-memory-aes-gcm-key"
 
-    public init() {}
+    private var memories: [String: DictationMemory] = [:]
+    private let storeURL: URL?
+    private let encrypted: Bool
+
+    public init(storeURL: URL? = nil, encrypted: Bool = false) {
+        self.storeURL = storeURL
+        self.encrypted = encrypted
+        if let storeURL,
+           let data = try? Data(contentsOf: storeURL),
+           let decoded = try? Self.decodeStoredMemories(from: data, encrypted: encrypted) {
+            memories = decoded
+        }
+    }
+
+    public static func persistentDefault(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> SQLiteMemoryStore {
+        let directory = homeDirectory
+            .appendingPathComponent("Library/Application Support/QuietType", isDirectory: true)
+        let encryptedURL = directory.appendingPathComponent("memory-store.qtmemory")
+        let legacyURL = directory.appendingPathComponent("memory-store.json")
+        let storeURL = FileManager.default.fileExists(atPath: encryptedURL.path) || !FileManager.default.fileExists(atPath: legacyURL.path)
+            ? encryptedURL
+            : legacyURL
+        return SQLiteMemoryStore(storeURL: storeURL, encrypted: true)
+    }
 
     public func put(_ memory: DictationMemory) async throws -> String {
         let id = memory.id ?? UUID().uuidString
         var stored = memory
         stored.id = id
         memories[id] = stored
+        try persist()
         return id
     }
 
@@ -109,10 +137,12 @@ public actor SQLiteMemoryStore: MemoryStore {
             memory.payload[key] = value
         }
         memories[memoryID] = memory
+        try persist()
     }
 
     public func delete(memoryID: String) async throws {
         memories.removeValue(forKey: memoryID)
+        try persist()
     }
 
     public func explain(memoryID: String) async throws -> String {
@@ -121,6 +151,104 @@ public actor SQLiteMemoryStore: MemoryStore {
         }
         return "Stored locally as \(memory.type.rawValue) with confidence \(memory.confidence)."
     }
+
+    private func persist() throws {
+        guard let storeURL else {
+            return
+        }
+
+        let directory = storeURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(memories)
+        let storedData = try encrypted ? Self.encrypt(data) : data
+        try storedData.write(to: storeURL, options: [.atomic])
+    }
+
+    private static func decodeStoredMemories(from data: Data, encrypted: Bool) throws -> [String: DictationMemory] {
+        if data.starts(with: encryptedFilePrefix) {
+            let encryptedPayload = data.dropFirst(encryptedFilePrefix.count)
+            let decrypted = try decrypt(Data(encryptedPayload))
+            return try JSONDecoder().decode([String: DictationMemory].self, from: decrypted)
+        }
+
+        if encrypted, let decrypted = try? decrypt(data) {
+            return try JSONDecoder().decode([String: DictationMemory].self, from: decrypted)
+        }
+
+        return try JSONDecoder().decode([String: DictationMemory].self, from: data)
+    }
+
+    private static func encrypt(_ data: Data) throws -> Data {
+        let sealed = try AES.GCM.seal(data, using: memoryKey())
+        guard let combined = sealed.combined else {
+            throw MemoryStoreError.encryptionFailed
+        }
+        return encryptedFilePrefix + combined
+    }
+
+    private static func decrypt(_ data: Data) throws -> Data {
+        let sealed = try AES.GCM.SealedBox(combined: data)
+        return try AES.GCM.open(sealed, using: memoryKey())
+    }
+
+    private static func memoryKey() throws -> SymmetricKey {
+        if let data = try keychainKeyData() {
+            return SymmetricKey(data: data)
+        }
+
+        let data = Data((0..<32).map { _ in UInt8.random(in: UInt8.min...UInt8.max) })
+        try saveKeyDataToKeychain(data)
+        return SymmetricKey(data: data)
+    }
+
+    private static func keychainKeyData() throws -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound {
+            return nil
+        }
+        guard status == errSecSuccess, let data = item as? Data, data.count == 32 else {
+            throw MemoryStoreError.encryptionFailed
+        }
+        return data
+    }
+
+    private static func saveKeyDataToKeychain(_ data: Data) throws {
+        guard data.count == 32 else {
+            throw MemoryStoreError.encryptionFailed
+        }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount
+        ]
+        let attributes: [String: Any] = [kSecValueData as String: data]
+
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+        guard updateStatus == errSecItemNotFound else {
+            throw MemoryStoreError.encryptionFailed
+        }
+
+        var item = query
+        item[kSecValueData as String] = data
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let addStatus = SecItemAdd(item as CFDictionary, nil)
+        guard addStatus == errSecSuccess || addStatus == errSecDuplicateItem else {
+            throw MemoryStoreError.encryptionFailed
+        }
+    }
 }
 
 public enum MemoryStoreError: Error, Equatable {
@@ -128,4 +256,5 @@ public enum MemoryStoreError: Error, Equatable {
     case sageUnavailable
     case nonLocalSageEndpoint(String)
     case networkedSageRequiresUserConsent
+    case encryptionFailed
 }

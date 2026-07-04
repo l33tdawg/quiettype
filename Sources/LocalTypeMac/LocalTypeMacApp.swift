@@ -1932,7 +1932,7 @@ final class MenuBarModel: ObservableObject {
     @Published var cpuUsagePercent = 0
 
     private let permissionService = MacOSPermissionService()
-    private let memoryStore = SQLiteMemoryStore()
+    private let memoryStore = SQLiteMemoryStore.persistentDefault()
     private var sageDirectClient: SageDirectClient?
     private var whisperKitSupervisor: WhisperKitServerSupervisor?
     private var didStartAppServices = false
@@ -2297,6 +2297,7 @@ final class MenuBarModel: ObservableObject {
 
         Task {
             refreshSystemMetrics()
+            await refreshLocalMemories()
             refreshSageStatus()
             await registerSageAgentIfAvailable()
             await refreshPermissions(promptForAccessibility: false)
@@ -2403,7 +2404,16 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
+    func refreshLocalMemories() async {
+        do {
+            localMemories = try await memoryStore.search(MemorySearchQuery(text: "", limit: 200))
+        } catch {
+            lastError = "Local memory load failed: \(error.localizedDescription)"
+        }
+    }
+
     func refreshDictionaryMemories() async {
+        await refreshLocalMemories()
         if sageDirectClient == nil {
             await registerSageAgentIfAvailable()
         } else {
@@ -2940,6 +2950,27 @@ final class MenuBarModel: ObservableObject {
                 localMemories[index].payload["polished_text"] = polished
                 localMemories[index].payload["reviewed_at"] = ISO8601DateFormatter().string(from: Date())
                 localMemories[index].payload["reviewed_by_user"] = "true"
+            }
+
+            if let sageDirectClient {
+                let content = """
+                QuietType reviewed transcript note. Local note: \(memoryID). Corrected raw transcript: "\(raw)". Corrected polished output: "\(polished)". This user-reviewed note can be used to derive future correction memories only after explicit teaching.
+                """
+                let submission = try? await sageDirectClient.submitTranscriptNote(content: content, confidence: 0.9)
+                if let submission {
+                    sageMemories.insert(
+                        SageMemoryRecord(
+                            id: submission.memoryID,
+                            content: content,
+                            domain: "quiettype.transcripts",
+                            type: "observation",
+                            confidence: 0.9,
+                            createdAt: nil,
+                            submittingAgent: sageAgentID
+                        ),
+                        at: 0
+                    )
+                }
             }
 
             statusMessage = "Transcript review saved"
