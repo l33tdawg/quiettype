@@ -13,7 +13,7 @@
   <key>CFBundleName</key>
   <string>QuietType</string>
   <key>CFBundleIconFile</key>
-  <string>QuietTypeIcon</string>
+  <string>QuietTypeIcon.icns</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

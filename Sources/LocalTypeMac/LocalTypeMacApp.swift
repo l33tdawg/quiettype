@@ -150,45 +150,18 @@ private struct DictationOverlayView: View {
 
 struct TesterView: View {
     @ObservedObject var model: MenuBarModel
-    @State private var showingSettings = false
+    @State private var selectedSection: QuietTypeSection = .home
     private let permissionTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 0) {
             sidebar
             Divider()
-            ZStack(alignment: .trailing) {
-                HStack(spacing: 0) {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 26) {
-                            header
-                            metricsGrid
-                            HStack(alignment: .top, spacing: 22) {
-                                dictationPanel
-                                    .frame(minWidth: 390, maxWidth: 480)
-                                securityPanel
-                            }
-                            outputPanel
-                            if !model.permissionsReady {
-                                permissionsPanel
-                            }
-                        }
-                        .padding(34)
-                    }
-                    .scrollIndicators(.hidden)
-
-                    if showingSettings {
-                        Divider()
-                        settingsPanel
-                            .frame(width: 470)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                    }
-                }
-            }
+            mainContent
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .frame(minWidth: 1220, minHeight: 780)
-        .animation(.easeInOut(duration: 0.22), value: showingSettings)
+        .animation(.easeInOut(duration: 0.22), value: selectedSection)
         .onAppear {
             model.startAppServices()
         }
@@ -210,9 +183,14 @@ struct TesterView: View {
             .padding(.top, 26)
 
             VStack(spacing: 8) {
-                SidebarItem(icon: "house.fill", title: "Home", selected: true)
-                SidebarItem(icon: "clock.arrow.circlepath", title: "History", selected: false)
-                SidebarItem(icon: "book.closed", title: "Dictionary", selected: false)
+                ForEach(QuietTypeSection.primary) { section in
+                    Button {
+                        selectedSection = section
+                    } label: {
+                        SidebarItem(icon: section.icon, title: section.title, selected: selectedSection == section)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
 
             Spacer()
@@ -230,18 +208,203 @@ struct TesterView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
             Button {
-                showingSettings.toggle()
+                selectedSection = .settings
             } label: {
-                Label("Settings", systemImage: "gearshape")
+                SidebarItem(icon: QuietTypeSection.settings.icon, title: QuietTypeSection.settings.title, selected: selectedSection == .settings)
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(showingSettings ? .primary : .secondary)
-            .font(.system(size: 16, weight: showingSettings ? .semibold : .regular))
+            .buttonStyle(.plain)
             .padding(.bottom, 20)
         }
         .padding(.horizontal, 18)
         .frame(width: 238)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.72))
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
+        ZStack {
+            switch selectedSection {
+            case .home:
+                homePage
+            case .history:
+                historyPage
+            case .dictionary:
+                dictionaryPage
+            case .settings:
+                settingsPage
+            }
+        }
+        .id(selectedSection)
+        .transition(.asymmetric(
+            insertion: .move(edge: .trailing).combined(with: .opacity),
+            removal: .opacity
+        ))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var homePage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 26) {
+                header
+                metricsGrid
+                HStack(alignment: .top, spacing: 22) {
+                    dictationPanel
+                        .frame(minWidth: 390, maxWidth: 480)
+                    securityPanel
+                }
+                outputPanel
+                if !model.permissionsReady {
+                    permissionsPanel
+                }
+            }
+            .padding(34)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private var historyPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                pageHeader(
+                    title: "History",
+                    subtitle: "Recent local dictations and insertion results."
+                )
+
+                historySummary
+                EmptyStatePanel(
+                    icon: "clock.arrow.circlepath",
+                    title: "No saved dictations yet",
+                    subtitle: "QuietType will show recent local sessions here once history review is enabled."
+                )
+            }
+            .padding(34)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private var dictionaryPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                pageHeader(
+                    title: "Dictionary",
+                    subtitle: "Private vocabulary and SAGE memories used by QuietType."
+                )
+
+                sageMemoryPanel
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Local vocabulary")
+                        .font(.title3.weight(.semibold))
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 14) {
+                        DictionaryTerm(term: "SAGE", detail: "Memory system")
+                        DictionaryTerm(term: "CometBFT", detail: "Consensus")
+                        DictionaryTerm(term: "Ollama", detail: "Local models")
+                        DictionaryTerm(term: "Ed25519", detail: "Crypto")
+                        DictionaryTerm(term: "WhisperKit", detail: "Apple Silicon ASR")
+                        DictionaryTerm(term: "QuietType", detail: "App name")
+                    }
+                }
+            }
+            .padding(34)
+        }
+        .scrollIndicators(.hidden)
+        .onAppear {
+            Task {
+                if model.sageMemories.isEmpty {
+                    await model.refreshSageMemories()
+                }
+            }
+        }
+    }
+
+    private var sageMemoryPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("SAGE memory")
+                        .font(.title3.weight(.semibold))
+                    Text(model.sageAgentID.isEmpty ? model.sageAgentStatus : "\(model.sageAgentStatus) · \(model.sageAgentID.prefix(12))")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if model.isQueryingSage {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Button("Refresh") {
+                    Task {
+                        await model.refreshSageMemories()
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                TextField("Search SAGE memories", text: $model.sageQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit {
+                        Task {
+                            await model.searchSageMemories()
+                        }
+                    }
+                Button("Search") {
+                    Task {
+                        await model.searchSageMemories()
+                    }
+                }
+                .disabled(model.isQueryingSage)
+            }
+
+            if model.sageMemories.isEmpty {
+                EmptyStatePanel(
+                    icon: "brain.head.profile",
+                    title: model.sageDetected ? "No QuietType memories yet" : "SAGE is not connected",
+                    subtitle: model.sageDetected ? "Approved vocabulary, corrections, and style memories will appear here under quiettype-agent." : "QuietType will keep using its local dictionary until SAGE is available."
+                )
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(model.sageMemories) { memory in
+                        SageMemoryRow(memory: memory)
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var settingsPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                pageHeader(
+                    title: "Settings",
+                    subtitle: "Transcription quality, privacy memory, and local diagnostics."
+                )
+                settingsPanel
+                    .frame(maxWidth: 760, alignment: .leading)
+            }
+            .padding(34)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private func pageHeader(title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 40, weight: .bold, design: .rounded))
+            Text(subtitle)
+                .font(.system(size: 20, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var historySummary: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 14) {
+            MetricTile(icon: "text.bubble", value: model.output.isEmpty ? "0" : "1", label: "Sessions today")
+            MetricTile(icon: "timer", value: model.lastLatencyMS.map { "\($0) ms" } ?? "Warm", label: "Last insert")
+            MetricTile(icon: "network.slash", value: "0", label: "Cloud calls")
+        }
     }
 
     private var header: some View {
@@ -291,77 +454,58 @@ struct TesterView: View {
 
     private var settingsPanel: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Settings")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                    Text("Transcription quality, privacy memory, and local diagnostics.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button {
-                    showingSettings = false
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help("Close settings")
-            }
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    settingsSection(title: "Transcription") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Picker("Writing style", selection: $model.selectedProfile) {
-                                ForEach(MenuBarModel.ProfileChoice.allCases) { profile in
-                                    Text(profile.label).tag(profile)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-
-                            Toggle("Insert into active app", isOn: Binding(
-                                get: { !model.previewOnly },
-                                set: { model.previewOnly = !$0 }
-                            ))
-                            .toggleStyle(.checkbox)
-
-                            HStack {
-                                Text("Shortcut")
-                                Spacer()
-                                Text(model.hotKeyLabel)
-                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(Color(nsColor: .windowBackgroundColor))
-                                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                            }
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+            settingsSection(title: "Transcription") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker("Writing style", selection: $model.selectedProfile) {
+                        ForEach(MenuBarModel.ProfileChoice.allCases) { profile in
+                            Text(profile.label).tag(profile)
                         }
                     }
+                    .pickerStyle(.segmented)
 
-                    settingsSection(title: "Privacy memory") {
-                        HStack {
-                            Label(model.sageStatus, systemImage: model.sageDetected ? "brain.head.profile" : "internaldrive")
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            Button("Refresh") {
-                                model.refreshSageStatus()
-                            }
-                        }
+                    Toggle("Insert into active app", isOn: Binding(
+                        get: { !model.previewOnly },
+                        set: { model.previewOnly = !$0 }
+                    ))
+                    .toggleStyle(.checkbox)
+
+                    HStack {
+                        Text("Shortcut")
+                        Spacer()
+                        Text(model.hotKeyLabel)
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
-
-                    permissionsPanel
-                    startupPanel
-                    advancedPanel
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 }
             }
+
+            settingsSection(title: "Privacy memory") {
+                HStack {
+                    Label(model.sageStatus, systemImage: model.sageDetected ? "brain.head.profile" : "internaldrive")
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Button("Refresh") {
+                        Task {
+                            await model.registerSageAgentIfAvailable()
+                        }
+                    }
+                }
+                if !model.sageAgentID.isEmpty {
+                    Text("quiettype-agent identity is preserved in Keychain and mirrored locally.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            permissionsPanel
+            startupPanel
+            advancedPanel
         }
-        .padding(26)
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private func settingsSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -614,6 +758,35 @@ struct TesterView: View {
     }
 }
 
+private enum QuietTypeSection: String, CaseIterable, Identifiable {
+    case home
+    case history
+    case dictionary
+    case settings
+
+    var id: String { rawValue }
+
+    static let primary: [QuietTypeSection] = [.home, .history, .dictionary]
+
+    var title: String {
+        switch self {
+        case .home: "Home"
+        case .history: "History"
+        case .dictionary: "Dictionary"
+        case .settings: "Settings"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .home: "house.fill"
+        case .history: "clock.arrow.circlepath"
+        case .dictionary: "book.closed"
+        case .settings: "gearshape"
+        }
+    }
+}
+
 private struct SidebarItem: View {
     var icon: String
     var title: String
@@ -631,6 +804,90 @@ private struct SidebarItem: View {
         .padding(.vertical, 11)
         .foregroundStyle(selected ? .primary : .secondary)
         .background(selected ? Color(nsColor: .windowBackgroundColor) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct EmptyStatePanel: View {
+    var icon: String
+    var title: String
+    var subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(title)
+                .font(.title3.weight(.semibold))
+            Text(subtitle)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct DictionaryTerm: View {
+    var term: String
+    var detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(term)
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(detail)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct SageMemoryRow: View {
+    var memory: SageMemoryRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(memory.type.capitalized)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                Text(memory.domain)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let confidence = memory.confidence {
+                    Text("\(Int(confidence * 100))%")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text(memory.content.isEmpty ? "Memory content unavailable." : memory.content)
+                .font(.callout)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(memory.id.prefix(12))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -810,6 +1067,11 @@ final class MenuBarModel: ObservableObject {
     @Published var output = ""
     @Published var sageStatus = "SAGE unchecked"
     @Published var sageDetected = false
+    @Published var sageAgentID = ""
+    @Published var sageAgentStatus = "Not registered"
+    @Published var sageMemories: [SageMemoryRecord] = []
+    @Published var sageQuery = ""
+    @Published var isQueryingSage = false
     @Published var speechEngineStatus = "Checking speech"
     @Published var speechEngineReady = false
     @Published var nativeSpeechServerReady = false
@@ -839,6 +1101,7 @@ final class MenuBarModel: ObservableObject {
 
     private let permissionService = MacOSPermissionService()
     private let memoryStore = SQLiteMemoryStore()
+    private var sageDirectClient: SageDirectClient?
     private var whisperKitSupervisor: WhisperKitServerSupervisor?
     private var didStartAppServices = false
     private var nativeSpeechStartupTask: Task<Void, Never>?
@@ -878,7 +1141,7 @@ final class MenuBarModel: ObservableObject {
 
     var primaryPrompt: String {
         if !permissionsReady {
-            return "Press Start to finish setup"
+            return "Click the mic to finish setup"
         }
         if isRecording {
             return "Listening... \(String(format: "%.1f", recordingDuration))s"
@@ -937,10 +1200,10 @@ final class MenuBarModel: ObservableObject {
     func refreshSageStatus() {
         let installation = SageDetector().detect()
         sageDetected = installation.isInstalled
-        sageStatus = installation.isInstalled ? "SAGE detected" : "Local memory"
+        sageStatus = installation.isInstalled ? "SAGE detected · registration pending" : "Local memory"
         updateStartupStep(
             id: "sage",
-            detail: installation.isInstalled ? "SAGE detected. Memory can stay governed and local." : "SAGE not found. Using encrypted local memory.",
+            detail: installation.isInstalled ? "SAGE app detected. SDK registration is pending." : "SAGE not found. Using encrypted local memory.",
             state: installation.isInstalled ? .ready : .warning
         )
     }
@@ -997,6 +1260,7 @@ final class MenuBarModel: ObservableObject {
 
         Task {
             refreshSageStatus()
+            await registerSageAgentIfAvailable()
             await refreshPermissions(promptForAccessibility: false)
             refreshSpeechEngineStatus()
             registerGlobalHotKey()
@@ -1045,6 +1309,79 @@ final class MenuBarModel: ObservableObject {
         }
         lastHotKeyToggleAt = Date()
         await toggleDictation()
+    }
+
+    func registerSageAgentIfAvailable() async {
+        let installation = SageDetector().detect()
+        guard installation.isInstalled else {
+            sageAgentStatus = "Local store"
+            return
+        }
+
+        do {
+            let identity = try SageSigningIdentity.loadOrCreate()
+            let client = try SageDirectClient(endpoint: installation.localEndpoint, identity: identity)
+            sageDirectClient = client
+            sageAgentID = identity.agentID
+
+            let registration = try await client.registerQuietTypeAgent()
+            sageAgentStatus = registration.status == "already_registered" ? "Registered" : "Registered"
+            sageStatus = "SAGE connected · quiettype-agent"
+            updateStartupStep(
+                id: "sage",
+                detail: "quiettype-agent registered with local SAGE.",
+                state: .ready
+            )
+            await refreshSageMemories()
+        } catch {
+            sageAgentStatus = "Registration needed"
+            sageStatus = "SAGE detected · registration failed"
+            updateStartupStep(
+                id: "sage",
+                detail: "SAGE detected, but agent registration failed: \(error.localizedDescription)",
+                state: .warning
+            )
+        }
+    }
+
+    func refreshSageMemories() async {
+        guard let sageDirectClient else {
+            return
+        }
+        isQueryingSage = true
+        defer {
+            isQueryingSage = false
+        }
+
+        do {
+            sageMemories = try await sageDirectClient.listMemories(limit: 12)
+        } catch {
+            lastError = "SAGE memory list failed: \(error.localizedDescription)"
+        }
+    }
+
+    func searchSageMemories() async {
+        guard let sageDirectClient else {
+            await registerSageAgentIfAvailable()
+            return
+        }
+
+        let query = sageQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            await refreshSageMemories()
+            return
+        }
+
+        isQueryingSage = true
+        defer {
+            isQueryingSage = false
+        }
+
+        do {
+            sageMemories = try await sageDirectClient.searchMemories(query: query, limit: 12)
+        } catch {
+            lastError = "SAGE search failed: \(error.localizedDescription)"
+        }
     }
 
     private func startNativeSpeechWarmup() {
