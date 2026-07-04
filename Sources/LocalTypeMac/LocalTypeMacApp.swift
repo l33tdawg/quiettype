@@ -164,14 +164,19 @@ struct TesterView: View {
             Divider()
             mainContent
         }
-        .overlay {
-            if let guideStep {
-                GuidedOnboardingOverlay(step: guideStep) {
-                    advanceGuide()
-                } skip: {
-                    finishGuide()
+        .overlayPreferenceValue(GuideSpotlightPreferenceKey.self) { anchors in
+            GeometryReader { proxy in
+                if let guideStep {
+                    GuidedOnboardingOverlay(
+                        step: guideStep,
+                        spotlightFrame: anchors[guideStep].map { proxy[$0] }
+                    ) {
+                        advanceGuide()
+                    } skip: {
+                        finishGuide()
+                    }
+                    .transition(.opacity)
                 }
-                .transition(.opacity)
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
@@ -364,7 +369,7 @@ struct TesterView: View {
                             .background(Color(nsColor: .windowBackgroundColor))
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
-                    Text("Read known text so QuietType can learn your expected terms and preferred spellings.")
+                    Text("Read the script out loud. QuietType saves a small local training pair and cadence hint.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -381,10 +386,20 @@ struct TesterView: View {
                 Text(model.currentCalibrationSet.title)
                     .font(.callout.weight(.semibold))
                 Text(model.currentCalibrationSet.script)
-                    .font(.system(size: 16, weight: .regular, design: .rounded))
+                    .font(.system(size: 18, weight: .regular, design: .rounded))
                     .lineSpacing(4)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
+                HStack(spacing: 10) {
+                    ProgressView(value: model.trainingInputLevel)
+                        .progressViewStyle(.linear)
+                        .tint(.secondary)
+                        .frame(width: 180)
+                        .opacity(model.isTrainingRecording ? 1 : 0.35)
+                    Text(model.trainingStatusText)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(15)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -400,19 +415,19 @@ struct TesterView: View {
                     .truncationMode(.tail)
                 Spacer()
                 Button {
+                    Task {
+                        await model.toggleCalibrationRecording()
+                    }
+                } label: {
+                    Label(model.trainingButtonTitle, systemImage: model.isTrainingRecording ? "stop.circle" : "mic")
+                }
+                .buttonStyle(QuietButtonStyle(prominence: .primary))
+                Button {
                     showingRecognizedTerms = true
                 } label: {
                     Label("Recognized terms", systemImage: "rectangle.stack.badge.person.crop")
                 }
                 .buttonStyle(QuietButtonStyle())
-                Button {
-                    Task {
-                        await model.saveCalibrationSet()
-                    }
-                } label: {
-                    Label("Save training", systemImage: "checkmark.circle")
-                }
-                .buttonStyle(QuietButtonStyle(prominence: .primary))
             }
         }
         .padding(16)
@@ -537,6 +552,16 @@ struct TesterView: View {
         guideStep = nil
     }
 
+    private func resumeSetup() {
+        if !model.permissionsReady || !model.speechEngineReady {
+            selectedSection = .settings
+        } else if !model.trainingComplete {
+            selectedSection = .dictionary
+        } else {
+            selectedSection = .settings
+        }
+    }
+
     private var historySummary: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 14) {
             MetricTile(icon: "text.bubble", value: model.output.isEmpty ? "0" : "1", label: "Sessions today")
@@ -603,9 +628,9 @@ struct TesterView: View {
             Spacer()
 
             Button {
-                selectedSection = .dictionary
+                resumeSetup()
             } label: {
-                Label("Resume setup", systemImage: "arrow.right.circle")
+                Label(model.resumeSetupLabel, systemImage: "arrow.right.circle")
             }
             .buttonStyle(QuietButtonStyle(prominence: .primary))
 
@@ -823,6 +848,9 @@ struct TesterView: View {
             .buttonStyle(.plain)
             .disabled(model.isRunning && !model.isRecording)
             .help(model.isRecording ? "Stop and insert" : "Start dictation")
+            .anchorPreference(key: GuideSpotlightPreferenceKey.self, value: .bounds) { anchor in
+                [.dictate: anchor]
+            }
 
             Text(model.primaryPrompt)
                 .font(.system(size: 25, weight: .semibold, design: .rounded))
@@ -1019,8 +1047,20 @@ private enum QuietTypeGuideStep: Int, CaseIterable, Identifiable {
     }
 }
 
+private struct GuideSpotlightPreferenceKey: PreferenceKey {
+    static var defaultValue: [QuietTypeGuideStep: Anchor<CGRect>] = [:]
+
+    static func reduce(
+        value: inout [QuietTypeGuideStep: Anchor<CGRect>],
+        nextValue: () -> [QuietTypeGuideStep: Anchor<CGRect>]
+    ) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
 private struct GuidedOnboardingOverlay: View {
     var step: QuietTypeGuideStep
+    var spotlightFrame: CGRect?
     var next: () -> Void
     var skip: () -> Void
 
@@ -1030,15 +1070,8 @@ private struct GuidedOnboardingOverlay: View {
                 Color.black.opacity(0.52)
                     .ignoresSafeArea()
 
-                if step == .dictate {
-                    Circle()
-                        .fill(Color.white.opacity(0.22))
-                        .frame(width: 330, height: 330)
-                        .overlay(Circle().stroke(Color.white.opacity(0.72), lineWidth: 3))
-                        .shadow(color: .white.opacity(0.38), radius: 20)
-                        .position(x: proxy.size.width * 0.43, y: proxy.size.height * 0.56)
-                        .allowsHitTesting(false)
-                }
+                micSpotlight
+                    .allowsHitTesting(false)
 
                 VStack {
                     Spacer()
@@ -1092,6 +1125,28 @@ private struct GuidedOnboardingOverlay: View {
                     .padding(.bottom, 46)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var micSpotlight: some View {
+        if step == .dictate, let spotlightFrame {
+            let diameter = max(spotlightFrame.width, spotlightFrame.height) + 36
+            ZStack {
+                Circle()
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                Circle()
+                    .stroke(Color.white.opacity(0.92), lineWidth: 4)
+                Circle()
+                    .stroke(Color.black.opacity(0.12), lineWidth: 13)
+                    .frame(width: diameter - 36, height: diameter - 36)
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 56, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .labelColor))
+            }
+            .frame(width: diameter, height: diameter)
+            .shadow(color: .black.opacity(0.20), radius: 28, y: 12)
+            .position(x: spotlightFrame.midX, y: spotlightFrame.midY)
         }
     }
 }
@@ -1773,6 +1828,11 @@ final class MenuBarModel: ObservableObject {
     @Published var didSaveTeachingMemory = false
     @Published var calibrationSetIndex = 0
     @Published var calibrationSavedCount = 0
+    @Published var isTrainingRecording = false
+    @Published var trainingDuration = 0.0
+    @Published var trainingInputLevel = 0.0
+    @Published var trainingTranscriptDraft = ""
+    @Published var trainingPairCount = 0
     @Published var statusMessage = ""
     @Published var hotKeyLabel = "⌃⇧D"
     @Published var microphonePermission: PermissionState = .unknown
@@ -1787,9 +1847,15 @@ final class MenuBarModel: ObservableObject {
     private var nativeSpeechStartupTask: Task<Void, Never>?
     private var terminationObserver: NSObjectProtocol?
     private var captureService: AVAudioCaptureService?
+    private var trainingCaptureService: AVAudioCaptureService?
     private var recordingStartedAt: Date?
+    private var trainingStartedAt: Date?
     private var recordedSamples: [Float] = []
+    private var trainingSamples: [Float] = []
     private var recordingSampleRate = 16_000
+    private var trainingSampleRate = 16_000
+    private var trainingFrameCount = 0
+    private var lastTrainingAudioURL: URL?
     private var chunker = StreamingWavChunker()
     private let chunkDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("quiettype-stream")
     private var streamingTranscriptionSession: StreamingAudioTranscriptionSession?
@@ -1798,10 +1864,14 @@ final class MenuBarModel: ObservableObject {
     private let overlayController = DictationOverlayController()
     private var cpuSampler = CPUUsageSampler()
     private static let calibrationSavedCountKey = "quiettype.calibrationSavedCount"
+    private static let trainingPairCountKey = "quiettype.trainingPairCount"
     private static let requiredCalibrationSets = 3
+    private static let maxDictationDurationSeconds = 300.0
+    private static let maxTrainingPairCount = 10
 
     init() {
         calibrationSavedCount = UserDefaults.standard.integer(forKey: Self.calibrationSavedCountKey)
+        trainingPairCount = UserDefaults.standard.integer(forKey: Self.trainingPairCountKey)
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
@@ -1923,6 +1993,33 @@ final class MenuBarModel: ObservableObject {
             return "The local speech engine is still warming. QuietType will finish setup when it is ready."
         }
         return "Setup is complete."
+    }
+
+    var resumeSetupLabel: String {
+        if !permissionsReady {
+            return "Grant permissions"
+        }
+        if !speechEngineReady {
+            return "Check engine"
+        }
+        if !trainingComplete {
+            return "Resume training"
+        }
+        return "Review setup"
+    }
+
+    var trainingButtonTitle: String {
+        if isTrainingRecording {
+            return "Stop training"
+        }
+        return "Record training"
+    }
+
+    var trainingStatusText: String {
+        if isTrainingRecording {
+            return "Recording \(String(format: "%.1f", trainingDuration))s locally"
+        }
+        return "Last \(min(trainingPairCount, Self.maxTrainingPairCount)) local training pairs kept."
     }
 
     private var personalizationPercent: Int {
@@ -2101,6 +2198,8 @@ final class MenuBarModel: ObservableObject {
     }
 
     func shutdownAppServices() {
+        trainingCaptureService?.stop()
+        trainingCaptureService = nil
         hotKeyController?.unregister()
         hotKeyController = nil
         overlayController.hide()
@@ -2422,7 +2521,7 @@ final class MenuBarModel: ObservableObject {
         recordingDuration = 0
         recordedSamples = []
         recordingSampleRate = 16_000
-        chunker = StreamingWavChunker(sampleRate: recordingSampleRate, chunkDurationSeconds: 1.0, maxDurationSeconds: 60.0)
+        chunker = StreamingWavChunker(sampleRate: recordingSampleRate, chunkDurationSeconds: 1.0, maxDurationSeconds: Self.maxDictationDurationSeconds)
         streamingTranscriptionSession = nativeSpeechServerReady
             ? StreamingAudioTranscriptionSession(transcriber: WhisperKitServerTranscriber(timeoutSeconds: 10.0))
             : nil
@@ -2531,7 +2630,7 @@ final class MenuBarModel: ObservableObject {
         }
 
         if chunker.reachedMaxDuration && isRecording {
-            statusMessage = "60 second limit reached"
+            statusMessage = "5 minute limit reached"
             await stopRecording()
             return
         }
@@ -2706,12 +2805,116 @@ final class MenuBarModel: ObservableObject {
 
     func advanceCalibrationSet() {
         calibrationSetIndex = (calibrationSetIndex + 1) % CalibrationSet.defaults.count
+        trainingDuration = 0
+        trainingInputLevel = 0
+        trainingTranscriptDraft = ""
+        lastTrainingAudioURL = nil
         statusMessage = "Loaded \(currentCalibrationSet.title)"
     }
 
-    func saveCalibrationSet() async {
+    func toggleCalibrationRecording() async {
+        if isTrainingRecording {
+            await stopCalibrationRecording()
+        } else {
+            await startCalibrationRecording()
+        }
+    }
+
+    private func startCalibrationRecording() async {
+        guard !isRecording else {
+            lastError = "Stop dictation before starting voice training."
+            return
+        }
+
+        if microphonePermission != .granted {
+            microphonePermission = await permissionService.requestMicrophone()
+            await refreshPermissions(promptForAccessibility: false)
+        }
+
+        guard microphonePermission == .granted else {
+            statusMessage = "Microphone permission needed"
+            lastError = "Allow Microphone to record local voice training."
+            return
+        }
+
+        trainingSamples = []
+        trainingSampleRate = 16_000
+        trainingFrameCount = 0
+        trainingDuration = 0
+        trainingInputLevel = 0
+        trainingTranscriptDraft = ""
+        lastTrainingAudioURL = nil
+        trainingStartedAt = Date()
+
+        let service = AVAudioCaptureService { [weak self] frame in
+            await self?.recordTraining(frame)
+        }
+
+        do {
+            try service.start()
+            trainingCaptureService = service
+            isTrainingRecording = true
+            statusMessage = "Training locally"
+            lastError = nil
+        } catch {
+            trainingCaptureService = nil
+            trainingStartedAt = nil
+            isTrainingRecording = false
+            lastError = "Could not start training microphone: \(error)"
+        }
+    }
+
+    private func stopCalibrationRecording() async {
+        trainingCaptureService?.stop()
+        trainingCaptureService = nil
+        isTrainingRecording = false
+
+        guard trainingFrameCount > 0 else {
+            statusMessage = "No training audio captured"
+            lastError = "QuietType could not detect microphone audio for training."
+            return
+        }
+
+        do {
+            let directory = trainingDirectory()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let safeID = currentCalibrationSet.id.replacingOccurrences(of: "/", with: "-")
+            let audioURL = directory.appendingPathComponent("\(Int(Date().timeIntervalSince1970))-\(safeID).wav")
+            try WavFileWriter.writeMonoPCM16(samples: trainingSamples, sampleRate: trainingSampleRate, to: audioURL)
+            lastTrainingAudioURL = audioURL
+            await saveCalibrationSet(audioURL: audioURL)
+        } catch {
+            statusMessage = "Training save failed"
+            lastError = "Could not save training audio: \(error.localizedDescription)"
+        }
+    }
+
+    private func recordTraining(_ frame: AudioFrame) async {
+        trainingFrameCount += 1
+        trainingSampleRate = frame.sampleRate
+        trainingSamples.append(contentsOf: frame.samples)
+
+        if let trainingStartedAt {
+            trainingDuration = Date().timeIntervalSince(trainingStartedAt)
+        }
+
+        let rms = sqrt(frame.samples.reduce(0.0) { partial, sample in
+            partial + Double(sample * sample)
+        } / Double(max(frame.samples.count, 1)))
+        trainingInputLevel = min(1.0, rms * 24)
+
+        if trainingDuration >= Self.maxDictationDurationSeconds && isTrainingRecording {
+            statusMessage = "5 minute training limit reached"
+            await stopCalibrationRecording()
+        }
+    }
+
+    private func saveCalibrationSet(audioURL: URL? = nil) async {
         let set = currentCalibrationSet
         do {
+            let duration = max(trainingDuration, 0.1)
+            let wordCount = Double(set.script.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count)
+            let estimatedWPM = Int((wordCount / duration) * 60.0)
             var savedMemories: [DictationMemory] = []
             for term in set.terms {
                 var memory = DictationMemory(
@@ -2720,7 +2923,10 @@ final class MenuBarModel: ObservableObject {
                         "term": term,
                         "preferred": term,
                         "script": set.script,
-                        "calibration_set": set.id
+                        "calibration_set": set.id,
+                        "audio_path": audioURL?.path ?? "",
+                        "duration_seconds": String(format: "%.2f", duration),
+                        "estimated_wpm": "\(estimatedWPM)"
                     ],
                     contexts: ["voice_calibration", set.title, selectedProfile.appName],
                     source: "quiettype_voice_training",
@@ -2734,9 +2940,14 @@ final class MenuBarModel: ObservableObject {
             localMemories.insert(contentsOf: savedMemories.reversed(), at: 0)
             calibrationSavedCount += 1
             UserDefaults.standard.set(calibrationSavedCount, forKey: Self.calibrationSavedCountKey)
+            if audioURL != nil {
+                trainingPairCount = min(Self.maxTrainingPairCount, trainingPairCount + 1)
+                UserDefaults.standard.set(trainingPairCount, forKey: Self.trainingPairCountKey)
+                pruneTrainingPairs()
+            }
 
             if let sageDirectClient {
-                let content = "QuietType voice training set \"\(set.title)\" expects the user to read: \"\(set.script)\". Preserve these terms during dictation cleanup: \(set.terms.joined(separator: ", ")). Source: user-approved calibration."
+                let content = "QuietType voice training set \"\(set.title)\" expects the user to read: \"\(set.script)\". Estimated speech rate: \(estimatedWPM) WPM. Preserve these terms during dictation cleanup: \(set.terms.joined(separator: ", ")). Source: user-approved local calibration."
                 let submission = try await sageDirectClient.submitTranslationMemory(content: content, confidence: 0.93)
                 sageMemories.insert(
                     SageMemoryRecord(
@@ -2755,8 +2966,37 @@ final class MenuBarModel: ObservableObject {
                 statusMessage = "Training saved locally"
             }
             lastError = nil
+            advanceCalibrationSet()
         } catch {
             lastError = "Training save failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func trainingDirectory() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/QuietType/Training", isDirectory: true)
+    }
+
+    private func pruneTrainingPairs() {
+        let directory = trainingDirectory()
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        let sorted = files
+            .filter { $0.pathExtension.lowercased() == "wav" }
+            .sorted { lhs, rhs in
+                let leftDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let rightDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return leftDate > rightDate
+            }
+
+        for file in sorted.dropFirst(Self.maxTrainingPairCount) {
+            try? FileManager.default.removeItem(at: file)
         }
     }
 

@@ -40,12 +40,19 @@ public struct MacOSPermissionService: Sendable {
         case .authorized:
             return .granted
         case .denied, .restricted:
+            openMicrophoneSettings()
             return .denied
         case .notDetermined:
             let granted = await AVCaptureDevice.requestAccess(for: .audio)
             return granted ? .granted : .denied
         @unknown default:
             return .unknown
+        }
+    }
+
+    public func openMicrophoneSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
         }
     }
 
