@@ -189,7 +189,21 @@ public enum WhisperKitModelLocator {
         named modelDirectoryName: String,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> URL? {
+        localModelPath(
+            named: modelDirectoryName,
+            bundle: .main,
+            homeDirectory: homeDirectory
+        )
+    }
+
+    public static func localModelPath(
+        named modelDirectoryName: String,
+        bundle: Bundle = .main,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL? {
         let candidates = [
+            bundledModelRoot(bundle: bundle)
+                .appendingPathComponent(modelDirectoryName),
             homeDirectory
                 .appendingPathComponent("Documents/huggingface/models/argmaxinc/whisperkit-coreml")
                 .appendingPathComponent(modelDirectoryName),
@@ -204,6 +218,14 @@ public enum WhisperKitModelLocator {
         return candidates.first { url in
             isCompleteModel(at: url)
         }
+    }
+
+    public static func bundledModelRoot(bundle: Bundle = .main) -> URL {
+        if let resourceURL = bundle.resourceURL {
+            return resourceURL.appendingPathComponent("WhisperKit", isDirectory: true)
+        }
+        return bundle.bundleURL
+            .appendingPathComponent("Contents/Resources/WhisperKit", isDirectory: true)
     }
 
     public static func isCompleteModel(at url: URL) -> Bool {

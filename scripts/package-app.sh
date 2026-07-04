@@ -9,8 +9,11 @@ X86_RELEASE_BIN="$ROOT/.build/x86_64-apple-macosx/release/LocalTypeMac"
 X86_BIN="$ROOT/.build/x86_64-apple-macosx/debug/LocalTypeMac"
 SERVER_BIN="$ROOT/vendor/argmax-oss-swift/.build/arm64-apple-macosx/release/argmax-cli"
 WHISPER_CPP_BIN="$ROOT/vendor/whisper.cpp/build-cpu/bin/whisper-cli"
+DEFAULT_WHISPERKIT_MODEL="$HOME/Documents/huggingface/models/argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930_626MB"
 SIGN_IDENTITY="${QUIETTYPE_CODESIGN_IDENTITY:--}"
 SIGN_OPTIONS="${QUIETTYPE_CODESIGN_OPTIONS:---options runtime}"
+BUNDLE_MODELS="${QUIETTYPE_BUNDLE_MODELS:-1}"
+WHISPERKIT_MODEL_SOURCE="${QUIETTYPE_WHISPERKIT_MODEL_SOURCE:-$DEFAULT_WHISPERKIT_MODEL}"
 
 if [[ -x "$ARM_RELEASE_BIN" ]]; then
   BIN="$ARM_RELEASE_BIN"
@@ -40,6 +43,14 @@ fi
 cp "$ROOT/resources/QuietTypeIcon.svg" "$APP/Contents/Resources/QuietTypeIcon.svg"
 if [[ -f "$ROOT/resources/QuietTypeIcon.icns" ]]; then
   cp "$ROOT/resources/QuietTypeIcon.icns" "$APP/Contents/Resources/QuietTypeIcon.icns"
+fi
+if [[ "$BUNDLE_MODELS" != "0" && "$BUNDLE_MODELS" != "false" ]]; then
+  if [[ -d "$WHISPERKIT_MODEL_SOURCE" ]]; then
+    mkdir -p "$APP/Contents/Resources/WhisperKit"
+    cp -R "$WHISPERKIT_MODEL_SOURCE" "$APP/Contents/Resources/WhisperKit/"
+  else
+    echo "WARN  WhisperKit model not bundled; missing $WHISPERKIT_MODEL_SOURCE" >&2
+  fi
 fi
 chmod +x "$APP/Contents/MacOS/LocalTypeMac"
 if [[ -x "$APP/Contents/MacOS/argmax-cli" ]]; then
