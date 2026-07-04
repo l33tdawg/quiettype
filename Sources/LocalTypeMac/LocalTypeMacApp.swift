@@ -153,6 +153,7 @@ struct TesterView: View {
     @AppStorage("quiettype.hasSeenGuide") private var hasSeenGuide = false
     @State private var selectedSection: QuietTypeSection = .home
     @State private var showingTeachSheet = false
+    @State private var showingRecognizedTerms = false
     @State private var guideStep: QuietTypeGuideStep?
     private let permissionTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -311,24 +312,20 @@ struct TesterView: View {
                 )
 
                 dictionaryStats
+                trainingPanel
                 memoryLibraryPanel
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Recognized terms")
-                        .font(.title3.weight(.semibold))
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 14) {
-                        DictionaryTerm(term: "SAGE", detail: "Memory system")
-                        DictionaryTerm(term: "CometBFT", detail: "Consensus")
-                        DictionaryTerm(term: "Ollama", detail: "Local models")
-                        DictionaryTerm(term: "Ed25519", detail: "Crypto")
-                        DictionaryTerm(term: "WhisperKit", detail: "Apple Silicon ASR")
-                        DictionaryTerm(term: "QuietType", detail: "App name")
-                    }
-                }
             }
             .padding(34)
         }
         .scrollIndicators(.hidden)
+        .overlay(alignment: .bottom) {
+            if showingRecognizedTerms {
+                RecognizedTermsDrawer(isPresented: $showingRecognizedTerms)
+                    .padding(.horizontal, 34)
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
         .onAppear {
             Task {
                 if model.dictionaryMemories.isEmpty {
@@ -345,6 +342,68 @@ struct TesterView: View {
             MemoryStatPill(title: "Corrections", value: "\(model.localMemoryCount)")
             MemoryStatPill(title: "Cloud calls", value: "0")
         }
+    }
+
+    private var trainingPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Voice training")
+                        .font(.title3.weight(.semibold))
+                    Text("Read a known script so QuietType can save expected spellings, terms, and correction hints.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    model.advanceCalibrationSet()
+                } label: {
+                    Label("New set", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(QuietButtonStyle())
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(model.currentCalibrationSet.title)
+                    .font(.callout.weight(.semibold))
+                Text(model.currentCalibrationSet.script)
+                    .font(.system(size: 18, weight: .medium, design: .rounded))
+                    .lineSpacing(5)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+
+            HStack {
+                Text(model.currentCalibrationSet.terms.joined(separator: " · "))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer()
+                Button {
+                    showingRecognizedTerms = true
+                } label: {
+                    Label("Recognized terms", systemImage: "rectangle.stack.badge.person.crop")
+                }
+                .buttonStyle(QuietButtonStyle())
+                Button {
+                    Task {
+                        await model.saveCalibrationSet()
+                    }
+                } label: {
+                    Label("Save training", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(QuietButtonStyle(prominence: .primary))
+            }
+        }
+        .padding(18)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var memoryLibraryPanel: some View {
@@ -367,12 +426,13 @@ struct TesterView: View {
                 } label: {
                     Label("Teach QuietType", systemImage: "square.and.pencil")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(QuietButtonStyle(prominence: .primary))
                 Button("Refresh") {
                     Task {
                         await model.refreshDictionaryMemories()
                     }
                 }
+                .buttonStyle(QuietButtonStyle())
             }
 
             HStack(spacing: 10) {
@@ -392,15 +452,25 @@ struct TesterView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 1))
 
-            if model.dictionaryMemories.isEmpty {
+            HStack(spacing: 8) {
+                ForEach(MenuBarModel.MemoryFilter.allCases) { filter in
+                    Button(filter.label) {
+                        model.memoryFilter = filter
+                    }
+                    .buttonStyle(QuietButtonStyle(prominence: model.memoryFilter == filter ? .primary : .secondary))
+                }
+                Spacer()
+            }
+
+            if model.filteredDictionaryMemories.isEmpty {
                 EmptyStatePanel(
                     icon: "text.bubble",
                     title: model.sageDetected ? "No memories yet" : "SAGE is not connected",
-                    subtitle: model.sageDetected ? "Teach QuietType a spelling or correction above, then it will appear here and can later mirror into SAGE." : "QuietType will keep using its local dictionary until SAGE is available."
+                    subtitle: model.sageDetected ? "Teach QuietType a spelling, correction, or voice training set, then filter and review it here." : "QuietType will keep using its local dictionary until SAGE is available."
                 )
             } else {
                 VStack(spacing: 10) {
-                    ForEach(model.dictionaryMemories) { memory in
+                    ForEach(model.filteredDictionaryMemories) { memory in
                         DictionaryMemoryRow(memory: memory)
                     }
                 }
@@ -510,18 +580,20 @@ struct TesterView: View {
         VStack(alignment: .leading, spacing: 18) {
             settingsSection(title: "Transcription") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Picker("Writing style", selection: $model.selectedProfile) {
-                        ForEach(MenuBarModel.ProfileChoice.allCases) { profile in
-                            Text(profile.label).tag(profile)
-                        }
+                    QuietSegmentedControl(
+                        title: "Writing style",
+                        selection: $model.selectedProfile,
+                        options: MenuBarModel.ProfileChoice.allCases
+                    ) { profile in
+                        profile.label
                     }
-                    .pickerStyle(.segmented)
 
                     Toggle("Insert into active app", isOn: Binding(
                         get: { !model.previewOnly },
                         set: { model.previewOnly = !$0 }
                     ))
                     .toggleStyle(.checkbox)
+                    .tint(.primary)
 
                     HStack {
                         Text("Shortcut")
@@ -548,6 +620,7 @@ struct TesterView: View {
                             await model.registerSageAgentIfAvailable()
                         }
                     }
+                    .buttonStyle(QuietButtonStyle())
                 }
                 if !model.sageAgentID.isEmpty {
                     Text("quiettype-agent identity is preserved in Keychain and mirrored locally.")
@@ -579,13 +652,16 @@ struct TesterView: View {
                         selectedSection = .home
                         guideStep = .welcome
                     }
+                    .buttonStyle(QuietButtonStyle())
                     Button("GitHub") {
                         NSWorkspace.shared.open(URL(string: "https://github.com/l33tdawg/quiettype")!)
                     }
+                    .buttonStyle(QuietButtonStyle())
                     Button("Copy share text") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString("QuietType: private local dictation for Mac. Speak freely. Transcribe locally. Nothing leaves your Mac. https://github.com/l33tdawg/quiettype", forType: .string)
                     }
+                    .buttonStyle(QuietButtonStyle())
                 }
             }
         }
@@ -766,6 +842,7 @@ struct TesterView: View {
                 } label: {
                     Label("Copy", systemImage: "doc.on.doc")
                 }
+                .buttonStyle(QuietButtonStyle())
                 .disabled(model.output.isEmpty)
 
                 Spacer()
@@ -797,12 +874,13 @@ struct TesterView: View {
     private var advancedPanel: some View {
         DisclosureGroup("Advanced testing") {
             VStack(alignment: .leading, spacing: 12) {
-                Picker("Editor", selection: $model.editorMode) {
-                    ForEach(MenuBarModel.EditorMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
+                QuietSegmentedControl(
+                    title: "Editor",
+                    selection: $model.editorMode,
+                    options: MenuBarModel.EditorMode.allCases
+                ) { mode in
+                    mode.label
                 }
-                .pickerStyle(.segmented)
 
                 if model.editorMode == .ollama {
                     TextField("Ollama model", text: $model.ollamaModel)
@@ -890,59 +968,72 @@ private struct GuidedOnboardingOverlay: View {
     var skip: () -> Void
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.48)
-                .ignoresSafeArea()
+        GeometryReader { proxy in
+            ZStack {
+                Color.black.opacity(0.52)
+                    .ignoresSafeArea()
 
-            VStack {
-                Spacer()
-                HStack {
-                    Spacer()
-                    VStack(alignment: .leading, spacing: 18) {
-                        HStack(spacing: 12) {
-                            Image(systemName: step.systemImage)
-                                .font(.title2)
-                                .frame(width: 34, height: 34)
-                                .background(Color(nsColor: .controlBackgroundColor))
-                                .clipShape(Circle())
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(step.eyebrow)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                Text(step.title)
-                                    .font(.title2.weight(.semibold))
-                            }
-                        }
-
-                        Text(step.body)
-                            .font(.system(size: 16, weight: .regular))
-                            .foregroundStyle(.secondary)
-                            .lineSpacing(3)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        HStack {
-                            Button("Skip") {
-                                skip()
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.secondary)
-                            Spacer()
-                            Button(step.next == nil ? "Finish" : "Continue") {
-                                next()
-                            }
-                            .keyboardShortcut(.defaultAction)
-                            .buttonStyle(.borderedProminent)
-                        }
-                    }
-                    .padding(24)
-                    .frame(width: 430, alignment: .leading)
-                    .background(.regularMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.22), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.22), radius: 28, y: 12)
+                if step == .dictate {
+                    Circle()
+                        .fill(Color.white.opacity(0.22))
+                        .frame(width: 330, height: 330)
+                        .overlay(Circle().stroke(Color.white.opacity(0.72), lineWidth: 3))
+                        .shadow(color: .white.opacity(0.38), radius: 20)
+                        .position(x: proxy.size.width * 0.43, y: proxy.size.height * 0.56)
+                        .allowsHitTesting(false)
                 }
-                .padding(.trailing, 52)
-                .padding(.bottom, 46)
+
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        VStack(alignment: .leading, spacing: 18) {
+                            HStack(spacing: 12) {
+                                Image(systemName: step.systemImage)
+                                    .font(.title2)
+                                    .foregroundStyle(.primary)
+                                    .frame(width: 34, height: 34)
+                                    .background(Color.white)
+                                    .clipShape(Circle())
+                                    .overlay(Circle().stroke(Color.black.opacity(0.08), lineWidth: 1))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(step.eyebrow)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    Text(step.title)
+                                        .font(.title2.weight(.semibold))
+                                }
+                            }
+
+                            Text(step.body)
+                                .font(.system(size: 16, weight: .regular))
+                                .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+                                .lineSpacing(3)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            HStack {
+                                Button("Skip") {
+                                    skip()
+                                }
+                                .buttonStyle(QuietButtonStyle(prominence: .ghost))
+                                Spacer()
+                                Button(step.next == nil ? "Finish" : "Continue") {
+                                    next()
+                                }
+                                .keyboardShortcut(.defaultAction)
+                                .buttonStyle(QuietButtonStyle(prominence: .primary))
+                            }
+                        }
+                        .padding(24)
+                        .frame(width: 430, alignment: .leading)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.black.opacity(0.10), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.28), radius: 30, y: 14)
+                    }
+                    .padding(.trailing, 52)
+                    .padding(.bottom, 46)
+                }
             }
         }
     }
@@ -1125,17 +1216,18 @@ private struct TeachQuietTypeSheet: View {
                     .foregroundStyle(.secondary)
             }
 
-            Form {
-                TextField("When I say", text: $model.teachRaw)
-                TextField("Use this instead", text: $model.teachCorrected)
-                Picker("Save as", selection: $model.teachingKind) {
-                    ForEach(MenuBarModel.TeachingKind.allCases) { kind in
-                        Text(kind.label).tag(kind)
-                    }
+            VStack(alignment: .leading, spacing: 12) {
+                QuietTextField(label: "When I say", text: $model.teachRaw)
+                QuietTextField(label: "Use this instead", text: $model.teachCorrected)
+                QuietSegmentedControl(
+                    title: "Save as",
+                    selection: $model.teachingKind,
+                    options: MenuBarModel.TeachingKind.allCases
+                ) { kind in
+                    kind.label
                 }
-                TextField("Context", text: $model.teachingContext)
+                QuietTextField(label: "Context", text: $model.teachingContext)
             }
-            .formStyle(.grouped)
 
             HStack {
                 Text("Saved memories stay local-first and are submitted to SAGE when it is available.")
@@ -1145,6 +1237,7 @@ private struct TeachQuietTypeSheet: View {
                 Button("Cancel") {
                     dismiss()
                 }
+                .buttonStyle(QuietButtonStyle())
                 Button("Save memory") {
                     Task {
                         await model.saveCorrection()
@@ -1152,6 +1245,7 @@ private struct TeachQuietTypeSheet: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
+                .buttonStyle(QuietButtonStyle(prominence: .primary))
                 .disabled(!model.canSaveCorrection)
             }
         }
@@ -1227,7 +1321,7 @@ private struct PermissionRow: View {
             Spacer()
             if state != .granted {
                 Button(actionTitle, action: action)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(QuietButtonStyle())
             }
         }
         .font(.callout)
@@ -1329,6 +1423,194 @@ private struct StatusPill: View {
     }
 }
 
+private struct QuietButtonStyle: ButtonStyle {
+    enum Prominence {
+        case primary
+        case secondary
+        case ghost
+    }
+
+    var prominence: Prominence = .secondary
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 14, weight: .semibold, design: .rounded))
+            .foregroundStyle(foreground)
+            .padding(.horizontal, prominence == .ghost ? 8 : 14)
+            .padding(.vertical, prominence == .ghost ? 7 : 9)
+            .background(background(configuration: configuration))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(border(configuration: configuration), lineWidth: prominence == .ghost ? 0 : 1)
+            )
+            .opacity(configuration.isPressed ? 0.72 : 1)
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+
+    private var foreground: Color {
+        switch prominence {
+        case .primary: .white
+        case .secondary, .ghost: .primary
+        }
+    }
+
+    private func background(configuration: Configuration) -> Color {
+        switch prominence {
+        case .primary:
+            Color.primary.opacity(configuration.isPressed ? 0.82 : 1)
+        case .secondary:
+            Color(nsColor: .windowBackgroundColor)
+        case .ghost:
+            Color.clear
+        }
+    }
+
+    private func border(configuration: Configuration) -> Color {
+        switch prominence {
+        case .primary:
+            Color.primary.opacity(0.12)
+        case .secondary:
+            Color.primary.opacity(configuration.isPressed ? 0.18 : 0.09)
+        case .ghost:
+            Color.clear
+        }
+    }
+}
+
+private struct QuietSegmentedControl<Option: Identifiable & Hashable>: View {
+    var title: String
+    @Binding var selection: Option
+    var options: [Option]
+    var label: (Option) -> String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.callout)
+                .foregroundStyle(.primary)
+                .frame(width: 96, alignment: .leading)
+
+            HStack(spacing: 2) {
+                ForEach(options) { option in
+                    Button {
+                        selection = option
+                    } label: {
+                        Text(label(option))
+                            .font(.system(size: 14, weight: selection == option ? .semibold : .medium, design: .rounded))
+                            .foregroundStyle(selection == option ? Color.white : Color.primary)
+                            .frame(minWidth: 64)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(selection == option ? Color.primary : Color.clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(3)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        }
+    }
+}
+
+private struct QuietTextField: View {
+    var label: String
+    @Binding var text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            TextField(label, text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15, weight: .medium))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        }
+    }
+}
+
+private struct RecognizedTermsDrawer: View {
+    @Binding var isPresented: Bool
+
+    private let terms: [(String, String)] = [
+        ("SAGE", "Governed memory"),
+        ("CometBFT", "Consensus"),
+        ("Ollama", "Local models"),
+        ("Ed25519", "Crypto"),
+        ("WhisperKit", "Apple Silicon ASR"),
+        ("QuietType", "App name")
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Recognized terms")
+                        .font(.title3.weight(.semibold))
+                    Text("Seed vocabulary QuietType should preserve during transcription and cleanup.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    isPresented = false
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(QuietButtonStyle(prominence: .ghost))
+            }
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+                ForEach(terms, id: \.0) { term in
+                    DictionaryTerm(term: term.0, detail: term.1)
+                }
+            }
+        }
+        .padding(20)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.10), lineWidth: 1))
+        .shadow(color: .black.opacity(0.20), radius: 24, y: 12)
+    }
+}
+
+struct CalibrationSet: Identifiable, Equatable {
+    var id: String
+    var title: String
+    var script: String
+    var terms: [String]
+
+    static let defaults: [CalibrationSet] = [
+        CalibrationSet(
+            id: "privacy-technical",
+            title: "Technical privacy set",
+            script: "The SAGE benchmark uses CometBFT consensus and Ed25519 signatures. QuietType should preserve these terms exactly while transcribing locally.",
+            terms: ["SAGE", "CometBFT", "Ed25519", "QuietType"]
+        ),
+        CalibrationSet(
+            id: "local-models",
+            title: "Local model set",
+            script: "I use Ollama and WhisperKit for local models. When I say all llama, write Ollama. When I say whisper kit, write WhisperKit.",
+            terms: ["Ollama", "WhisperKit", "local models", "Apple Silicon"]
+        ),
+        CalibrationSet(
+            id: "security-hardware",
+            title: "Security hardware set",
+            script: "The Utimaco CSe100 HSM supports Ed25519. Please preserve HSM, CSe100, and Utimaco when I dictate technical notes.",
+            terms: ["Utimaco", "CSe100", "HSM", "Ed25519"]
+        )
+    ]
+}
+
 @MainActor
 final class MenuBarModel: ObservableObject {
     @Published var transcript = "the sage benchmark needs to rerun the comet b f t latency numbers"
@@ -1365,7 +1647,10 @@ final class MenuBarModel: ObservableObject {
     @Published var teachingKind = TeachingKind.correction
     @Published var teachingContext = "dictation cleanup"
     @Published var localMemories: [DictationMemory] = []
+    @Published var memoryFilter = MemoryFilter.all
     @Published var didSaveTeachingMemory = false
+    @Published var calibrationSetIndex = 0
+    @Published var calibrationSavedCount = 0
     @Published var statusMessage = ""
     @Published var hotKeyLabel = "⌃⇧D"
     @Published var microphonePermission: PermissionState = .unknown
@@ -1398,6 +1683,10 @@ final class MenuBarModel: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.shutdownAppServices()
             }
+        }
+
+        Task { @MainActor [weak self] in
+            self?.startAppServices()
         }
     }
 
@@ -1469,6 +1758,10 @@ final class MenuBarModel: ObservableObject {
             && !teachCorrected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var currentCalibrationSet: CalibrationSet {
+        CalibrationSet.defaults[calibrationSetIndex % CalibrationSet.defaults.count]
+    }
+
     var localMemoryCount: Int {
         localMemories.count
     }
@@ -1497,6 +1790,24 @@ final class MenuBarModel: ObservableObject {
         }
 
         return localItems + sageItems
+    }
+
+    var filteredDictionaryMemories: [DictionaryMemoryItem] {
+        switch memoryFilter {
+        case .all:
+            return dictionaryMemories
+        case .vocabulary:
+            return dictionaryMemories.filter { $0.kind.localizedCaseInsensitiveContains("Vocabulary") }
+        case .corrections:
+            return dictionaryMemories.filter {
+                $0.kind.localizedCaseInsensitiveContains("Correction")
+                    || $0.summary.localizedCaseInsensitiveContains("prefer")
+            }
+        case .sage:
+            return dictionaryMemories.filter { $0.source.localizedCaseInsensitiveContains("SAGE") }
+        case .local:
+            return dictionaryMemories.filter { $0.source == "Local" }
+        }
     }
 
     private static let defaultMemorySearchQuery = "QuietType dictation translation correction vocabulary spelling style transcript transcription spoken phrase preferred wording"
@@ -2209,6 +2520,61 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
+    func advanceCalibrationSet() {
+        calibrationSetIndex = (calibrationSetIndex + 1) % CalibrationSet.defaults.count
+        statusMessage = "Loaded \(currentCalibrationSet.title)"
+    }
+
+    func saveCalibrationSet() async {
+        let set = currentCalibrationSet
+        do {
+            var savedMemories: [DictationMemory] = []
+            for term in set.terms {
+                var memory = DictationMemory(
+                    type: .vocabulary,
+                    payload: [
+                        "term": term,
+                        "preferred": term,
+                        "script": set.script,
+                        "calibration_set": set.id
+                    ],
+                    contexts: ["voice_calibration", set.title, selectedProfile.appName],
+                    source: "quiettype_voice_training",
+                    confidence: 0.93
+                )
+                let id = try await memoryStore.put(memory)
+                memory.id = id
+                savedMemories.append(memory)
+            }
+
+            localMemories.insert(contentsOf: savedMemories.reversed(), at: 0)
+            calibrationSavedCount += 1
+
+            if let sageDirectClient {
+                let content = "QuietType voice training set \"\(set.title)\" expects the user to read: \"\(set.script)\". Preserve these terms during dictation cleanup: \(set.terms.joined(separator: ", ")). Source: user-approved calibration."
+                let submission = try await sageDirectClient.submitTranslationMemory(content: content, confidence: 0.93)
+                sageMemories.insert(
+                    SageMemoryRecord(
+                        id: submission.memoryID,
+                        content: content,
+                        domain: "quiettype.translation",
+                        type: "fact",
+                        confidence: 0.93,
+                        createdAt: nil,
+                        submittingAgent: sageAgentID
+                    ),
+                    at: 0
+                )
+                statusMessage = "Training saved to SAGE"
+            } else {
+                statusMessage = "Training saved locally"
+            }
+            lastError = nil
+        } catch {
+            lastError = "Training save failed: \(error.localizedDescription)"
+        }
+    }
+
     func copyOutput() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(output, forType: .string)
@@ -2260,6 +2626,26 @@ final class MenuBarModel: ObservableObject {
             case .correction, .translation: .correction
             case .vocabulary: .vocabulary
             case .style: .styleProfile
+            }
+        }
+    }
+
+    enum MemoryFilter: String, CaseIterable, Identifiable {
+        case all
+        case vocabulary
+        case corrections
+        case sage
+        case local
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .all: "All"
+            case .vocabulary: "Vocabulary"
+            case .corrections: "Corrections"
+            case .sage: "SAGE"
+            case .local: "Local"
             }
         }
     }
