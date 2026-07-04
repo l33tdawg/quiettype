@@ -16,6 +16,30 @@ public struct SageMemoryRecord: Identifiable, Equatable, Sendable {
     public var confidence: Double?
     public var createdAt: String?
     public var submittingAgent: String?
+
+    public init(
+        id: String,
+        content: String,
+        domain: String,
+        type: String,
+        confidence: Double? = nil,
+        createdAt: String? = nil,
+        submittingAgent: String? = nil
+    ) {
+        self.id = id
+        self.content = content
+        self.domain = domain
+        self.type = type
+        self.confidence = confidence
+        self.createdAt = createdAt
+        self.submittingAgent = submittingAgent
+    }
+}
+
+public struct SageMemorySubmission: Equatable, Sendable {
+    public var memoryID: String
+    public var txHash: String
+    public var status: String
 }
 
 public enum SageDirectClientError: Error, Equatable {
@@ -202,15 +226,35 @@ public final class SageDirectClient: @unchecked Sendable {
         return decoded.memories.map(\.record)
     }
 
-    public func searchMemories(query: String, limit: Int = 12) async throws -> [SageMemoryRecord] {
-        let body = try JSONSerialization.data(withJSONObject: [
+    public func searchMemories(query: String, limit: Int = 12, tags: [String] = []) async throws -> [SageMemoryRecord] {
+        var payload: [String: Any] = [
             "query": query,
             "top_k": limit,
             "status_filter": "committed"
-        ])
+        ]
+        if !tags.isEmpty {
+            payload["tags"] = tags
+        }
+        let body = try JSONSerialization.data(withJSONObject: payload)
         let data = try await request(method: "POST", path: "/v1/memory/search", body: body)
         let decoded = try JSONDecoder().decode(SageMemorySearchResponse.self, from: data)
         return decoded.results.map(\.record)
+    }
+
+    public func submitTranslationMemory(content: String, confidence: Double = 0.95) async throws -> SageMemorySubmission {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "content": content,
+            "memory_type": "fact",
+            "domain_tag": "quiettype.translation",
+            "provider": "quiettype",
+            "confidence_score": confidence,
+            "classification": 0,
+            "tags": ["quiettype", "dictation", "translation"]
+        ])
+
+        let data = try await request(method: "POST", path: "/v1/memory/submit", body: body)
+        let decoded = try JSONDecoder().decode(SageMemorySubmitResponse.self, from: data)
+        return SageMemorySubmission(memoryID: decoded.memoryID, txHash: decoded.txHash, status: decoded.status)
     }
 
     private func request(method: String, path: String, body: Data) async throws -> Data {
@@ -262,6 +306,18 @@ private struct SageMemoryListResponse: Decodable {
 
 private struct SageMemorySearchResponse: Decodable {
     var results: [SageMemoryDTO]
+}
+
+private struct SageMemorySubmitResponse: Decodable {
+    var memoryID: String
+    var txHash: String
+    var status: String
+
+    enum CodingKeys: String, CodingKey {
+        case memoryID = "memory_id"
+        case txHash = "tx_hash"
+        case status
+    }
 }
 
 private struct SageMemoryDTO: Decodable {
