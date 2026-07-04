@@ -20,21 +20,31 @@ dist/QuietType-0.1.0-beta.1-macOS-arm64.dmg
 dist/QuietType-0.1.0-beta.1-macOS-arm64.dmg.sha256
 ```
 
-## 2. Optional notarization
+## 2. Notarization
 
-For private testers, notarization is strongly recommended so macOS Gatekeeper does not create unnecessary friction.
+For private testers, notarization is required for a normal double-click install experience. Without it, Gatekeeper rejects the DMG as `Unnotarized Developer ID`.
 
 Keep credentials out of the repository. Store them in Keychain or use an App Store Connect API key outside the repo.
 
-Typical notarization flow:
+Create the Keychain profile once:
 
 ```bash
-xcrun notarytool submit dist/QuietType-0.1.0-beta.1-macOS-arm64.dmg \
-  --keychain-profile QUIETTYPE_NOTARY \
-  --wait
+xcrun notarytool store-credentials QUIETTYPE_NOTARY \
+  --apple-id "YOUR_APPLE_ID" \
+  --team-id "2N7GKZ8D8Z" \
+  --password "APP_SPECIFIC_PASSWORD"
+```
 
-xcrun stapler staple dist/QuietType-0.1.0-beta.1-macOS-arm64.dmg
-spctl -a -t open --context context:primary-signature -v dist/QuietType-0.1.0-beta.1-macOS-arm64.dmg
+Then notarize and staple the current DMG:
+
+```bash
+bash scripts/notarize-dmg.sh
+```
+
+Or run notarization as part of the build:
+
+```bash
+QUIETTYPE_NOTARIZE=1 bash scripts/beta-release.sh
 ```
 
 ## 3. Create a private GitHub release

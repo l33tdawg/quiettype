@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWIFTPM_HOME="${SWIFTPM_HOME:-$ROOT/.swiftpm-home}"
 CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT/.clang-module-cache}"
 SIGN_IDENTITY="${QUIETTYPE_CODESIGN_IDENTITY:-Developer ID Application: Dhillon Kannabhiran (2N7GKZ8D8Z)}"
+NOTARIZE="${QUIETTYPE_NOTARIZE:-0}"
 
 export SWIFTPM_HOME
 export CLANG_MODULE_CACHE_PATH
@@ -16,6 +17,10 @@ swift build -c release --arch arm64 --product LocalTypeMac
 bash "$ROOT/scripts/package-app.sh"
 codesign --verify --deep --strict --verbose=2 "$ROOT/dist/QuietType.app"
 bash "$ROOT/scripts/create-dmg.sh"
+
+if [[ "$NOTARIZE" == "1" || "$NOTARIZE" == "true" ]]; then
+  bash "$ROOT/scripts/notarize-dmg.sh"
+fi
 
 echo
 echo "Beta artifact ready:"
