@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuietType - Private local dictation for Mac</title>
+  <meta name="description" content="QuietType turns natural speech into polished writing on your Mac. Local transcription, local memory, no cloud processing.">
+  <meta name="author" content="Dhillon 'l33tdawg' Kannabhiran">
+  <meta property="og:title" content="QuietType - Speak freely. Transcribe locally.">
+  <meta property="og:description" content="A private local dictation assistant for Mac. Nothing leaves your Mac.">
+  <meta property="og:image" content="https://l33tdawg.github.io/quiettype/og.png">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#f7f7f5">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <style>
+    :root {
+      --paper: #f7f7f5;
+      --ink: #202020;
+      --muted: #727272;
+      --line: #dfdfdb;
+      --soft: #eeeeea;
+      --panel: #ffffff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      background: var(--paper);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
+      letter-spacing: 0;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .shell {
+      width: min(1180px, calc(100vw - 40px));
+      margin: 0 auto;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px 0;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 720;
+      font-size: 20px;
+    }
+
+    .mark {
+      width: 32px;
+      height: 32px;
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 0 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .button.primary {
+      border-color: var(--ink);
+      background: var(--ink);
+      color: white;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
+      gap: 64px;
+      align-items: center;
+      padding: 78px 0 72px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 22px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--ink);
+    }
+
+    h1 {
+      max-width: 820px;
+      margin: 0;
+      font-size: clamp(54px, 7vw, 96px);
+      line-height: 0.94;
+      letter-spacing: 0;
+      font-weight: 790;
+    }
+
+    .subhead {
+      max-width: 620px;
+      margin: 26px 0 0;
+      color: var(--muted);
+      font-size: 22px;
+      line-height: 1.35;
+      font-weight: 520;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 34px;
+    }
+
+    .device {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.08);
+      overflow: hidden;
+    }
+
+    .device-bar {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      height: 38px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfbfa;
+    }
+
+    .traffic {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #d5d5d0;
+    }
+
+    .device-body {
+      padding: 30px;
+    }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 34px;
+    }
+
+    .metric {
+      min-height: 102px;
+      padding: 16px;
+      border-radius: 10px;
+      background: var(--soft);
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 28px;
+      line-height: 1;
+      margin-bottom: 12px;
+    }
+
+    .metric span,
+    .activity span {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 620;
+    }
+
+    .mic {
+      display: grid;
+      place-items: center;
+      width: 190px;
+      height: 190px;
+      margin: 10px auto 32px;
+      border-radius: 50%;
+      border: 14px solid #e7e7e2;
+      color: var(--muted);
+    }
+
+    .mic svg {
+      width: 78px;
+      height: 78px;
+    }
+
+    .activity {
+      display: grid;
+      gap: 10px;
+    }
+
+    .activity-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 13px 0;
+      border-top: 1px solid var(--line);
+      font-weight: 680;
+    }
+
+    .section {
+      padding: 72px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .section h2 {
+      margin: 0 0 16px;
+      font-size: clamp(34px, 4vw, 56px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .section-lede {
+      max-width: 720px;
+      margin: 0 0 34px;
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1.42;
+      font-weight: 520;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .tile {
+      min-height: 220px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+    }
+
+    .tile h3 {
+      margin: 0 0 12px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    .tile p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.45;
+    }
+
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .compare h3 {
+      margin: 0;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+      font-size: 22px;
+    }
+
+    .compare-panel {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .compare ul {
+      display: grid;
+      gap: 0;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .compare li {
+      padding: 16px 20px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-weight: 560;
+    }
+
+    .closing {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 54px 0 76px;
+      border-top: 1px solid var(--line);
+    }
+
+    .closing h2 {
+      margin: 0;
+      font-size: clamp(32px, 4vw, 54px);
+      line-height: 1;
+    }
+
+    footer {
+      padding: 28px 0;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 560;
+    }
+
+    @media (max-width: 880px) {
+      .hero,
+      .compare,
+      .grid,
+      .closing {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        gap: 34px;
+        padding-top: 42px;
+      }
+
+      .closing {
+        display: grid;
+      }
+
+      .metric-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="shell nav">
+    <a class="brand" href="#">
+      <img class="mark" src="./icon.svg" alt="">
+      <span>QuietType</span>
+    </a>
+    <nav class="nav-actions" aria-label="Primary">
+      <a href="#security">Security</a>
+      <a class="button" href="https://github.com/l33tdawg/quiettype">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="shell hero">
+      <div>
+        <div class="eyebrow"><span class="dot"></span> Private beta for macOS Apple Silicon</div>
+        <h1>Speak freely. Transcribe locally.</h1>
+      <p class="subhead">QuietType turns natural speech into polished writing on your Mac. Local speech recognition, local correction memory, and no cloud processing.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="https://github.com/l33tdawg/quiettype/releases">Get the private beta</a>
+          <a class="button" href="#how">How it works</a>
+        </div>
+      </div>
+
+      <div class="device" aria-label="QuietType app preview">
+        <div class="device-bar"><span class="traffic"></span><span class="traffic"></span><span class="traffic"></span></div>
+        <div class="device-body">
+          <div class="metric-row">
+            <div class="metric"><strong>0</strong><span>Cloud calls</span></div>
+            <div class="metric"><strong>Warm</strong><span>Local ASR</span></div>
+            <div class="metric"><strong>Local</strong><span>Memory</span></div>
+          </div>
+          <div class="mic">
+            <svg viewBox="0 0 96 96" aria-hidden="true">
+              <rect x="34" y="14" width="28" height="42" rx="14" fill="currentColor"/>
+              <path d="M22 42c0 14.4 11.6 26 26 26s26-11.6 26-26" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"/>
+              <path d="M48 68v14M34 82h28" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="activity">
+            <div class="activity-row">SAGE memory <span>Optional</span></div>
+            <div class="activity-row">Secure transcription <span>On-device</span></div>
+            <div class="activity-row">Audio and text <span>Never uploaded</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="how" class="shell section">
+      <h2>Dictation that behaves like writing.</h2>
+      <p class="section-lede">Literal transcription leaves the mess in. QuietType cleans natural speech into usable text while preserving what matters: names, acronyms, technical terms, lists, and corrections.</p>
+      <div class="grid">
+        <article class="tile">
+          <h3>Natural speech in</h3>
+          <p>Speak with pauses, corrections, and rough phrasing. QuietType is designed for real dictation, not studio-clean voice commands.</p>
+        </article>
+        <article class="tile">
+          <h3>Polished text out</h3>
+          <p>It removes fillers, handles “actually” corrections, formats lists, normalizes numbers, and adapts tone for messages, notes, email, and code editors.</p>
+        </article>
+        <article class="tile">
+          <h3>Personal over time</h3>
+          <p>Voice training and correction memory teach QuietType your vocabulary, preferred spellings, and writing style without sending private text away.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="security" class="shell section">
+      <h2>Built for people who do not want cloud dictation.</h2>
+      <p class="section-lede">Cloud-first tools can be convenient, but they ask for the most sensitive input you have: your voice, your drafts, and the app context around them. QuietType’s default is local-only.</p>
+      <div class="grid">
+        <article class="tile">
+          <h3>No audio upload</h3>
+          <p>Speech recognition runs on the Mac using the bundled local engine and Apple Silicon acceleration path.</p>
+        </article>
+        <article class="tile">
+          <h3>No transcript upload</h3>
+          <p>Cleanup and formatting happen locally. The normal dictation path has no cloud API dependency.</p>
+        </article>
+        <article class="tile">
+          <h3>SAGE memory optional</h3>
+          <p>When available, SAGE stores governed local memories for vocabulary and corrections. Dictation memories remain local by default.</p>
+        </article>
+        <article class="tile">
+          <h3>Secure-field aware</h3>
+          <p>QuietType checks macOS permissions and avoids workflows that should not read or write sensitive fields.</p>
+        </article>
+        <article class="tile">
+          <h3>Inspectable data</h3>
+          <p>Memory exists to improve transcription, not to collect private content. Users can review and teach what QuietType remembers.</p>
+        </article>
+        <article class="tile">
+          <h3>Private beta</h3>
+          <p>The current build is for trusted testers while signing, notarization, onboarding, and model packaging are hardened.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="shell section">
+      <h2>Cloud-first dictation vs QuietType.</h2>
+      <div class="compare">
+        <div class="compare-panel">
+          <h3>Cloud-first tools</h3>
+          <ul>
+            <li>Audio may leave the device.</li>
+            <li>Transcript and app context may be processed remotely.</li>
+            <li>Personal vocabulary usually lives in someone else’s system.</li>
+            <li>Great output, but privacy depends on provider policy.</li>
+          </ul>
+        </div>
+        <div class="compare-panel">
+          <h3>QuietType</h3>
+          <ul>
+            <li>Audio stays on the Mac.</li>
+            <li>Text cleanup runs locally.</li>
+            <li>Vocabulary and corrections are local-first.</li>
+            <li>Designed for privacy-sensitive users from day one.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="shell closing">
+      <h2>Nothing leaves your Mac.</h2>
+      <a class="button primary" href="https://github.com/l33tdawg/quiettype/releases">Download beta</a>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell">QuietType is a private local dictation assistant for macOS Apple Silicon by Dhillon "l33tdawg" Kannabhiran. Contact <a href="mailto:dhillon@levelupctf.com">dhillon@levelupctf.com</a>.</div>
+  </footer>
+</body>
+</html>

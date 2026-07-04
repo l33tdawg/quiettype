@@ -3,14 +3,21 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$ROOT/dist/QuietType.app"
+ARM_RELEASE_BIN="$ROOT/.build/arm64-apple-macosx/release/LocalTypeMac"
 ARM_BIN="$ROOT/.build/arm64-apple-macosx/debug/LocalTypeMac"
+X86_RELEASE_BIN="$ROOT/.build/x86_64-apple-macosx/release/LocalTypeMac"
 X86_BIN="$ROOT/.build/x86_64-apple-macosx/debug/LocalTypeMac"
 SERVER_BIN="$ROOT/vendor/argmax-oss-swift/.build/arm64-apple-macosx/release/argmax-cli"
 WHISPER_CPP_BIN="$ROOT/vendor/whisper.cpp/build-cpu/bin/whisper-cli"
 SIGN_IDENTITY="${QUIETTYPE_CODESIGN_IDENTITY:--}"
+SIGN_OPTIONS="${QUIETTYPE_CODESIGN_OPTIONS:---options runtime}"
 
-if [[ -x "$ARM_BIN" ]]; then
+if [[ -x "$ARM_RELEASE_BIN" ]]; then
+  BIN="$ARM_RELEASE_BIN"
+elif [[ -x "$ARM_BIN" ]]; then
   BIN="$ARM_BIN"
+elif [[ -x "$X86_RELEASE_BIN" ]]; then
+  BIN="$X86_RELEASE_BIN"
 else
   BIN="$X86_BIN"
 fi
@@ -37,13 +44,13 @@ fi
 chmod +x "$APP/Contents/MacOS/LocalTypeMac"
 if [[ -x "$APP/Contents/MacOS/argmax-cli" ]]; then
   chmod +x "$APP/Contents/MacOS/argmax-cli"
-  codesign --force --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/argmax-cli" >/dev/null
+  codesign --force --sign "$SIGN_IDENTITY" $SIGN_OPTIONS "$APP/Contents/MacOS/argmax-cli" >/dev/null
 fi
 if [[ -x "$APP/Contents/MacOS/whisper-cli" ]]; then
   chmod +x "$APP/Contents/MacOS/whisper-cli"
-  codesign --force --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/whisper-cli" >/dev/null
+  codesign --force --sign "$SIGN_IDENTITY" $SIGN_OPTIONS "$APP/Contents/MacOS/whisper-cli" >/dev/null
 fi
-codesign --force --sign "$SIGN_IDENTITY" "$APP/Contents/MacOS/LocalTypeMac" >/dev/null
-codesign --force --sign "$SIGN_IDENTITY" "$APP" >/dev/null
+codesign --force --sign "$SIGN_IDENTITY" $SIGN_OPTIONS "$APP/Contents/MacOS/LocalTypeMac" >/dev/null
+codesign --force --sign "$SIGN_IDENTITY" $SIGN_OPTIONS "$APP" >/dev/null
 
 echo "$APP"

@@ -1,4 +1,5 @@
 import LocalTypeCore
+import Darwin
 import SwiftUI
 
 @main
@@ -188,6 +189,7 @@ struct TesterView: View {
         }
         .onReceive(permissionTimer) { _ in
             Task {
+                model.refreshSystemMetrics()
                 await model.refreshPermissions()
             }
         }
@@ -696,7 +698,7 @@ struct TesterView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Speak freely. Transcribe locally. Nothing leaves your Mac.")
                     .font(.callout.weight(.medium))
-                Text("QuietType is a local-first dictation assistant by l33tdawg. It uses on-device transcription and optional SAGE governed memory for corrections and writing preferences.")
+                Text("QuietType is a local-first dictation assistant by Dhillon \"l33tdawg\" Kannabhiran. It uses on-device transcription and optional SAGE governed memory for corrections and writing preferences. Contact: dhillon@levelupctf.com.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -714,7 +716,7 @@ struct TesterView: View {
                     .buttonStyle(QuietButtonStyle())
                     Button("Copy share text") {
                         NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString("QuietType: private local dictation for Mac. Speak freely. Transcribe locally. Nothing leaves your Mac. https://github.com/l33tdawg/quiettype", forType: .string)
+                        NSPasteboard.general.setString("QuietType by Dhillon \"l33tdawg\" Kannabhiran: private local dictation for Mac. Speak freely. Transcribe locally. Nothing leaves your Mac. https://github.com/l33tdawg/quiettype", forType: .string)
                     }
                     .buttonStyle(QuietButtonStyle())
                 }
@@ -856,7 +858,7 @@ struct TesterView: View {
                 ActivityRow(icon: "waveform", title: "Secure transcription", value: model.nativeSpeechServerReady ? "Warm" : model.speechEngineStatus)
                 ActivityRow(icon: "square.stack.3d.up", title: "Audio chunks", value: "\(model.partialChunkCount)")
                 ActivityRow(icon: "cpu", title: "Apple Silicon path", value: model.nativeSpeechServerReady ? "Active" : "Warming")
-                ActivityRow(icon: "network.slash", title: "Cloud processing", value: "None")
+                ActivityMeterRow(icon: "speedometer", title: "Local CPU", value: "\(model.cpuUsagePercent)%", progress: Double(model.cpuUsagePercent) / 100.0)
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -1363,6 +1365,36 @@ private struct ActivityRow: View {
     }
 }
 
+private struct ActivityMeterRow: View {
+    var icon: String
+    var title: String
+    var value: String
+    var progress: Double
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+            Text(title)
+                .font(.system(size: 16, weight: .medium))
+            Spacer()
+            ProgressView(value: min(max(progress, 0), 1))
+                .progressViewStyle(.linear)
+                .tint(.secondary)
+                .frame(width: 82)
+            Text(value)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 42, alignment: .trailing)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+    }
+}
+
 private struct PermissionRow: View {
     var title: String
     var state: PermissionState
@@ -1437,6 +1469,41 @@ private struct StartupStepRow: View {
         case .warning: .secondary
         case .failed: .red
         }
+    }
+}
+
+private struct CPUUsageSampler {
+    private var previous: host_cpu_load_info_data_t?
+
+    mutating func sample() -> Int {
+        var info = host_cpu_load_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.stride / MemoryLayout<integer_t>.stride)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
+                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, rebound, &count)
+            }
+        }
+
+        guard result == KERN_SUCCESS else {
+            return 0
+        }
+
+        defer {
+            previous = info
+        }
+
+        guard let previous else {
+            return 0
+        }
+
+        let user = Double(info.cpu_ticks.0 - previous.cpu_ticks.0)
+        let system = Double(info.cpu_ticks.1 - previous.cpu_ticks.1)
+        let idle = Double(info.cpu_ticks.2 - previous.cpu_ticks.2)
+        let nice = Double(info.cpu_ticks.3 - previous.cpu_ticks.3)
+        let total = max(user + system + idle + nice, 1)
+        let busy = user + system + nice
+
+        return min(100, max(0, Int((busy / total) * 100.0)))
     }
 }
 
@@ -1710,6 +1777,7 @@ final class MenuBarModel: ObservableObject {
     @Published var hotKeyLabel = "⌃⇧D"
     @Published var microphonePermission: PermissionState = .unknown
     @Published var accessibilityPermission: PermissionState = .unknown
+    @Published var cpuUsagePercent = 0
 
     private let permissionService = MacOSPermissionService()
     private let memoryStore = SQLiteMemoryStore()
@@ -1728,6 +1796,7 @@ final class MenuBarModel: ObservableObject {
     private var hotKeyController: CarbonHotKeyController?
     private var lastHotKeyToggleAt: Date?
     private let overlayController = DictationOverlayController()
+    private var cpuSampler = CPUUsageSampler()
     private static let calibrationSavedCountKey = "quiettype.calibrationSavedCount"
     private static let requiredCalibrationSets = 3
 
@@ -1997,6 +2066,10 @@ final class MenuBarModel: ObservableObject {
         updatePermissionsStartupStep()
     }
 
+    func refreshSystemMetrics() {
+        cpuUsagePercent = cpuSampler.sample()
+    }
+
     func requestMicrophone() async {
         microphonePermission = await permissionService.requestMicrophone()
         await refreshPermissions(promptForAccessibility: false)
@@ -2017,6 +2090,7 @@ final class MenuBarModel: ObservableObject {
         isBooting = true
 
         Task {
+            refreshSystemMetrics()
             refreshSageStatus()
             await registerSageAgentIfAvailable()
             await refreshPermissions(promptForAccessibility: false)
