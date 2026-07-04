@@ -267,6 +267,9 @@ struct TesterView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 header
+                if !model.setupComplete {
+                    setupNudgePanel
+                }
                 metricsGrid
                 HStack(alignment: .top, spacing: 22) {
                     dictationPanel
@@ -305,7 +308,7 @@ struct TesterView: View {
 
     private var dictionaryPage: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 20) {
                 pageHeader(
                     title: "Memory",
                     subtitle: "Corrections, vocabulary, and translation preferences QuietType can reuse."
@@ -345,12 +348,21 @@ struct TesterView: View {
     }
 
     private var trainingPanel: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Voice training")
-                        .font(.title3.weight(.semibold))
-                    Text("Read a known script so QuietType can save expected spellings, terms, and correction hints.")
+                    HStack(spacing: 10) {
+                        Text("Voice training")
+                            .font(.system(size: 19, weight: .semibold, design: .rounded))
+                        Text(model.trainingProgressLabel)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    Text("Read known text so QuietType can learn your expected terms and preferred spellings.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -367,12 +379,12 @@ struct TesterView: View {
                 Text(model.currentCalibrationSet.title)
                     .font(.callout.weight(.semibold))
                 Text(model.currentCalibrationSet.script)
-                    .font(.system(size: 18, weight: .medium, design: .rounded))
-                    .lineSpacing(5)
+                    .font(.system(size: 16, weight: .regular, design: .rounded))
+                    .lineSpacing(4)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
-            .padding(16)
+            .padding(15)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(nsColor: .windowBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -380,7 +392,7 @@ struct TesterView: View {
 
             HStack {
                 Text(model.currentCalibrationSet.terms.joined(separator: " · "))
-                    .font(.callout)
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -401,7 +413,7 @@ struct TesterView: View {
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
             }
         }
-        .padding(18)
+        .padding(16)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
@@ -476,20 +488,20 @@ struct TesterView: View {
                 }
             }
         }
-        .padding(18)
+        .padding(16)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var settingsPage: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 20) {
                 pageHeader(
                     title: "Settings",
                     subtitle: "Transcription quality, privacy memory, and local diagnostics."
                 )
                 settingsPanel
-                    .frame(maxWidth: 760, alignment: .leading)
+                    .frame(maxWidth: 900, alignment: .leading)
             }
             .padding(34)
         }
@@ -560,11 +572,54 @@ struct TesterView: View {
 
     private var metricsGrid: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 4), spacing: 14) {
-            MetricTile(icon: "person.text.rectangle", value: model.sageDetected ? "12%" : "Local", label: "Personalization")
+            MetricTile(icon: "person.text.rectangle", value: model.personalizationLabel, label: "Personalization")
             MetricTile(icon: "timer", value: model.recordingDuration > 0 ? String(format: "%.1fs", model.recordingDuration) : "Ready", label: "Current dictation")
             MetricTile(icon: "bolt.fill", value: model.lastLatencyMS.map { "\($0) ms" } ?? "Warm", label: "Release latency")
             MetricTile(icon: "lock.shield", value: "0", label: "Network calls")
         }
+    }
+
+    private var setupNudgePanel: some View {
+        HStack(alignment: .center, spacing: 18) {
+            ZStack {
+                Circle()
+                    .stroke(Color.primary.opacity(0.10), lineWidth: 8)
+                    .frame(width: 58, height: 58)
+                Text(model.personalizationLabel)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Finish setup for better transcription")
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                Text(model.setupNudgeText)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            Button {
+                selectedSection = .dictionary
+            } label: {
+                Label("Resume setup", systemImage: "arrow.right.circle")
+            }
+            .buttonStyle(QuietButtonStyle(prominence: .primary))
+
+            Button {
+                hasSeenGuide = false
+                selectedSection = .home
+                guideStep = .welcome
+            } label: {
+                Label("Guide", systemImage: "questionmark.circle")
+            }
+            .buttonStyle(QuietButtonStyle())
+        }
+        .padding(18)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
     }
 
     private var privacyStrip: some View {
@@ -577,7 +632,7 @@ struct TesterView: View {
     }
 
     private var settingsPanel: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             settingsSection(title: "Transcription") {
                 VStack(alignment: .leading, spacing: 12) {
                     QuietSegmentedControl(
@@ -668,12 +723,12 @@ struct TesterView: View {
     }
 
     private func settingsSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.headline)
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
             content()
         }
-        .padding(14)
+        .padding(16)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
@@ -1673,8 +1728,11 @@ final class MenuBarModel: ObservableObject {
     private var hotKeyController: CarbonHotKeyController?
     private var lastHotKeyToggleAt: Date?
     private let overlayController = DictationOverlayController()
+    private static let calibrationSavedCountKey = "quiettype.calibrationSavedCount"
+    private static let requiredCalibrationSets = 3
 
     init() {
+        calibrationSavedCount = UserDefaults.standard.integer(forKey: Self.calibrationSavedCountKey)
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
@@ -1704,6 +1762,9 @@ final class MenuBarModel: ObservableObject {
         if !permissionsReady {
             return "Click the mic to finish setup"
         }
+        if !trainingComplete {
+            return "Click the mic to dictate"
+        }
         if isRecording {
             return "Listening... \(String(format: "%.1f", recordingDuration))s"
         }
@@ -1726,6 +1787,9 @@ final class MenuBarModel: ObservableObject {
     var helperText: String {
         if !permissionsReady {
             return "QuietType will ask macOS for the permissions it needs."
+        }
+        if !trainingComplete {
+            return "Voice training is still open. You can dictate now, but training improves names, acronyms, and technical terms."
         }
         if isRecording {
             return "Speak naturally, then press \(hotKeyLabel) or click the mic again to insert."
@@ -1760,6 +1824,52 @@ final class MenuBarModel: ObservableObject {
 
     var currentCalibrationSet: CalibrationSet {
         CalibrationSet.defaults[calibrationSetIndex % CalibrationSet.defaults.count]
+    }
+
+    var trainingComplete: Bool {
+        calibrationSavedCount >= Self.requiredCalibrationSets
+    }
+
+    var setupComplete: Bool {
+        permissionsReady && speechEngineReady && trainingComplete
+    }
+
+    var trainingProgressLabel: String {
+        "\(min(calibrationSavedCount, Self.requiredCalibrationSets)) of \(Self.requiredCalibrationSets)"
+    }
+
+    var personalizationLabel: String {
+        "\(personalizationPercent)%"
+    }
+
+    var setupNudgeText: String {
+        if !permissionsReady {
+            return "Grant Microphone and Accessibility, then complete \(Self.requiredCalibrationSets) short voice training sets."
+        }
+        if !trainingComplete {
+            let remaining = max(0, Self.requiredCalibrationSets - calibrationSavedCount)
+            return "Complete \(remaining) more voice training \(remaining == 1 ? "set" : "sets") so QuietType can preserve your terms and corrections."
+        }
+        if !speechEngineReady {
+            return "The local speech engine is still warming. QuietType will finish setup when it is ready."
+        }
+        return "Setup is complete."
+    }
+
+    private var personalizationPercent: Int {
+        var score = 10
+        if permissionsReady {
+            score += 20
+        }
+        if speechEngineReady {
+            score += 20
+        }
+        if sageDetected {
+            score += 10
+        }
+        let training = min(calibrationSavedCount, Self.requiredCalibrationSets)
+        score += Int((Double(training) / Double(Self.requiredCalibrationSets)) * 40.0)
+        return min(100, score)
     }
 
     var localMemoryCount: Int {
@@ -2549,6 +2659,7 @@ final class MenuBarModel: ObservableObject {
 
             localMemories.insert(contentsOf: savedMemories.reversed(), at: 0)
             calibrationSavedCount += 1
+            UserDefaults.standard.set(calibrationSavedCount, forKey: Self.calibrationSavedCountKey)
 
             if let sageDirectClient {
                 let content = "QuietType voice training set \"\(set.title)\" expects the user to read: \"\(set.script)\". Preserve these terms during dictation cleanup: \(set.terms.joined(separator: ", ")). Source: user-approved calibration."
