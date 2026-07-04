@@ -257,6 +257,22 @@ public final class SageDirectClient: @unchecked Sendable {
         return SageMemorySubmission(memoryID: decoded.memoryID, txHash: decoded.txHash, status: decoded.status)
     }
 
+    public func submitTranscriptNote(content: String, confidence: Double = 0.82) async throws -> SageMemorySubmission {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "content": content,
+            "memory_type": "observation",
+            "domain_tag": "quiettype.transcripts",
+            "provider": "quiettype",
+            "confidence_score": confidence,
+            "classification": 0,
+            "tags": ["quiettype", "dictation", "transcript", "review"]
+        ])
+
+        let data = try await request(method: "POST", path: "/v1/memory/submit", body: body)
+        let decoded = try JSONDecoder().decode(SageMemorySubmitResponse.self, from: data)
+        return SageMemorySubmission(memoryID: decoded.memoryID, txHash: decoded.txHash, status: decoded.status)
+    }
+
     private func request(method: String, path: String, body: Data) async throws -> Data {
         let url = endpoint.appendingPathComponent(String(path.dropFirst()))
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)

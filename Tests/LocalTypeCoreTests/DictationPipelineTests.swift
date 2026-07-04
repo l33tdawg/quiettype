@@ -86,6 +86,119 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testFormatsSetupVoiceTrainingShoppingSentenceAsQuantityList() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "for the shopping list get three apples two bananas oat milk dishwashing liquid and greek yogurt", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            - 3 apples
+            - 2 bananas
+            - Oat milk
+            - Dishwashing liquid
+            - Greek yogurt
+            """
+        )
+    }
+
+    func testFormatsOrdinalNumberedListWithoutDroppingItemVerbs() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "numbered list first add milk second review the article third make the examples concrete", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            1. Add milk
+            2. Review the article
+            3. Make the examples concrete
+            """
+        )
+    }
+
+    func testFinishWithEmptyTailPreservesStableListFormatting() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        _ = try await pipeline.processStableSegment(
+            StableSegment(text: "shopping list milk eggs bread and greek yogurt", isFinal: false),
+            context: context
+        )
+        let result = try await pipeline.finish(unstableTail: "", context: context)
+
+        XCTAssertEqual(
+            result.text,
+            """
+            - Milk
+            - Eggs
+            - Bread
+            - Greek yogurt
+            """
+        )
+    }
+
+    func testTreatsSpokenNewLineAsListDelimiter() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "shopping list new line eggs new line oat milk new line dishwashing liquid", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            - Eggs
+            - Oat milk
+            - Dishwashing liquid
+            """
+        )
+    }
+
+    func testDoesNotConvertApprovalRequestIntoShoppingList() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Slack", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "need to get approval from Alice and Bob before we ship", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "Need to get approval from Alice and Bob before we ship.")
+    }
+
+    func testRemovesCancelledGroceryItems() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "for the shopping list get milk eggs bread bananas actually no bananas apples and greek yogurt", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            - Milk
+            - Eggs
+            - Bread
+            - Apples
+            - Greek yogurt
+            """
+        )
+    }
+
     func testExtractsEmbeddedGroceryItemsFromConversationalRequest() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Messages", profile: .messaging)

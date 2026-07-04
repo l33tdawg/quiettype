@@ -32,6 +32,10 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
     }
 
     private func resolveSimpleCorrections(_ text: String) -> String {
+        if text.range(of: #"\bactually\s+no\b"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return text
+        }
+
         var result = text
         let replacementPatterns = [
             #"\b(.+?)\s+sorry\s+(.+)$"#,
@@ -103,11 +107,15 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             "grocery order"
         ].contains { lower.contains($0) }
 
+        let hasGroceryContext = containsGroceryTerm(in: lower)
         let hasShoppingIntent = lower.contains("going shopping")
-            || lower.contains("need to buy")
-            || lower.contains("need to get")
-            || lower.contains("pick up")
             || lower.contains("grocery order")
+            || (hasGroceryContext && (
+                lower.contains("need to buy")
+                    || lower.contains("need to get")
+                    || lower.contains("we need")
+                    || lower.contains("pick up")
+            ))
 
         let hasMessyGroceryIntent = lower.contains("what else")
             || lower.contains("might as well order")
@@ -275,8 +283,8 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
 
     private func splitListItems(from text: String, numbered: Bool) -> [String] {
         var value = text
-            .replacingOccurrences(of: #"\bactually no\s+([^,.;]+?)\s+(?=\w)"#, with: " remove $1 ", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"\b(?:comma|then|plus)\b"#, with: " | ", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"\bactually no\s+([^,.;]+?)\s+(?=\w)"#, with: " | remove $1 | ", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"\b(?:comma|then|plus|new line|newline|next line)\b"#, with: " | ", options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(of: #"[,\n;.!?]+"#, with: " | ", options: .regularExpression)
 
         if numbered {
@@ -302,6 +310,11 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
 
     private func splitSpaceSeparatedItemsIfNeeded(_ value: String) -> [String] {
         let normalized = normalizeWhitespace(value)
+        let lower = normalized.lowercased()
+        if lower.hasPrefix("remove ") || lower.hasPrefix("no ") {
+            return [normalized]
+        }
+
         let words = normalized
             .split(separator: " ")
             .map(String.init)

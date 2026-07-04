@@ -35,6 +35,11 @@ public actor DictationPipeline {
         }
 
         let correctedTail = correctionEngine.apply(to: unstableTail)
+        if correctedTail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !rollingPolishedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return EditorResult(text: rollingPolishedText, latencyMS: 0)
+        }
+
         let request = EditorRequest(
             stableText: "",
             unstableTail: correctedTail,

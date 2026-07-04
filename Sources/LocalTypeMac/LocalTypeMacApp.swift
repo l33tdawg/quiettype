@@ -155,6 +155,7 @@ struct TesterView: View {
     @State private var selectedSection: QuietTypeSection = .home
     @State private var showingTeachSheet = false
     @State private var showingRecognizedTerms = false
+    @State private var editingTranscriptNote: DictionaryMemoryItem?
     @State private var guideStep: QuietTypeGuideStep?
     private let permissionTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -183,6 +184,9 @@ struct TesterView: View {
         .frame(minWidth: 1220, minHeight: 780)
         .animation(.easeInOut(duration: 0.22), value: selectedSection)
         .animation(.easeInOut(duration: 0.18), value: guideStep)
+        .sheet(item: $editingTranscriptNote) { memory in
+            TranscriptNoteEditor(memory: memory, model: model)
+        }
         .sheet(isPresented: $showingTeachSheet) {
             TeachQuietTypeSheet(model: model)
         }
@@ -350,7 +354,7 @@ struct TesterView: View {
             MemoryStatPill(title: "Committed", value: "\(model.sageMemories.count)")
             MemoryStatPill(title: "Relevant", value: "\(model.dictionaryMemories.count)")
             MemoryStatPill(title: "Corrections", value: "\(model.localMemoryCount)")
-            MemoryStatPill(title: "Cloud calls", value: "0")
+            MemoryStatPill(title: "Transcript notes", value: "\(model.transcriptNoteCount)")
         }
     }
 
@@ -500,7 +504,9 @@ struct TesterView: View {
             } else {
                 VStack(spacing: 10) {
                     ForEach(model.filteredDictionaryMemories) { memory in
-                        DictionaryMemoryRow(memory: memory)
+                        DictionaryMemoryRow(memory: memory) {
+                            editingTranscriptNote = memory
+                        }
                     }
                 }
             }
@@ -1273,10 +1279,14 @@ struct DictionaryMemoryItem: Identifiable, Equatable {
     var kind: String
     var confidence: Double?
     var source: String
+    var rawTranscript: String?
+    var polishedText: String?
+    var isEditableTranscript: Bool
 }
 
 private struct DictionaryMemoryRow: View {
     var memory: DictionaryMemoryItem
+    var editAction: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -1289,6 +1299,13 @@ private struct DictionaryMemoryRow: View {
                     Text("\(Int(confidence * 100))%")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tertiary)
+                }
+                if memory.isEditableTranscript {
+                    Button("Edit") {
+                        editAction()
+                    }
+                    .buttonStyle(QuietButtonStyle())
+                    .controlSize(.small)
                 }
             }
 
@@ -1311,6 +1328,75 @@ private struct DictionaryMemoryRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct TranscriptNoteEditor: View {
+    let memory: DictionaryMemoryItem
+    @ObservedObject var model: MenuBarModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var rawTranscript: String
+    @State private var polishedText: String
+
+    init(memory: DictionaryMemoryItem, model: MenuBarModel) {
+        self.memory = memory
+        self.model = model
+        _rawTranscript = State(initialValue: memory.rawTranscript ?? "")
+        _polishedText = State(initialValue: memory.polishedText ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Review transcript")
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                Text("Fix obvious mistakes here. Saved edits stay local and can become correction hints when you teach QuietType.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Raw transcript")
+                    .font(.headline)
+                TextEditor(text: $rawTranscript)
+                    .font(.body)
+                    .frame(minHeight: 100)
+                    .scrollContentBackground(.hidden)
+                    .padding(10)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Polished text")
+                    .font(.headline)
+                TextEditor(text: $polishedText)
+                    .font(.body)
+                    .frame(minHeight: 120)
+                    .scrollContentBackground(.hidden)
+                    .padding(10)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                .buttonStyle(QuietButtonStyle())
+                Button("Save review") {
+                    Task {
+                        await model.updateTranscriptNote(memoryID: memory.id, rawTranscript: rawTranscript, polishedText: polishedText)
+                        dismiss()
+                    }
+                }
+                .buttonStyle(QuietButtonStyle(prominence: .primary))
+            }
+        }
+        .padding(26)
+        .frame(width: 620)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
@@ -1780,6 +1866,12 @@ struct CalibrationSet: Identifiable, Equatable {
             terms: ["Ollama", "WhisperKit", "local models", "Apple Silicon"]
         ),
         CalibrationSet(
+            id: "lists-and-numbers",
+            title: "Lists and numbers set",
+            script: "For the shopping list, get three apples, two bananas, oat milk, dishwashing liquid, and Greek yogurt.",
+            terms: ["3 apples", "2 bananas", "oat milk", "dishwashing liquid", "Greek yogurt"]
+        ),
+        CalibrationSet(
             id: "security-hardware",
             title: "Security hardware set",
             script: "The Utimaco CSe100 HSM supports Ed25519. Please preserve HSM, CSe100, and Utimaco when I dictate technical notes.",
@@ -2039,18 +2131,28 @@ final class MenuBarModel: ObservableObject {
     }
 
     var localMemoryCount: Int {
-        localMemories.count
+        localMemories.filter { $0.type == .correction }.count
+    }
+
+    var transcriptNoteCount: Int {
+        localMemories.filter { $0.type == .transcriptNote }.count
     }
 
     var dictionaryMemories: [DictionaryMemoryItem] {
         let localItems = localMemories.map { memory in
             DictionaryMemoryItem(
                 id: memory.id ?? UUID().uuidString,
-                title: memory.payload["corrected"] ?? memory.payload["preferred"] ?? memory.type.rawValue,
+                title: memory.payload["corrected"]
+                    ?? memory.payload["preferred"]
+                    ?? memory.payload["polished_text"]?.prefix(64).description
+                    ?? memory.type.rawValue,
                 summary: memorySummary(from: memory),
                 kind: memory.type.rawValue.replacingOccurrences(of: "dictation.", with: "").replacingOccurrences(of: "_", with: " ").capitalized,
                 confidence: memory.confidence,
-                source: "Local"
+                source: "Local",
+                rawTranscript: memory.payload["raw_transcript"],
+                polishedText: memory.payload["polished_text"],
+                isEditableTranscript: memory.type == .transcriptNote
             )
         }
 
@@ -2061,7 +2163,10 @@ final class MenuBarModel: ObservableObject {
                 summary: memory.content.isEmpty ? "Memory content unavailable." : memory.content,
                 kind: memory.domain.replacingOccurrences(of: "quiettype.", with: "").capitalized,
                 confidence: memory.confidence,
-                source: memory.submittingAgent == sageAgentID ? "SAGE · QuietType" : "SAGE"
+                source: memory.submittingAgent == sageAgentID ? "SAGE · QuietType" : "SAGE",
+                rawTranscript: nil,
+                polishedText: nil,
+                isEditableTranscript: false
             )
         }
 
@@ -2118,6 +2223,10 @@ final class MenuBarModel: ObservableObject {
             return memory.payload["rule"] ?? "Writing style preference."
         case .formattingPreference:
             return memory.payload["rule"] ?? "Formatting preference."
+        case .transcriptNote:
+            let raw = memory.payload["raw_transcript"] ?? ""
+            let polished = memory.payload["polished_text"] ?? ""
+            return "Raw: \"\(raw)\". Polished: \"\(polished)\"."
         }
     }
 
@@ -2739,6 +2848,7 @@ final class MenuBarModel: ObservableObject {
             lastLatencyMS = result.timing.keyReleaseToInsertMS
             didInsert = !previewOnly
             statusMessage = "Polished locally"
+            await saveTranscriptNote(rawTranscript: rawTranscript, polishedText: result.text, inserted: didInsert, latencyMS: result.timing.keyReleaseToInsertMS)
             if didInsert {
                 overlayController.show(state: .inserted)
                 overlayController.hide(after: 1.1)
@@ -2749,6 +2859,93 @@ final class MenuBarModel: ObservableObject {
             output = "Transcript: \(rawTranscript)"
             lastError = String(describing: error)
             overlayController.hide(after: 1.1)
+        }
+    }
+
+    private func saveTranscriptNote(rawTranscript: String, polishedText: String, inserted: Bool, latencyMS: Int?) async {
+        let raw = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let polished = polishedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty || !polished.isEmpty else {
+            return
+        }
+
+        var memory = DictationMemory(
+            type: .transcriptNote,
+            payload: [
+                "raw_transcript": raw,
+                "polished_text": polished,
+                "app": selectedProfile.appName,
+                "style": selectedProfile.appProfile.rawValue,
+                "inserted": inserted ? "true" : "false",
+                "latency_ms": latencyMS.map(String.init) ?? "",
+                "created_at": ISO8601DateFormatter().string(from: Date())
+            ],
+            contexts: [selectedProfile.appName, selectedProfile.appProfile.rawValue, "dictation_review"],
+            source: "quiettype_dictation_turn",
+            confidence: 0.82
+        )
+
+        do {
+            let localID = try await memoryStore.put(memory)
+            memory.id = localID
+            localMemories.insert(memory, at: 0)
+        } catch {
+            return
+        }
+
+        guard let sageDirectClient else {
+            return
+        }
+
+        let content = """
+        QuietType transcript note for review. App: \(selectedProfile.appName). Inserted: \(inserted ? "yes" : "no"). Raw transcript: "\(raw)". Polished output: "\(polished)". This is review history, not an automatic correction rule.
+        """
+
+        do {
+            let submission = try await sageDirectClient.submitTranscriptNote(content: content)
+            sageMemories.insert(
+                SageMemoryRecord(
+                    id: submission.memoryID,
+                    content: content,
+                    domain: "quiettype.transcripts",
+                    type: "observation",
+                    confidence: 0.82,
+                    createdAt: nil,
+                    submittingAgent: sageAgentID
+                ),
+                at: 0
+            )
+        } catch {
+            // Dictation should never fail because review-note persistence failed.
+        }
+    }
+
+    func updateTranscriptNote(memoryID: String, rawTranscript: String, polishedText: String) async {
+        let raw = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let polished = polishedText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        do {
+            try await memoryStore.update(
+                memoryID: memoryID,
+                patch: [
+                    "raw_transcript": raw,
+                    "polished_text": polished,
+                    "reviewed_at": ISO8601DateFormatter().string(from: Date()),
+                    "reviewed_by_user": "true"
+                ]
+            )
+
+            if let index = localMemories.firstIndex(where: { $0.id == memoryID }) {
+                localMemories[index].payload["raw_transcript"] = raw
+                localMemories[index].payload["polished_text"] = polished
+                localMemories[index].payload["reviewed_at"] = ISO8601DateFormatter().string(from: Date())
+                localMemories[index].payload["reviewed_by_user"] = "true"
+            }
+
+            statusMessage = "Transcript review saved"
+            lastError = nil
+        } catch {
+            lastError = "Transcript review failed: \(error.localizedDescription)"
         }
     }
 
@@ -2882,7 +3079,9 @@ final class MenuBarModel: ObservableObject {
             let audioURL = directory.appendingPathComponent("\(Int(Date().timeIntervalSince1970))-\(safeID).wav")
             try WavFileWriter.writeMonoPCM16(samples: trainingSamples, sampleRate: trainingSampleRate, to: audioURL)
             lastTrainingAudioURL = audioURL
-            await saveCalibrationSet(audioURL: audioURL)
+            statusMessage = "Learning locally"
+            let rawTranscript = try? await makeAudioTranscriber().transcribe(audioFile: audioURL)
+            await saveCalibrationSet(audioURL: audioURL, rawTranscript: rawTranscript)
         } catch {
             statusMessage = "Training save failed"
             lastError = "Could not save training audio: \(error.localizedDescription)"
@@ -2909,7 +3108,7 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
-    private func saveCalibrationSet(audioURL: URL? = nil) async {
+    private func saveCalibrationSet(audioURL: URL? = nil, rawTranscript: String? = nil) async {
         let set = currentCalibrationSet
         do {
             let duration = max(trainingDuration, 0.1)
@@ -2925,6 +3124,7 @@ final class MenuBarModel: ObservableObject {
                         "script": set.script,
                         "calibration_set": set.id,
                         "audio_path": audioURL?.path ?? "",
+                        "raw_transcript": rawTranscript ?? "",
                         "duration_seconds": String(format: "%.2f", duration),
                         "estimated_wpm": "\(estimatedWPM)"
                     ],
@@ -2938,6 +3138,44 @@ final class MenuBarModel: ObservableObject {
             }
 
             localMemories.insert(contentsOf: savedMemories.reversed(), at: 0)
+            if set.id == "lists-and-numbers" {
+                var memory = DictationMemory(
+                    type: .formattingPreference,
+                    payload: [
+                        "rule": "When the user says shopping list, grocery list, we need, or numbered list, prefer clean list formatting with numeric quantities.",
+                        "script": set.script,
+                        "raw_transcript": rawTranscript ?? "",
+                        "estimated_wpm": "\(estimatedWPM)"
+                    ],
+                    contexts: ["voice_calibration", "list_formatting", selectedProfile.appName],
+                    source: "quiettype_voice_training",
+                    confidence: 0.94
+                )
+                let id = try await memoryStore.put(memory)
+                memory.id = id
+                localMemories.insert(memory, at: 0)
+            }
+            if let rawTranscript, !rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                var memory = DictationMemory(
+                    type: .transcriptNote,
+                    payload: [
+                        "raw_transcript": rawTranscript,
+                        "polished_text": set.script,
+                        "app": "Training",
+                        "style": "calibration",
+                        "inserted": "false",
+                        "calibration_set": set.id,
+                        "audio_path": audioURL?.path ?? "",
+                        "created_at": ISO8601DateFormatter().string(from: Date())
+                    ],
+                    contexts: ["voice_calibration", "dictation_review", set.title],
+                    source: "quiettype_voice_training_review",
+                    confidence: 0.82
+                )
+                let id = try await memoryStore.put(memory)
+                memory.id = id
+                localMemories.insert(memory, at: 0)
+            }
             calibrationSavedCount += 1
             UserDefaults.standard.set(calibrationSavedCount, forKey: Self.calibrationSavedCountKey)
             if audioURL != nil {
@@ -2961,6 +3199,24 @@ final class MenuBarModel: ObservableObject {
                     ),
                     at: 0
                 )
+                if let rawTranscript, !rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let note = "QuietType training transcript note for review. Set: \(set.title). Expected script: \"\(set.script)\". Raw local ASR heard: \"\(rawTranscript)\". This is review history, not an automatic correction rule."
+                    let noteSubmission = try? await sageDirectClient.submitTranscriptNote(content: note, confidence: 0.82)
+                    if let noteSubmission {
+                        sageMemories.insert(
+                            SageMemoryRecord(
+                                id: noteSubmission.memoryID,
+                                content: note,
+                                domain: "quiettype.transcripts",
+                                type: "observation",
+                                confidence: 0.82,
+                                createdAt: nil,
+                                submittingAgent: sageAgentID
+                            ),
+                            at: 0
+                        )
+                    }
+                }
                 statusMessage = "Training saved to SAGE"
             } else {
                 statusMessage = "Training saved locally"

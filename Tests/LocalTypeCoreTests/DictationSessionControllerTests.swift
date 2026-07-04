@@ -72,6 +72,71 @@ final class DictationSessionControllerTests: XCTestCase {
         XCTAssertEqual(insertedText, result.text)
     }
 
+    func testBeginPassesMemoryEnrichedProfileToASR() async throws {
+        let memoryStore = SQLiteMemoryStore()
+        _ = try await memoryStore.put(
+            DictationMemory(
+                type: .vocabulary,
+                payload: [
+                    "term": "CometBFT",
+                    "preferred": "CometBFT",
+                    "spoken_forms": "comet b f t"
+                ],
+                contexts: ["Cursor"],
+                source: "quiettype_voice_training",
+                confidence: 0.94
+            )
+        )
+
+        let asr = CapturingASRBackend(transcript: "comet b f t")
+        let controller = DictationSessionController(
+            profile: DictationProfile(vocabulary: [], confusions: []),
+            asrBackend: asr,
+            contextCollector: StaticContextCollector(context: AppContext(appName: "Cursor", profile: .codeEditor)),
+            inserter: BufferingTextInserter(),
+            memoryStore: memoryStore,
+            semanticEditor: RuleBasedSemanticEditor()
+        )
+
+        try await controller.begin()
+        let profile = await asr.startedProfile
+
+        XCTAssertTrue(profile?.vocabulary.contains { $0.preferredSpelling == "CometBFT" } == true)
+        await controller.cancel()
+    }
+
+    func testBeginUsesSetupVocabularyAcrossApps() async throws {
+        let memoryStore = SQLiteMemoryStore()
+        _ = try await memoryStore.put(
+            DictationMemory(
+                type: .vocabulary,
+                payload: [
+                    "term": "CometBFT",
+                    "preferred": "CometBFT",
+                    "spoken_forms": "comet b f t"
+                ],
+                contexts: ["voice_calibration", "Notes"],
+                source: "quiettype_voice_training",
+                confidence: 0.94
+            )
+        )
+
+        let inserter = BufferingTextInserter()
+        let controller = DictationSessionController(
+            profile: DictationProfile(vocabulary: [], confusions: []),
+            asrBackend: TranscriptASRBackend(transcript: "rerun comet b f t latency numbers"),
+            contextCollector: StaticContextCollector(context: AppContext(appName: "Slack", profile: .messaging)),
+            inserter: inserter,
+            memoryStore: memoryStore,
+            semanticEditor: RuleBasedSemanticEditor()
+        )
+
+        try await controller.begin()
+        let result = try await controller.finishAndInsert()
+
+        XCTAssertEqual(result.text, "Rerun CometBFT latency numbers.")
+    }
+
     func testCancelStopsSessionBeforeInsert() async throws {
         let inserter = BufferingTextInserter()
         let controller = DictationSessionController(
@@ -90,4 +155,33 @@ final class DictationSessionControllerTests: XCTestCase {
         XCTAssertEqual(state, .cancelled)
         XCTAssertNil(insertedText)
     }
+}
+
+private actor CapturingASRBackend: ASRBackend {
+    private let transcript: String
+    private(set) var startedProfile: DictationProfile?
+
+    init(transcript: String) {
+        self.transcript = transcript
+    }
+
+    func startSession(profile: DictationProfile) async throws {
+        startedProfile = profile
+    }
+
+    func pushAudio(_ frame: AudioFrame) async throws {}
+
+    func partialTranscript() async throws -> String {
+        transcript
+    }
+
+    func stableSegments() async throws -> [StableSegment] {
+        [StableSegment(text: transcript, isFinal: false)]
+    }
+
+    func finish() async throws -> [StableSegment] {
+        [StableSegment(text: transcript, isFinal: true)]
+    }
+
+    func cancel() async {}
 }

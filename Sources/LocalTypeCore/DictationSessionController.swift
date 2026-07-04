@@ -56,13 +56,11 @@ public actor DictationSessionController {
             throw LocalTypeError.secureInputBlocked(context.appName)
         }
 
+        let enrichedProfile = try await profileWithRecalledMemories(for: context, partialText: "")
         currentContext = context
-        pipeline = DictationPipeline(
-            profile: try await profileWithRecalledMemories(for: context, partialText: ""),
-            semanticEditor: semanticEditor
-        )
+        pipeline = DictationPipeline(profile: enrichedProfile, semanticEditor: semanticEditor)
 
-        try await asrBackend.startSession(profile: profile)
+        try await asrBackend.startSession(profile: enrichedProfile)
         timing.timeToAudioStartMS = elapsedSinceStart()
     }
 
@@ -150,11 +148,10 @@ public actor DictationSessionController {
     }
 
     private func profileWithRecalledMemories(for context: AppContext, partialText: String) async throws -> DictationProfile {
-        var enriched = profile
         let queryText = [context.appName, context.windowTitle, context.nearbyText, partialText]
             .compactMap { $0 }
             .joined(separator: " ")
-        let memories = try await memoryStore.search(
+        let contextualMemories = try await memoryStore.search(
             MemorySearchQuery(
                 text: queryText,
                 appName: context.appName,
@@ -163,39 +160,32 @@ public actor DictationSessionController {
                 localOnly: configuration.strictOfflineMode
             )
         )
+        let globalDictationMemories = try await memoryStore.search(
+            MemorySearchQuery(
+                text: "",
+                types: [.vocabulary, .correction, .formattingPreference],
+                limit: configuration.recallLimit,
+                localOnly: configuration.strictOfflineMode
+            )
+        )
+
+        return ProfileMemoryCompiler.enrich(profile, with: dedupeMemories(contextualMemories + globalDictationMemories))
+    }
+
+    private func dedupeMemories(_ memories: [DictationMemory]) -> [DictationMemory] {
+        var seen: Set<String> = []
+        var result: [DictationMemory] = []
 
         for memory in memories {
-            switch memory.type {
-            case .vocabulary:
-                if let term = memory.payload["term"] ?? memory.payload["preferred_spelling"] {
-                    let spokenForms = memory.payload["spoken_forms"]?.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } ?? [term]
-                    enriched.vocabulary.append(
-                        VocabularyEntry(
-                            term: term,
-                            spokenForms: spokenForms,
-                            preferredSpelling: memory.payload["preferred_spelling"] ?? term,
-                            category: "sage_memory",
-                            confidenceBoost: memory.confidence
-                        )
-                    )
-                }
-            case .correction:
-                if let raw = memory.payload["raw"], let corrected = memory.payload["corrected"] {
-                    enriched.confusions.append(
-                        ASRConfusion(
-                            heard: raw,
-                            corrected: corrected,
-                            contextTerms: memory.contexts,
-                            confidence: memory.confidence
-                        )
-                    )
-                }
-            case .styleProfile, .formattingPreference:
+            let key = memory.id ?? "\(memory.type.rawValue):\(memory.payload.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "|"))"
+            guard !seen.contains(key) else {
                 continue
             }
+            seen.insert(key)
+            result.append(memory)
         }
 
-        return enriched
+        return result
     }
 
     private func elapsedSinceStart() -> Int? {
