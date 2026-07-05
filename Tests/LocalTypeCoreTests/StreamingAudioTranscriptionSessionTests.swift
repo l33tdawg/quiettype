@@ -52,6 +52,20 @@ final class StreamingAudioTranscriptionSessionTests: XCTestCase {
         XCTAssertEqual(result.text, "CometBFT")
         XCTAssertEqual(prompts, ["Vocabulary: CometBFT."])
     }
+
+    func testCancelDiscardsQueuedAndInFlightTranscript() async throws {
+        let transcriber = SlowStubAudioTranscriber(output: "should not survive")
+        let session = StreamingAudioTranscriptionSession(transcriber: transcriber)
+
+        await session.enqueue(WavAudioChunk(sequence: 0, url: URL(fileURLWithPath: "/tmp/chunk-0000.wav"), sampleRate: 16_000, sampleCount: 16_000))
+        await session.cancel()
+
+        let result = await session.finish()
+
+        XCTAssertEqual(result.text, "")
+        XCTAssertEqual(result.chunkCount, 0)
+        XCTAssertTrue(result.errors.isEmpty)
+    }
 }
 
 private actor StubAudioTranscriber: AudioFileTranscribing {
@@ -72,5 +86,18 @@ private actor StubAudioTranscriber: AudioFileTranscribing {
 
     func recordedPrompts() -> [String?] {
         prompts
+    }
+}
+
+private actor SlowStubAudioTranscriber: AudioFileTranscribing {
+    let output: String
+
+    init(output: String) {
+        self.output = output
+    }
+
+    func transcribe(audioFile: URL, options: AudioTranscriptionOptions) async throws -> String {
+        try? await Task.sleep(nanoseconds: 25_000_000)
+        return output
     }
 }

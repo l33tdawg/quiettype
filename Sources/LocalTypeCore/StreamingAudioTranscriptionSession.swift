@@ -7,6 +7,7 @@ public actor StreamingAudioTranscriptionSession {
     private var transcripts: [Int: String] = [:]
     private var errors: [String] = []
     private var isProcessing = false
+    private var isCancelled = false
 
     public init(transcriber: AudioFileTranscribing, options: AudioTranscriptionOptions = .none) {
         self.transcriber = transcriber
@@ -14,6 +15,10 @@ public actor StreamingAudioTranscriptionSession {
     }
 
     public func enqueue(_ chunk: WavAudioChunk) {
+        guard !isCancelled else {
+            return
+        }
+
         queue.append(chunk)
         guard !isProcessing else {
             return
@@ -37,22 +42,34 @@ public actor StreamingAudioTranscriptionSession {
         )
     }
 
+    public func cancel() {
+        isCancelled = true
+        queue.removeAll(keepingCapacity: false)
+        transcripts.removeAll(keepingCapacity: false)
+        errors.removeAll(keepingCapacity: false)
+    }
+
     private func processQueue() async {
-        while !queue.isEmpty {
+        while !queue.isEmpty && !isCancelled {
             let chunk = queue.removeFirst()
             do {
                 let text = try await transcriber.transcribe(audioFile: chunk.url, options: options)
+                guard !isCancelled else {
+                    continue
+                }
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     transcripts[chunk.sequence] = trimmed
                 }
             } catch {
-                errors.append("chunk \(chunk.sequence): \(String(describing: error))")
+                if !isCancelled {
+                    errors.append("chunk \(chunk.sequence): \(String(describing: error))")
+                }
             }
         }
 
         isProcessing = false
-        if !queue.isEmpty {
+        if !queue.isEmpty && !isCancelled {
             enqueuePlaceholderPump()
         }
     }

@@ -1,4 +1,5 @@
 import LocalTypeCore
+import AppKit
 import Darwin
 import Foundation
 import SwiftUI
@@ -36,12 +37,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class DictationOverlayController {
     private var panel: NSPanel?
 
-    func show(state: OverlayState, level: Double = 0, detail: String? = nil, transcript: String? = nil) {
+    func show(
+        state: OverlayState,
+        level: Double = 0,
+        detail: String? = nil,
+        transcript: String? = nil,
+        onCancel: (() -> Void)? = nil
+    ) {
         let panel = panel ?? makePanel()
         let hasTranscript = !(transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        panel.ignoresMouseEvents = !hasTranscript
-        panel.setContentSize(hasTranscript ? NSSize(width: 390, height: 154) : NSSize(width: 280, height: 82))
-        panel.contentView = NSHostingView(rootView: DictationOverlayView(state: state, level: level, detail: detail, transcript: transcript))
+        let hasAction = onCancel != nil
+        panel.ignoresMouseEvents = !(hasTranscript || hasAction)
+        let compactWidth: CGFloat = hasAction ? 328 : 280
+        panel.setContentSize(hasTranscript ? NSSize(width: 390, height: 154) : NSSize(width: compactWidth, height: 82))
+        panel.contentView = NSHostingView(rootView: DictationOverlayView(
+            state: state,
+            level: level,
+            detail: detail,
+            transcript: transcript,
+            onCancel: onCancel
+        ))
         position(panel)
         panel.orderFrontRegardless()
         self.panel = panel
@@ -115,6 +130,13 @@ struct OverlayState {
         icon: "checkmark.circle.fill",
         tint: .primary
     )
+
+    static let cancelled = OverlayState(
+        title: "Cancelled",
+        subtitle: "Discarded locally",
+        icon: "xmark.circle.fill",
+        tint: .secondary
+    )
 }
 
 private struct DictationOverlayView: View {
@@ -122,6 +144,7 @@ private struct DictationOverlayView: View {
     var level: Double
     var detail: String?
     var transcript: String?
+    var onCancel: (() -> Void)?
 
     private var cleanedTranscript: String {
         (transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -147,6 +170,20 @@ private struct DictationOverlayView: View {
                         .foregroundStyle(.secondary)
                     OverlayWaveform(level: level, isActive: state.title == OverlayState.listening.title)
                         .frame(width: 170, height: 14)
+                }
+
+                if let onCancel {
+                    Spacer(minLength: 0)
+                    Button(action: onCancel) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 28, height: 28)
+                            .background(Color.primary.opacity(0.08))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Cancel dictation")
                 }
             }
 
@@ -4397,6 +4434,8 @@ final class MenuBarModel: ObservableObject {
     private var activeTranscriptionOptions = AudioTranscriptionOptions.none
     private var hotKeyController: CarbonHotKeyController?
     private var functionKeyMonitor: FunctionKeyToggleMonitor?
+    private var cancelKeyGlobalMonitor: Any?
+    private var cancelKeyLocalMonitor: Any?
     private var lastHotKeyToggleAt: Date?
     private let overlayController = DictationOverlayController()
     private var cpuSampler = CPUUsageSampler()
@@ -4515,7 +4554,7 @@ final class MenuBarModel: ObservableObject {
             return "Voice training is still open. You can dictate now, but training improves names, acronyms, and technical terms."
         }
         if isRecording {
-            return "Speak naturally, then press \(hotKeyLabel) or click the mic again to insert."
+            return "Speak naturally, then press \(hotKeyLabel) or click the mic again to insert. Press Esc or X to cancel."
         }
         if nativeSpeechServerReady {
             return "Ready for private Apple Silicon dictation. Text inserts automatically."
@@ -5024,6 +5063,7 @@ final class MenuBarModel: ObservableObject {
             await refreshPermissions(promptForAccessibility: false)
             refreshSpeechEngineStatus()
             registerGlobalHotKey()
+            registerCancelKeyMonitor()
             startNativeSpeechWarmup()
         }
     }
@@ -5035,6 +5075,7 @@ final class MenuBarModel: ObservableObject {
         hotKeyController = nil
         functionKeyMonitor?.unregister()
         functionKeyMonitor = nil
+        unregisterCancelKeyMonitor()
         overlayController.hide()
         nativeSpeechStartupTask?.cancel()
         nativeSpeechStartupTask = nil
@@ -5143,6 +5184,43 @@ final class MenuBarModel: ObservableObject {
             } catch {
                 lastError = "Could not register shortcut: \(error)"
             }
+        }
+    }
+
+    private func registerCancelKeyMonitor() {
+        guard cancelKeyGlobalMonitor == nil && cancelKeyLocalMonitor == nil else {
+            return
+        }
+
+        let handleEscape: (NSEvent) -> Void = { [weak self] event in
+            guard event.keyCode == 53 else {
+                return
+            }
+            Task { @MainActor [weak self] in
+                guard let self, self.isRecording else {
+                    return
+                }
+                await self.cancelRecording()
+            }
+        }
+
+        cancelKeyGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+            handleEscape(event)
+        }
+        cancelKeyLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handleEscape(event)
+            return event
+        }
+    }
+
+    private func unregisterCancelKeyMonitor() {
+        if let cancelKeyGlobalMonitor {
+            NSEvent.removeMonitor(cancelKeyGlobalMonitor)
+            self.cancelKeyGlobalMonitor = nil
+        }
+        if let cancelKeyLocalMonitor {
+            NSEvent.removeMonitor(cancelKeyLocalMonitor)
+            self.cancelKeyLocalMonitor = nil
         }
     }
 
@@ -5616,7 +5694,7 @@ final class MenuBarModel: ObservableObject {
             isRecording = true
             recordStartedSession()
             statusMessage = "Listening locally"
-            overlayController.show(state: .listening, level: inputLevel, detail: listeningOverlayDetail)
+            showListeningOverlay()
         } catch {
             captureService = nil
             recordingStartedAt = nil
@@ -5627,6 +5705,32 @@ final class MenuBarModel: ObservableObject {
             lastError = "Could not start microphone: \(error)"
             statusMessage = "Microphone permission needed"
         }
+    }
+
+    func cancelRecording() async {
+        guard isRecording else {
+            return
+        }
+
+        captureService?.stop()
+        captureService = nil
+        isRecording = false
+        lastDictationDuration = recordingDuration
+        await streamingTranscriptionSession?.cancel()
+        streamingTranscriptionSession = nil
+        pendingStreamingChunks = []
+        recordedSamples = []
+        capturedFrameCount = 0
+        partialChunkCount = 0
+        lastRecordingURL = nil
+        recordingStartedAt = nil
+        inputLevel = 0
+        peakInputLevel = 0
+        try? FileManager.default.removeItem(at: chunkDirectory)
+        statusMessage = "Dictation cancelled"
+        lastError = nil
+        overlayController.show(state: .cancelled, detail: "Discarded locally")
+        overlayController.hide(after: 0.9)
     }
 
     private func prepareForDictation() async -> Bool {
@@ -5742,6 +5846,10 @@ final class MenuBarModel: ObservableObject {
     }
 
     private func record(_ frame: AudioFrame) async {
+        guard isRecording else {
+            return
+        }
+
         capturedFrameCount += 1
         recordingSampleRate = frame.sampleRate
         recordedSamples.append(contentsOf: frame.samples)
@@ -5774,12 +5882,25 @@ final class MenuBarModel: ObservableObject {
         }
 
         if isRecording {
-            overlayController.show(state: .listening, level: inputLevel, detail: listeningOverlayDetail)
+            showListeningOverlay()
         }
     }
 
     private var listeningOverlayDetail: String {
-        "Listening · \(String(format: "%.1f", recordingDuration))s"
+        "Listening · \(String(format: "%.1f", recordingDuration))s · Esc cancels"
+    }
+
+    private func showListeningOverlay() {
+        overlayController.show(
+            state: .listening,
+            level: inputLevel,
+            detail: listeningOverlayDetail,
+            onCancel: { [weak self] in
+                Task { @MainActor [weak self] in
+                    await self?.cancelRecording()
+                }
+            }
+        )
     }
 
     private func activateStreamingIfUseful() async {
