@@ -84,6 +84,15 @@ Folder: /docs
 ```
 
 The landing page lives at `docs/index.html`, with Open Graph assets at `docs/og.png` and `docs/og.svg`.
+The intended public URL is:
+
+```text
+https://l33tdawg.github.io/quiettype/
+```
+
+GitHub rejected Pages enablement while the repository is private on the current
+plan. The `/docs` site is ready; enable Pages when the repo becomes public for
+the 1.0 beta launch, or upgrade to a plan that supports private Pages.
 
 ## 5. GitHub Actions release automation
 

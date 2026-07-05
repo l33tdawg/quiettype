@@ -4,23 +4,32 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QuietType - Private voice input for coding agents</title>
-  <meta name="description" content="QuietType lets you talk to Codex, Claude Code, ChatGPT, and other coding agents faster without sending your voice or drafts to the cloud.">
+  <meta name="description" content="QuietType lets you talk to Codex, Claude Code, ChatGPT, Cursor and other coding agents faster without sending your voice, prompts or drafts to the cloud.">
   <meta name="author" content="Dhillon 'l33tdawg' Kannabhiran">
+  <link rel="canonical" href="https://l33tdawg.github.io/quiettype/">
+  <meta property="og:url" content="https://l33tdawg.github.io/quiettype/">
   <meta property="og:title" content="QuietType - Talk to your coding agents locally.">
-  <meta property="og:description" content="Fast private voice input for Codex, Claude Code, ChatGPT, terminals, editors, and docs. Nothing leaves your Mac.">
+  <meta property="og:description" content="Fast private voice input for Codex, Claude Code, ChatGPT, terminals, editors and docs. Nothing leaves your Mac.">
   <meta property="og:image" content="https://l33tdawg.github.io/quiettype/og.png">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="theme-color" content="#f7f7f5">
+  <meta name="theme-color" content="#f6f6f3">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
   <style>
     :root {
-      --paper: #f7f7f5;
-      --ink: #202020;
-      --muted: #727272;
-      --line: #dfdfdb;
-      --soft: #eeeeea;
+      --paper: #f6f6f3;
+      --ink: #171717;
+      --ink-2: #2a2a2a;
+      --muted: #757575;
+      --faint: #a7a7a1;
+      --line: #dededa;
+      --line-dark: #2d2d2d;
       --panel: #ffffff;
+      --soft: #ecece8;
+      --black: #080808;
+      --white: #ffffff;
+      --shadow: 0 34px 90px rgba(0, 0, 0, 0.12);
+      --radius: 8px;
     }
 
     * {
@@ -32,11 +41,13 @@
       color: var(--ink);
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
       letter-spacing: 0;
+      scroll-behavior: smooth;
     }
 
     body {
       margin: 0;
       min-height: 100vh;
+      overflow-x: hidden;
     }
 
     a {
@@ -44,123 +55,196 @@
       text-decoration: none;
     }
 
+    button,
+    input {
+      font: inherit;
+    }
+
     .shell {
-      width: min(1180px, calc(100vw - 40px));
+      width: min(1180px, calc(100vw - 44px));
       margin: 0 auto;
     }
 
     .nav {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(246, 246, 243, 0.82);
+      border-bottom: 1px solid rgba(222, 222, 218, 0.72);
+      backdrop-filter: blur(22px);
+    }
+
+    .nav-inner {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 24px 0;
+      min-height: 76px;
     }
 
     .brand {
       display: flex;
       align-items: center;
       gap: 12px;
-      font-weight: 720;
-      font-size: 20px;
+      font-weight: 760;
+      font-size: 21px;
     }
 
-    .mark {
-      width: 32px;
-      height: 32px;
+    .brand img {
+      width: 34px;
+      height: 34px;
     }
 
-    .nav-actions {
+    .nav-links {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 20px;
+      color: var(--muted);
       font-size: 14px;
-      font-weight: 650;
+      font-weight: 680;
     }
 
     .button {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
-      min-height: 42px;
-      padding: 0 16px;
+      gap: 10px;
+      min-height: 44px;
+      padding: 0 18px;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: var(--radius);
       background: var(--panel);
+      color: var(--ink);
+      font-weight: 740;
+      box-shadow: none;
+      transition: transform 180ms ease, background 180ms ease, color 180ms ease, border-color 180ms ease;
+    }
+
+    .button:hover {
+      transform: translateY(-1px);
+      border-color: #bfbfba;
     }
 
     .button.primary {
-      border-color: var(--ink);
-      background: var(--ink);
-      color: white;
+      border-color: var(--black);
+      background: var(--black);
+      color: var(--white);
+    }
+
+    .button.ghost {
+      background: transparent;
+    }
+
+    .icon {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+      flex: 0 0 auto;
     }
 
     .hero {
+      position: relative;
+      padding: 76px 0 84px;
+      overflow: hidden;
+    }
+
+    .hero-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
-      gap: 64px;
+      grid-template-columns: minmax(0, 0.92fr) minmax(420px, 1.08fr);
+      gap: 58px;
       align-items: center;
-      padding: 78px 0 72px;
     }
 
     .eyebrow {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
       margin-bottom: 22px;
       color: var(--muted);
       font-size: 14px;
-      font-weight: 700;
+      font-weight: 760;
     }
 
-    .dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
+    .eyebrow::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
       background: var(--ink);
     }
 
     h1 {
-      max-width: 820px;
+      max-width: 860px;
       margin: 0;
-      font-size: clamp(54px, 7vw, 96px);
-      line-height: 0.94;
+      font-size: clamp(58px, 8vw, 116px);
+      line-height: 0.89;
       letter-spacing: 0;
-      font-weight: 790;
+      font-weight: 820;
     }
 
     .subhead {
-      max-width: 620px;
-      margin: 26px 0 0;
+      max-width: 700px;
+      margin: 28px 0 0;
       color: var(--muted);
-      font-size: 22px;
-      line-height: 1.35;
-      font-weight: 520;
+      font-size: clamp(20px, 2.2vw, 26px);
+      line-height: 1.31;
+      font-weight: 540;
     }
 
     .hero-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 12px;
-      margin-top: 34px;
+      margin-top: 36px;
     }
 
-    .device {
-      border: 1px solid var(--line);
-      border-radius: 18px;
+    .launch-note {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      margin-top: 22px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .hero-visual {
+      position: relative;
+      min-height: 580px;
+      display: grid;
+      place-items: center;
+    }
+
+    .signal {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0.72;
+    }
+
+    .app-frame {
+      position: relative;
+      width: min(720px, 100%);
+      border: 1px solid rgba(0, 0, 0, 0.16);
+      border-radius: 10px;
       background: var(--panel);
-      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.08);
+      box-shadow: var(--shadow);
       overflow: hidden;
+      transform: rotate(-1.2deg);
     }
 
-    .device-bar {
+    .frame-bar {
       display: flex;
       align-items: center;
       gap: 7px;
-      height: 38px;
-      padding: 0 14px;
+      height: 32px;
+      padding: 0 13px;
       border-bottom: 1px solid var(--line);
-      background: #fbfbfa;
+      background: #fafafa;
     }
 
     .traffic {
@@ -170,106 +254,132 @@
       background: #d5d5d0;
     }
 
-    .device-body {
-      padding: 30px;
-    }
-
-    .metric-row {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-      margin-bottom: 34px;
-    }
-
-    .metric {
-      min-height: 102px;
-      padding: 16px;
-      border-radius: 10px;
-      background: var(--soft);
-    }
-
-    .metric strong {
+    .app-frame img {
       display: block;
-      font-size: 28px;
-      line-height: 1;
-      margin-bottom: 12px;
+      width: 100%;
+      height: auto;
     }
 
-    .metric span,
-    .activity span {
-      color: var(--muted);
-      font-size: 14px;
-      font-weight: 620;
+    .terminal-strip {
+      position: absolute;
+      right: 0;
+      bottom: 18px;
+      width: min(520px, 92%);
+      padding: 18px 20px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 8px;
+      background: rgba(8, 8, 8, 0.92);
+      color: #f7f7f4;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
+      font-family: "SF Mono", ui-monospace, Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.6;
     }
 
-    .mic {
+    .cursor {
+      display: inline-block;
+      width: 8px;
+      height: 1.1em;
+      margin-left: 3px;
+      vertical-align: -0.18em;
+      background: currentColor;
+      animation: blink 1.05s steps(2, start) infinite;
+    }
+
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+
+    .stats {
       display: grid;
-      place-items: center;
-      width: 190px;
-      height: 190px;
-      margin: 10px auto 32px;
-      border-radius: 50%;
-      border: 14px solid #e7e7e2;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      margin-top: 34px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .stat {
+      min-height: 128px;
+      padding: 22px;
+      background: var(--panel);
+    }
+
+    .stat strong {
+      display: block;
+      margin-bottom: 10px;
+      font-size: clamp(32px, 4vw, 52px);
+      line-height: 0.95;
+      letter-spacing: 0;
+    }
+
+    .stat span {
       color: var(--muted);
-    }
-
-    .mic svg {
-      width: 78px;
-      height: 78px;
-    }
-
-    .activity {
-      display: grid;
-      gap: 10px;
-    }
-
-    .activity-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 24px;
-      padding: 13px 0;
-      border-top: 1px solid var(--line);
+      font-size: 15px;
       font-weight: 680;
     }
 
     .section {
-      padding: 72px 0;
+      padding: 82px 0;
       border-top: 1px solid var(--line);
     }
 
+    .section-header {
+      display: grid;
+      grid-template-columns: minmax(0, 0.82fr) minmax(300px, 0.6fr);
+      gap: 42px;
+      align-items: end;
+      margin-bottom: 38px;
+    }
+
     .section h2 {
-      margin: 0 0 16px;
-      font-size: clamp(34px, 4vw, 56px);
-      line-height: 1;
+      margin: 0;
+      font-size: clamp(42px, 5vw, 72px);
+      line-height: 0.95;
       letter-spacing: 0;
+      font-weight: 820;
     }
 
     .section-lede {
-      max-width: 720px;
-      margin: 0 0 34px;
+      margin: 0;
       color: var(--muted);
       font-size: 20px;
       line-height: 1.42;
-      font-weight: 520;
+      font-weight: 540;
     }
 
     .grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
+      gap: 14px;
     }
 
     .tile {
-      min-height: 220px;
-      padding: 24px;
+      min-height: 238px;
+      padding: 26px;
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 10px;
       background: var(--panel);
+    }
+
+    .tile .icon-wrap,
+    .proof-icon {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      margin-bottom: 24px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--ink);
+      background: #fbfbfa;
     }
 
     .tile h3 {
       margin: 0 0 12px;
-      font-size: 22px;
+      font-size: 24px;
       letter-spacing: 0;
     }
 
@@ -277,239 +387,522 @@
       margin: 0;
       color: var(--muted);
       font-size: 16px;
-      line-height: 1.45;
+      line-height: 1.48;
+      font-weight: 520;
     }
 
-    .compare {
+    .black-band {
+      background: var(--black);
+      color: var(--white);
+    }
+
+    .black-band .section {
+      border-top-color: var(--line-dark);
+    }
+
+    .black-band .section-lede,
+    .black-band .proof p,
+    .black-band .proof span {
+      color: #b9b9b4;
+    }
+
+    .proof-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 36px;
+      align-items: stretch;
     }
 
-    .compare h3 {
-      margin: 0;
-      padding: 18px 20px;
-      border-bottom: 1px solid var(--line);
+    .proof-main {
+      min-height: 470px;
+      padding: 34px;
+      border: 1px solid var(--line-dark);
+      border-radius: 10px;
+      background: #101010;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .proof-main strong {
+      display: block;
+      max-width: 460px;
+      font-size: clamp(38px, 4vw, 62px);
+      line-height: 0.98;
+      letter-spacing: 0;
+    }
+
+    .proof-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .proof {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 16px;
+      padding: 22px;
+      border: 1px solid var(--line-dark);
+      border-radius: 10px;
+      background: #101010;
+    }
+
+    .proof h3 {
+      margin: 0 0 8px;
       font-size: 22px;
     }
 
-    .compare-panel {
+    .proof p {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.48;
+    }
+
+    .proof-icon {
+      margin: 0;
+      border-color: var(--line-dark);
+      background: #171717;
+      color: var(--white);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--line);
+    }
+
+    .flow-step {
+      min-height: 190px;
+      padding: 24px;
+      background: var(--panel);
+    }
+
+    .flow-step small {
+      display: block;
+      margin-bottom: 30px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 780;
+    }
+
+    .flow-step strong {
+      display: block;
+      margin-bottom: 12px;
+      font-size: 21px;
+    }
+
+    .flow-step span {
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.45;
+      font-weight: 520;
+    }
+
+    .screens {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .screenshot-card {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      box-shadow: 0 18px 52px rgba(0, 0, 0, 0.08);
+    }
+
+    .screenshot-card img {
+      display: block;
+      width: 100%;
+      border-radius: 6px;
+    }
+
+    .caption {
+      margin: 12px 4px 2px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .release {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(360px, 0.7fr);
+      gap: 34px;
+      align-items: center;
+      padding: 54px;
       border: 1px solid var(--line);
       border-radius: 12px;
       background: var(--panel);
-      overflow: hidden;
     }
 
-    .compare ul {
+    .release h2 {
+      margin: 0 0 18px;
+      font-size: clamp(38px, 5vw, 68px);
+      line-height: 0.96;
+    }
+
+    .release p {
+      margin: 0;
+      max-width: 720px;
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1.42;
+      font-weight: 540;
+    }
+
+    .release-card {
+      padding: 26px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #f9f9f7;
+    }
+
+    .release-card strong {
+      display: block;
+      margin-bottom: 14px;
+      font-size: 24px;
+    }
+
+    .release-card ul {
       display: grid;
-      gap: 0;
+      gap: 10px;
       margin: 0;
       padding: 0;
       list-style: none;
-    }
-
-    .compare li {
-      padding: 16px 20px;
-      border-top: 1px solid var(--line);
       color: var(--muted);
-      font-weight: 560;
-    }
-
-    .closing {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 24px;
-      padding: 54px 0 76px;
-      border-top: 1px solid var(--line);
-    }
-
-    .closing h2 {
-      margin: 0;
-      font-size: clamp(32px, 4vw, 54px);
-      line-height: 1;
+      font-weight: 600;
     }
 
     footer {
-      padding: 28px 0;
+      padding: 28px 0 36px;
       border-top: 1px solid var(--line);
       color: var(--muted);
       font-size: 14px;
       font-weight: 560;
     }
 
-    @media (max-width: 880px) {
-      .hero,
-      .compare,
+    .reveal {
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity 620ms ease, transform 620ms ease;
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 980px) {
+      .hero-grid,
+      .section-header,
+      .proof-grid,
+      .screens,
+      .release {
+        grid-template-columns: 1fr;
+      }
+
       .grid,
-      .closing {
+      .flow,
+      .stats {
         grid-template-columns: 1fr;
       }
 
       .hero {
-        gap: 34px;
-        padding-top: 42px;
+        padding-top: 46px;
       }
 
-      .closing {
-        display: grid;
+      .hero-visual {
+        min-height: auto;
       }
 
-      .metric-row {
-        grid-template-columns: 1fr;
+      .terminal-strip {
+        position: relative;
+        right: auto;
+        bottom: auto;
+        margin-top: -20px;
+      }
+
+      .nav-links a:not(.button) {
+        display: none;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+
+      .button,
+      .reveal,
+      .cursor {
+        transition: none;
+        animation: none;
+      }
+
+      .signal {
+        display: none;
       }
     }
   </style>
 </head>
 <body>
-  <header class="shell nav">
-    <a class="brand" href="#">
-      <img class="mark" src="./icon.svg" alt="">
-      <span>QuietType</span>
-    </a>
-    <nav class="nav-actions" aria-label="Primary">
-      <a href="#security">Security</a>
-      <a class="button" href="https://github.com/l33tdawg/quiettype">GitHub</a>
-    </nav>
+  <header class="nav">
+    <div class="shell nav-inner">
+      <a class="brand" href="https://l33tdawg.github.io/quiettype/" aria-label="QuietType home">
+        <img src="./icon.svg" alt="">
+        <span>QuietType</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#agent-workflows">Use cases</a>
+        <a href="#privacy">Privacy</a>
+        <a href="#screenshots">Screenshots</a>
+        <a class="button" href="https://github.com/l33tdawg/quiettype/releases">Private beta</a>
+      </nav>
+    </div>
   </header>
 
   <main>
-    <section class="shell hero">
-      <div>
-        <div class="eyebrow"><span class="dot"></span> Private beta for macOS Apple Silicon</div>
-        <h1>Talk to your coding agents faster.</h1>
-      <p class="subhead">QuietType turns natural speech into precise instructions for Codex, Claude Code, ChatGPT, terminals, editors, and docs. Fast local transcription, local correction memory, and no cloud processing.</p>
-        <div class="hero-actions">
-          <a class="button primary" href="https://github.com/l33tdawg/quiettype/releases">Get the private beta</a>
-          <a class="button" href="#how">How it works</a>
+    <section class="hero">
+      <div class="shell hero-grid">
+        <div class="reveal">
+          <div class="eyebrow">Private beta for macOS Apple Silicon</div>
+          <h1>Talk to your coding agents faster.</h1>
+          <p class="subhead">QuietType turns natural speech into precise instructions for Codex, Claude Code, ChatGPT, Cursor, terminals, editors and docs. Your voice, prompts, samples and memories stay on your Mac.</p>
+          <div class="hero-actions">
+            <a class="button primary" href="https://github.com/l33tdawg/quiettype/releases">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+              Download private beta
+            </a>
+            <a class="button ghost" href="#privacy">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></svg>
+              See privacy model
+            </a>
+          </div>
+          <div class="launch-note">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h16"/><path d="M12 4v16"/></svg>
+            Repo is private during beta. Public launch is planned for the 1.0 beta milestone.
+          </div>
+        </div>
+
+        <div class="hero-visual reveal" aria-label="QuietType app preview">
+          <canvas class="signal" id="signalCanvas" aria-hidden="true"></canvas>
+          <div class="app-frame">
+            <div class="frame-bar"><span class="traffic"></span><span class="traffic"></span><span class="traffic"></span></div>
+            <img src="./screenshots/quiettype-onboarding.png" alt="QuietType macOS app showing private setup and dictation controls">
+          </div>
+          <div class="terminal-strip" aria-label="Example agent instruction">
+            <span id="typedPrompt">Ask Codex to review the auth flow, preserve the Ed25519 terminology, add tests, and explain the tradeoffs.</span><span class="cursor"></span>
+          </div>
         </div>
       </div>
 
-      <div class="device" aria-label="QuietType app preview">
-        <div class="device-bar"><span class="traffic"></span><span class="traffic"></span><span class="traffic"></span></div>
-        <div class="device-body">
-          <div class="metric-row">
-            <div class="metric"><strong>1.2K</strong><span>Words processed</span></div>
-            <div class="metric"><strong>Warm</strong><span>Local ASR</span></div>
-            <div class="metric"><strong>Local</strong><span>Memory</span></div>
-          </div>
-          <div class="mic">
-            <svg viewBox="0 0 96 96" aria-hidden="true">
-              <rect x="34" y="14" width="28" height="42" rx="14" fill="currentColor"/>
-              <path d="M22 42c0 14.4 11.6 26 26 26s26-11.6 26-26" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"/>
-              <path d="M48 68v14M34 82h28" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"/>
-            </svg>
-          </div>
-          <div class="activity">
-            <div class="activity-row">Agent instructions <span>Fast</span></div>
-            <div class="activity-row">Secure transcription <span>On-device</span></div>
-            <div class="activity-row">Audio and prompts <span>Never uploaded</span></div>
-          </div>
+      <div class="shell stats reveal" aria-label="QuietType private processing stats">
+        <div class="stat"><strong>0</strong><span>cloud voice calls</span></div>
+        <div class="stat"><strong>local</strong><span>speech engine</span></div>
+        <div class="stat"><strong>SAGE</strong><span>optional governed memory</span></div>
+        <div class="stat"><strong>Fn</strong><span>preferred hotkey</span></div>
+      </div>
+    </section>
+
+    <section id="agent-workflows" class="section">
+      <div class="shell">
+        <div class="section-header reveal">
+          <h2>Built for agent workflows, not generic dictation.</h2>
+          <p class="section-lede">The best coding-agent prompts are long, contextual and specific. QuietType makes them fast to produce while keeping sensitive source paths, bug details, customer context and unreleased plans local.</p>
+        </div>
+
+        <div class="grid">
+          <article class="tile reveal">
+            <div class="icon-wrap"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h7"/></svg></div>
+            <h3>Longer instructions</h3>
+            <p>Speak the whole intent: what to inspect, what to change, how to test it and what tradeoffs to explain.</p>
+          </article>
+          <article class="tile reveal">
+            <div class="icon-wrap"><svg class="icon" viewBox="0 0 24 24"><path d="M7 8h10"/><path d="M7 12h7"/><path d="M21 12c0 4.4-4 8-9 8a10 10 0 0 1-4-.8L3 20l1.5-3.7A7.5 7.5 0 0 1 3 12c0-4.4 4-8 9-8s9 3.6 9 8Z"/></svg></div>
+            <h3>Everywhere you type</h3>
+            <p>Use it in Codex, Claude Code, ChatGPT, Cursor, VS Code, terminals, GitHub issues, Slack, notes and email.</p>
+          </article>
+          <article class="tile reveal">
+            <div class="icon-wrap"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M7 7v10a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7"/><path d="M9 11h6"/><path d="M9 15h3"/></svg></div>
+            <h3>Technical vocabulary</h3>
+            <p>Teach names like SAGE, CometBFT, Ollama, CSe100 and Ed25519 so the output stays useful for real work.</p>
+          </article>
         </div>
       </div>
     </section>
 
-    <section id="how" class="shell section">
-      <h2>Voice input built for agent workflows.</h2>
-      <p class="section-lede">Typing long instructions into coding agents is slow. Cloud dictation is fast, but it can expose prompts, code context, client names, and private drafts. QuietType gives you the speed of speech with a local-only path.</p>
-      <div class="grid">
-        <article class="tile">
-          <h3>Prompt naturally</h3>
-          <p>Tell Codex or Claude Code what to build, review, test, or refactor without turning every thought into typed prose first.</p>
-        </article>
-        <article class="tile">
-          <h3>Keep technical terms</h3>
-          <p>QuietType preserves project names, acronyms, identifiers, model names, and security vocabulary so agent instructions stay precise.</p>
-        </article>
-        <article class="tile">
-          <h3>Paste anywhere</h3>
-          <p>Use it in Cursor, VS Code, terminals, browser agents, chat apps, issue trackers, notes, and email. The active app receives polished text.</p>
-        </article>
+    <div class="black-band" id="privacy">
+      <section class="section">
+        <div class="shell">
+          <div class="section-header reveal">
+            <h2>Your voice is biometric data.</h2>
+            <p class="section-lede">In an era of voice cloning and fake AI video, a dictation tool should not treat raw voice samples as harmless telemetry. QuietType is designed so your voice, transcripts, prompts and training samples stay on your machine.</p>
+          </div>
+
+          <div class="proof-grid">
+            <div class="proof-main reveal">
+              <div class="proof-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6l-7-3Z"/></svg></div>
+              <strong>Cloud quality without cloud custody.</strong>
+              <p class="section-lede">QuietType’s default path is local ASR, local cleanup, local insertion and local memory. Network participation is never required for normal dictation.</p>
+            </div>
+
+            <div class="proof-list">
+              <article class="proof reveal">
+                <div class="proof-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M12 8v8"/><path d="M8 12h8"/><path d="M4 12a8 8 0 1 0 16 0 8 8 0 0 0-16 0Z"/></svg></div>
+                <div><h3>No voice upload</h3><p>Voice samples and training recordings are processed locally. They are not sent to a hosted speech API.</p></div>
+              </article>
+              <article class="proof reveal">
+                <div class="proof-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M6 10V8a6 6 0 1 1 12 0v2"/><rect x="4" y="10" width="16" height="10" rx="2"/></svg></div>
+                <div><h3>Encrypted local memory</h3><p>QuietType’s local memory store is encrypted with AES-GCM and a Keychain-backed key. SAGE memory is optional and local-first.</p></div>
+              </article>
+              <article class="proof reveal">
+                <div class="proof-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg></div>
+                <div><h3>Inspectable corrections</h3><p>Vocabulary, transcript notes and correction memories are visible and editable, so users can teach the system without losing control.</p></div>
+              </article>
+              <article class="proof reveal">
+                <div class="proof-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M4 12h6"/><path d="M14 12h6"/><path d="m8 8 4 4-4 4"/><path d="m16 8-4 4 4 4"/></svg></div>
+                <div><h3>No cloud fallback</h3><p>The normal dictation path has no OpenAI, Gemini, Anthropic or remote ASR dependency. If local engines are unavailable, setup tells you.</p></div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <section class="section">
+      <div class="shell">
+        <div class="section-header reveal">
+          <h2>The local speech compiler.</h2>
+          <p class="section-lede">QuietType is not a wrapper around transcription. It streams audio, stabilizes partial text, applies correction memory, formats the result and inserts it into the active app.</p>
+        </div>
+        <div class="flow">
+          <div class="flow-step reveal"><small>01</small><strong>Speak</strong><span>Press Fn or your configured shortcut and speak naturally.</span></div>
+          <div class="flow-step reveal"><small>02</small><strong>Stream</strong><span>Local ASR starts processing audio chunks while you are still talking.</span></div>
+          <div class="flow-step reveal"><small>03</small><strong>Correct</strong><span>Vocabulary, cadence and SAGE/local memories bias spellings and terms.</span></div>
+          <div class="flow-step reveal"><small>04</small><strong>Polish</strong><span>Fillers, false starts, lists, numbers and corrections are cleaned locally.</span></div>
+          <div class="flow-step reveal"><small>05</small><strong>Insert</strong><span>The final text lands in the active app without a cloud round trip.</span></div>
+        </div>
       </div>
     </section>
 
-    <section class="shell section">
-      <h2>Why this matters for builders.</h2>
-      <p class="section-lede">Agentic coding works best when you give rich context. QuietType makes rich context cheap to produce without making your voice, prompts, or local project vocabulary someone else’s training exhaust.</p>
-      <div class="grid">
-        <article class="tile">
-          <h3>Longer, clearer instructions</h3>
-          <p>Say the full intent: constraints, edge cases, files to inspect, and how to verify the work. QuietType cleans the delivery without flattening the meaning.</p>
-        </article>
-        <article class="tile">
-          <h3>Less context leakage</h3>
-          <p>Prompts can contain source paths, vulnerability details, customer context, or unreleased product plans. QuietType does not need a cloud ASR service to capture them.</p>
-        </article>
-        <article class="tile">
-          <h3>Faster than typing</h3>
-          <p>Keep your hands in the editor and use voice for the high-bandwidth parts: planning, review notes, test requests, and multi-step agent instructions.</p>
-        </article>
+    <section id="screenshots" class="section">
+      <div class="shell">
+        <div class="section-header reveal">
+          <h2>Quiet, readable, Mac-native.</h2>
+          <p class="section-lede">The app keeps the operational details visible without making the user manage backend machinery. Setup, memory and privacy controls stay close to the dictation workflow.</p>
+        </div>
+        <div class="screens">
+          <figure class="screenshot-card reveal">
+            <img src="./screenshots/quiettype-onboarding.png" alt="QuietType home screen with setup guidance and local activity">
+            <figcaption class="caption">Home, setup progress and local activity.</figcaption>
+          </figure>
+          <figure class="screenshot-card reveal">
+            <img src="./screenshots/quiettype-guide-focus.png" alt="QuietType guided onboarding overlay">
+            <figcaption class="caption">Guided onboarding for first-time setup.</figcaption>
+          </figure>
+        </div>
       </div>
     </section>
 
-    <section id="security" class="shell section">
-      <h2>Built for people who cannot leak prompts.</h2>
-      <p class="section-lede">Cloud-first dictation can be convenient, but it asks for the most sensitive input you have: your voice, your drafts, and the app context around them. QuietType’s default is local-only.</p>
-      <div class="grid">
-        <article class="tile">
-          <h3>No audio upload</h3>
-          <p>Speech recognition runs on the Mac using the bundled local engine and Apple Silicon acceleration path.</p>
-        </article>
-        <article class="tile">
-          <h3>No transcript upload</h3>
-          <p>Cleanup and formatting happen locally. The normal dictation path has no cloud API dependency.</p>
-        </article>
-        <article class="tile">
-          <h3>SAGE memory optional</h3>
-          <p>When available, SAGE stores governed local memories for vocabulary and corrections. Dictation memories remain local by default.</p>
-        </article>
-        <article class="tile">
-          <h3>Secure-field aware</h3>
-          <p>QuietType checks macOS permissions and avoids workflows that should not read or write sensitive fields.</p>
-        </article>
-        <article class="tile">
-          <h3>Inspectable data</h3>
-          <p>Memory exists to improve transcription, not to collect private content. Users can review and teach what QuietType remembers.</p>
-        </article>
-        <article class="tile">
-          <h3>Private beta</h3>
-          <p>The current build is for trusted testers while signing, notarization, onboarding, and model packaging are hardened.</p>
-        </article>
-      </div>
-    </section>
-
-    <section class="shell section">
-      <h2>Cloud-first voice input vs QuietType.</h2>
-      <div class="compare">
-        <div class="compare-panel">
-          <h3>Cloud-first tools</h3>
+    <section class="section">
+      <div class="shell release reveal">
+        <div>
+          <h2>Private beta now. Public at 1.0 beta.</h2>
+          <p>The repo stays private while the last beta releases harden setup, permissions, memory review and packaging. The GitHub Pages site is already structured for the public launch at <strong>l33tdawg.github.io/quiettype</strong>.</p>
+        </div>
+        <div class="release-card">
+          <strong>Current beta focus</strong>
           <ul>
-            <li>Audio may leave the device.</li>
-            <li>Prompts, transcript text, and app context may be processed remotely.</li>
-            <li>Personal vocabulary usually lives in someone else’s system.</li>
-            <li>Great output, but privacy depends on provider policy.</li>
+            <li>Signed and notarized macOS DMG</li>
+            <li>Bundled local WhisperKit/Core ML model</li>
+            <li>SAGE governed memory integration</li>
+            <li>Fn-first shortcut and active-app insertion</li>
+            <li>No cloud voice processing</li>
           </ul>
         </div>
-        <div class="compare-panel">
-          <h3>QuietType</h3>
-          <ul>
-            <li>Audio stays on the Mac.</li>
-            <li>Text cleanup runs locally.</li>
-            <li>Vocabulary and corrections are local-first.</li>
-            <li>Designed for builders, security teams, and privacy-sensitive users from day one.</li>
-          </ul>
-        </div>
       </div>
-    </section>
-
-    <section class="shell closing">
-      <h2>Speak freely. Transcribe locally. Nothing leaves your Mac.</h2>
-      <a class="button primary" href="https://github.com/l33tdawg/quiettype/releases">Download beta</a>
     </section>
   </main>
 
   <footer>
-    <div class="shell">QuietType is private local voice input for macOS Apple Silicon by Dhillon "l33tdawg" Kannabhiran. Contact <a href="mailto:dhillon@levelupctf.com">dhillon@levelupctf.com</a>.</div>
+    <div class="shell">
+      QuietType is private local voice input for macOS Apple Silicon by Dhillon "l33tdawg" Kannabhiran.
+      Contact <a href="mailto:dhillon@levelupctf.com">dhillon@levelupctf.com</a>.
+    </div>
   </footer>
+
+  <script>
+    const revealObserver = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("visible");
+          revealObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.12 });
+
+    document.querySelectorAll(".reveal").forEach((element, index) => {
+      element.style.transitionDelay = `${Math.min(index * 28, 180)}ms`;
+      revealObserver.observe(element);
+    });
+
+    const canvas = document.getElementById("signalCanvas");
+    const context = canvas.getContext("2d");
+    let width = 0;
+    let height = 0;
+    let phase = 0;
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      width = rect.width;
+      height = rect.height;
+      canvas.width = Math.max(1, Math.floor(width * ratio));
+      canvas.height = Math.max(1, Math.floor(height * ratio));
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    }
+
+    function drawSignal() {
+      context.clearRect(0, 0, width, height);
+      context.strokeStyle = "rgba(23, 23, 23, 0.14)";
+      context.lineWidth = 1;
+
+      for (let row = 0; row < 8; row += 1) {
+        const y = 70 + row * 58;
+        context.beginPath();
+        for (let x = 0; x <= width; x += 12) {
+          const wave = Math.sin((x * 0.018) + phase + row * 0.7) * (8 + row * 0.5);
+          if (x === 0) context.moveTo(x, y + wave);
+          else context.lineTo(x, y + wave);
+        }
+        context.stroke();
+      }
+
+      context.strokeStyle = "rgba(23, 23, 23, 0.2)";
+      for (let i = 0; i < 28; i += 1) {
+        const x = (i * 97 + phase * 34) % (width + 80) - 40;
+        const y = 24 + ((i * 61) % Math.max(1, height - 48));
+        context.beginPath();
+        context.moveTo(x, y);
+        context.lineTo(x + 22, y);
+        context.stroke();
+      }
+
+      phase += 0.012;
+      requestAnimationFrame(drawSignal);
+    }
+
+    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      resizeCanvas();
+      window.addEventListener("resize", resizeCanvas);
+      requestAnimationFrame(drawSignal);
+    }
+  </script>
 </body>
 </html>
