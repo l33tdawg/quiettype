@@ -6,6 +6,7 @@ APP="$ROOT/dist/QuietType.app"
 VERSION="${QUIETTYPE_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo "0.1.0")}"
 BUILD="${QUIETTYPE_BUILD:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist" 2>/dev/null || echo "1")}"
 DMG_NAME="QuietType-${VERSION}-beta.${BUILD}-macOS-arm64.dmg"
+VOLUME_NAME="QuietType ${VERSION} Beta ${BUILD}"
 STAGING="$ROOT/dist/dmg-staging"
 DMG="$ROOT/dist/$DMG_NAME"
 TMP_DMG="$ROOT/dist/.tmp-$DMG_NAME"
@@ -23,7 +24,7 @@ cp -R "$APP" "$STAGING/QuietType.app"
 ln -s /Applications "$STAGING/Applications"
 
 hdiutil create \
-  -volname "QuietType ${VERSION} Beta" \
+  -volname "$VOLUME_NAME" \
   -srcfolder "$STAGING" \
   -ov \
   -format UDRW \

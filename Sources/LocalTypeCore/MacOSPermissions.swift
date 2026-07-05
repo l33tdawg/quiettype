@@ -29,8 +29,8 @@ public struct QuietTypePermissionSnapshot: Codable, Equatable, Sendable {
 public struct MacOSPermissionService: Sendable {
     public init() {}
 
-    public func snapshot(promptForAccessibility: Bool = false) async -> QuietTypePermissionSnapshot {
-        let microphone = await microphoneState()
+    public func snapshot(promptForAccessibility: Bool = false, verifyMicrophoneAccess: Bool = false) async -> QuietTypePermissionSnapshot {
+        let microphone = await microphoneState(verifyAccess: verifyMicrophoneAccess)
         let accessibility = accessibilityState(prompt: promptForAccessibility)
         return QuietTypePermissionSnapshot(microphone: microphone, accessibility: accessibility)
     }
@@ -70,16 +70,45 @@ public struct MacOSPermissionService: Sendable {
         }
     }
 
-    private func microphoneState() async -> PermissionState {
+    private func microphoneState(verifyAccess: Bool) async -> PermissionState {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             return .granted
         case .denied, .restricted:
+            if verifyAccess, canOpenMicrophoneInput() {
+                return .granted
+            }
             return .denied
         case .notDetermined:
             return .notDetermined
         @unknown default:
+            if verifyAccess, canOpenMicrophoneInput() {
+                return .granted
+            }
             return .unknown
+        }
+    }
+
+    private func canOpenMicrophoneInput() -> Bool {
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            return false
+        }
+
+        input.installTap(onBus: 0, bufferSize: 128, format: format) { _, _ in }
+
+        do {
+            engine.prepare()
+            try engine.start()
+            input.removeTap(onBus: 0)
+            engine.stop()
+            return true
+        } catch {
+            input.removeTap(onBus: 0)
+            engine.stop()
+            return false
         }
     }
 

@@ -1,5 +1,6 @@
 import LocalTypeCore
 import Darwin
+import Foundation
 import SwiftUI
 
 @main
@@ -202,6 +203,11 @@ struct TesterView: View {
                 await model.refreshPermissions()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task {
+                await model.refreshPermissions(verifyMicrophoneAccess: true)
+            }
+        }
     }
 
     private var sidebar: some View {
@@ -209,8 +215,13 @@ struct TesterView: View {
             HStack(spacing: 10) {
                 Image(systemName: "moonphase.waxing.crescent")
                     .font(.title2)
-                Text("QuietType")
-                    .font(.system(size: 24, weight: .semibold, design: .rounded))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("QuietType")
+                        .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    Text(model.appVersionLabel)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(.top, 26)
 
@@ -245,6 +256,13 @@ struct TesterView: View {
                 SidebarItem(icon: QuietTypeSection.settings.icon, title: QuietTypeSection.settings.title, selected: selectedSection == .settings)
             }
             .buttonStyle(.plain)
+
+            Button {
+                selectedSection = .help
+            } label: {
+                SidebarItem(icon: QuietTypeSection.help.icon, title: QuietTypeSection.help.title, selected: selectedSection == .help)
+            }
+            .buttonStyle(.plain)
             .padding(.bottom, 20)
         }
         .padding(.horizontal, 18)
@@ -260,10 +278,14 @@ struct TesterView: View {
                 homePage
             case .history:
                 historyPage
+            case .setup:
+                setupPage
             case .dictionary:
                 dictionaryPage
             case .settings:
                 settingsPage
+            case .help:
+                helpPage
             }
         }
         .id(selectedSection)
@@ -317,6 +339,94 @@ struct TesterView: View {
         .scrollIndicators(.hidden)
     }
 
+    private var setupPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                pageHeader(
+                    title: "Setup",
+                    subtitle: "Train QuietType for your voice, cadence, names, and technical terms."
+                )
+
+                setupChecklistPanel
+
+                HStack(spacing: 12) {
+                    MemoryStatPill(title: "Personalization", value: model.personalizationLabel)
+                    MemoryStatPill(title: "Training sets", value: model.trainingProgressLabel)
+                    MemoryStatPill(title: "Samples", value: "\(model.trainingPairCount)")
+                    MemoryStatPill(title: "Dictation", value: model.speechEngineReady ? "Ready" : "Starting")
+                }
+
+                if !model.permissionsReady {
+                    permissionsPanel
+                }
+
+                setupTrainingPanel
+            }
+            .padding(34)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private var setupChecklistPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("First-time setup")
+                        .font(.title3.weight(.semibold))
+                    Text("Three short steps. QuietType works best after all three are complete.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if model.setupComplete {
+                    Label("Complete", systemImage: "checkmark.circle.fill")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 12) {
+                SetupStepCard(
+                    number: "1",
+                    title: "Allow access",
+                    detail: "Use Microphone to hear you and Accessibility to insert text.",
+                    state: model.permissionsReady ? .done : .action,
+                    actionTitle: "Open"
+                ) {
+                    Task {
+                        if model.microphonePermission != .granted {
+                            await model.requestMicrophone()
+                        }
+                        if model.accessibilityPermission != .granted {
+                            model.requestAccessibility()
+                        }
+                    }
+                }
+
+                SetupStepCard(
+                    number: "2",
+                    title: "Start dictation",
+                    detail: "QuietType starts the local speech engine in the background.",
+                    state: model.speechEngineReady ? .done : .working,
+                    actionTitle: "Wait"
+                ) {}
+
+                SetupStepCard(
+                    number: "3",
+                    title: "Train your voice",
+                    detail: "Read short scripts so names and technical terms are preserved.",
+                    state: model.trainingComplete ? .done : .action,
+                    actionTitle: "Train"
+                ) {
+                    selectedSection = .setup
+                }
+            }
+        }
+        .padding(18)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
     private var dictionaryPage: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -326,7 +436,6 @@ struct TesterView: View {
                 )
 
                 dictionaryStats
-                trainingPanel
                 memoryLibraryPanel
             }
             .padding(34)
@@ -351,19 +460,19 @@ struct TesterView: View {
 
     private var dictionaryStats: some View {
         HStack(spacing: 12) {
-            MemoryStatPill(title: "Committed", value: "\(model.sageMemories.count)")
-            MemoryStatPill(title: "Relevant", value: "\(model.dictionaryMemories.count)")
+            MemoryStatPill(title: "Saved", value: "\(model.sageMemories.count)")
+            MemoryStatPill(title: "Matches", value: "\(model.dictionaryMemories.count)")
             MemoryStatPill(title: "Corrections", value: "\(model.localMemoryCount)")
-            MemoryStatPill(title: "Transcript notes", value: "\(model.transcriptNoteCount)")
+            MemoryStatPill(title: "Review notes", value: "\(model.transcriptNoteCount)")
         }
     }
 
-    private var trainingPanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
+    private var setupTrainingPanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
-                        Text("Voice training")
+                        Text(model.trainingComplete ? "Voice training" : "Finish voice setup")
                             .font(.system(size: 19, weight: .semibold, design: .rounded))
                         Text(model.trainingProgressLabel)
                             .font(.caption.weight(.semibold))
@@ -373,7 +482,7 @@ struct TesterView: View {
                             .background(Color(nsColor: .windowBackgroundColor))
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
-                    Text("Read the script out loud. QuietType saves a small local training pair and cadence hint.")
+                    Text(model.trainingComplete ? "Add another local sample whenever QuietType misses a term." : "Read three short scripts so QuietType learns your cadence and preserves your terms.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -386,23 +495,44 @@ struct TesterView: View {
                 .buttonStyle(QuietButtonStyle())
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text(model.currentCalibrationSet.title)
-                    .font(.callout.weight(.semibold))
-                Text(model.currentCalibrationSet.script)
-                    .font(.system(size: 18, weight: .regular, design: .rounded))
-                    .lineSpacing(4)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                HStack(spacing: 10) {
-                    ProgressView(value: model.trainingInputLevel)
-                        .progressViewStyle(.linear)
-                        .tint(.secondary)
-                        .frame(width: 180)
-                        .opacity(model.isTrainingRecording ? 1 : 0.35)
-                    Text(model.trainingStatusText)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 18) {
+                TrainingMeter(
+                    level: model.trainingInputLevel,
+                    isRecording: model.isTrainingRecording,
+                    isAnalyzing: model.isTrainingAnalyzing,
+                    durationText: model.trainingDurationText
+                )
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(model.currentCalibrationSet.title)
+                        .font(.callout.weight(.semibold))
+                    Text(model.currentCalibrationSet.script)
+                        .font(.system(size: 19, weight: .regular))
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(model.trainingStatusText)
+                                .font(.callout.weight(.medium))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(model.trainingCompletionText)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        ProgressView(value: model.trainingSetupProgress)
+                            .progressViewStyle(.linear)
+                            .tint(.secondary)
+                            .opacity(model.trainingComplete ? 0.45 : 1)
+                    }
+
+                    TrainingTermChips(
+                        terms: model.currentCalibrationSet.terms,
+                        transcript: model.trainingTranscriptDraft,
+                        isRecording: model.isTrainingRecording
+                    )
                 }
             }
             .padding(15)
@@ -412,7 +542,7 @@ struct TesterView: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 1))
 
             HStack {
-                Text(model.currentCalibrationSet.terms.joined(separator: " · "))
+                Text(model.trainingFootnote)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -423,13 +553,17 @@ struct TesterView: View {
                         await model.toggleCalibrationRecording()
                     }
                 } label: {
-                    Label(model.trainingButtonTitle, systemImage: model.isTrainingRecording ? "stop.circle" : "mic")
+                    Label(
+                        model.trainingButtonTitle,
+                        systemImage: model.isTrainingAnalyzing ? "checkmark.circle" : (model.isTrainingRecording ? "stop.circle" : "mic")
+                    )
                 }
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
+                .disabled(model.isTrainingAnalyzing)
                 Button {
                     showingRecognizedTerms = true
                 } label: {
-                    Label("Recognized terms", systemImage: "rectangle.stack.badge.person.crop")
+                    Label("Terms", systemImage: "rectangle.stack.badge.person.crop")
                 }
                 .buttonStyle(QuietButtonStyle())
             }
@@ -531,12 +665,100 @@ struct TesterView: View {
         .scrollIndicators(.hidden)
     }
 
+    private var helpPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                pageHeader(
+                    title: "Help",
+                    subtitle: "Quick fixes for setup, dictation, permissions, and privacy."
+                )
+
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        HelpActionCard(
+                            icon: "checklist",
+                            title: "Finish setup",
+                            detail: "Permissions, local dictation, and voice training in one place.",
+                            actionTitle: "Open Setup"
+                        ) {
+                            selectedSection = .setup
+                        }
+
+                        HelpActionCard(
+                            icon: "questionmark.circle",
+                            title: "Guided tour",
+                            detail: "Replay the short walkthrough for the main controls.",
+                            actionTitle: "Show Tour"
+                        ) {
+                            hasSeenGuide = false
+                            selectedSection = .home
+                            guideStep = .welcome
+                        }
+                    }
+
+                    HStack {
+                        HelpActionCard(
+                            icon: "mic",
+                            title: "Microphone stuck",
+                            detail: "Recheck access after changing macOS privacy settings.",
+                            actionTitle: "Recheck"
+                        ) {
+                            Task {
+                                await model.refreshPermissions(verifyMicrophoneAccess: true)
+                            }
+                        }
+
+                        HelpActionCard(
+                            icon: "brain.head.profile",
+                            title: "Improve accuracy",
+                            detail: "Teach spellings, corrections, and preferred writing style.",
+                            actionTitle: "Open Memory"
+                        ) {
+                            selectedSection = .dictionary
+                        }
+                    }
+                }
+
+                helpFAQPanel
+            }
+            .padding(34)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private var helpFAQPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Troubleshooting")
+                .font(.title3.weight(.semibold))
+
+            HelpFAQRow(
+                question: "QuietType says Microphone is needed, but macOS shows it is allowed.",
+                answer: "Quit every copy of QuietType, open the app from /Applications, then click Recheck. If it still looks stale, remove the old QuietType entry in System Settings > Privacy & Security > Microphone, launch the current app, and allow it again."
+            )
+            HelpFAQRow(
+                question: "Nothing is inserted after dictation.",
+                answer: "Open Setup and make sure Accessibility is allowed. QuietType needs Accessibility to paste polished text into the active app."
+            )
+            HelpFAQRow(
+                question: "The transcript misses names or technical terms.",
+                answer: "Open Setup and complete voice training, then open Memory to teach exact spellings such as project names, acronyms, and product terms."
+            )
+            HelpFAQRow(
+                question: "Does anything leave my Mac?",
+                answer: "No. Dictation, cleanup, training samples, and memory stay local. Manual update checks contact GitHub only when you choose Check for updates."
+            )
+        }
+        .padding(18)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
     private func pageHeader(title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 40, weight: .bold, design: .rounded))
+                .font(.system(size: 40, weight: .bold))
             Text(subtitle)
-                .font(.system(size: 20, weight: .medium, design: .rounded))
+                .font(.system(size: 20, weight: .medium))
                 .foregroundStyle(.secondary)
         }
     }
@@ -559,10 +781,8 @@ struct TesterView: View {
     }
 
     private func resumeSetup() {
-        if !model.permissionsReady || !model.speechEngineReady {
-            selectedSection = .settings
-        } else if !model.trainingComplete {
-            selectedSection = .dictionary
+        if !model.setupComplete {
+            selectedSection = .setup
         } else {
             selectedSection = .settings
         }
@@ -572,7 +792,7 @@ struct TesterView: View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 3), spacing: 14) {
             MetricTile(icon: "text.bubble", value: model.output.isEmpty ? "0" : "1", label: "Sessions today")
             MetricTile(icon: "timer", value: model.lastLatencyMS.map { "\($0) ms" } ?? "Warm", label: "Last insert")
-            MetricTile(icon: "network.slash", value: "0", label: "Cloud calls")
+            MetricTile(icon: "textformat.abc", value: model.wordsProcessedLabel, label: "Words processed")
         }
     }
 
@@ -580,9 +800,9 @@ struct TesterView: View {
         HStack(alignment: .top, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Speak freely. Transcribe locally.")
-                    .font(.system(size: 40, weight: .bold, design: .rounded))
+                    .font(.system(size: 40, weight: .bold))
                 Text("Nothing leaves your Mac.")
-                    .font(.system(size: 20, weight: .medium, design: .rounded))
+                    .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -608,7 +828,7 @@ struct TesterView: View {
             MetricTile(icon: "person.text.rectangle", value: model.personalizationLabel, label: "Personalization")
             MetricTile(icon: "timer", value: model.recordingDuration > 0 ? String(format: "%.1fs", model.recordingDuration) : "Ready", label: "Current dictation")
             MetricTile(icon: "bolt.fill", value: model.lastLatencyMS.map { "\($0) ms" } ?? "Warm", label: "Release latency")
-            MetricTile(icon: "lock.shield", value: "0", label: "Network calls")
+            MetricTile(icon: "textformat.abc", value: model.wordsProcessedLabel, label: "Words processed")
         }
     }
 
@@ -624,7 +844,7 @@ struct TesterView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Finish setup for better transcription")
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .font(.system(size: 20, weight: .semibold))
                 Text(model.setupNudgeText)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -666,6 +886,10 @@ struct TesterView: View {
 
     private var settingsPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if !model.permissionsReady {
+                permissionWarningBanner
+            }
+
             settingsSection(title: "Transcription") {
                 VStack(alignment: .leading, spacing: 12) {
                     QuietSegmentedControl(
@@ -683,18 +907,7 @@ struct TesterView: View {
                     .toggleStyle(.checkbox)
                     .tint(.primary)
 
-                    HStack {
-                        Text("Shortcut")
-                        Spacer()
-                        Text(model.hotKeyLabel)
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Color(nsColor: .windowBackgroundColor))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    ShortcutPicker(model: model)
                 }
             }
 
@@ -711,16 +924,138 @@ struct TesterView: View {
                     .buttonStyle(QuietButtonStyle())
                 }
                 if !model.sageAgentID.isEmpty {
-                    Text("quiettype-agent identity is preserved in Keychain and mirrored locally.")
+                    Text("QuietType keeps the same private memory identity after updates.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            permissionsPanel
-            startupPanel
+            if !model.setupComplete {
+                startupPanel
+            }
+
+            updatesPanel
             aboutPanel
             advancedPanel
+        }
+    }
+
+    private var permissionWarningBanner: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Permissions needed")
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    Text(permissionWarningText)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+            }
+
+            HStack(spacing: 10) {
+                if model.microphonePermission != .granted {
+                    Button {
+                        Task {
+                            await model.requestMicrophone()
+                        }
+                    } label: {
+                        Label(microphonePermissionButtonTitle, systemImage: "mic")
+                    }
+                    .buttonStyle(QuietButtonStyle(prominence: .primary))
+                }
+
+                if model.accessibilityPermission != .granted {
+                    Button {
+                        model.requestAccessibility()
+                    } label: {
+                        Label("Open Accessibility", systemImage: "accessibility")
+                    }
+                    .buttonStyle(QuietButtonStyle(prominence: model.microphonePermission == .granted ? .primary : .secondary))
+                }
+
+                Button {
+                    Task {
+                        await model.refreshPermissions(verifyMicrophoneAccess: true)
+                    }
+                } label: {
+                    Label("Recheck", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(QuietButtonStyle())
+
+                Spacer()
+            }
+        }
+        .padding(16)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.primary.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    private var permissionWarningText: String {
+        switch (model.microphonePermission == .granted, model.accessibilityPermission == .granted) {
+        case (false, false):
+            return "QuietType needs Microphone to hear you and Accessibility to insert polished text into the active app."
+        case (false, true):
+            return "QuietType needs Microphone permission before it can capture local audio. If you just enabled it in System Settings, click Recheck."
+        case (true, false):
+            return "QuietType needs Accessibility permission to paste polished text into the app you are using. If you just enabled it in System Settings, click Recheck."
+        case (true, true):
+            return "Permissions are ready."
+        }
+    }
+
+    private var microphonePermissionButtonTitle: String {
+        model.microphonePermission == .notDetermined ? "Allow Microphone" : "Open Microphone"
+    }
+
+    private var updatesPanel: some View {
+        settingsSection(title: "Updates") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(model.appVersionLabel)
+                            .font(.callout.weight(.semibold))
+                        Text("Manual update checks contact GitHub only when you click the button.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        Task {
+                            await model.checkForUpdatesAndInstall()
+                        }
+                    } label: {
+                        if model.isCheckingForUpdates {
+                            Label("Checking", systemImage: "arrow.triangle.2.circlepath")
+                        } else {
+                            Label("Check for updates", systemImage: "arrow.down.circle")
+                        }
+                    }
+                    .buttonStyle(QuietButtonStyle(prominence: .primary))
+                    .disabled(model.isCheckingForUpdates)
+                }
+
+                if !model.updateStatus.isEmpty {
+                    Text(model.updateStatus)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 
@@ -919,7 +1254,8 @@ struct TesterView: View {
             }
 
             Text(model.output.isEmpty ? "Your polished text will appear here." : model.output)
-                .font(.system(size: 17, weight: .regular))
+                .font(.system(size: 19, weight: .regular))
+                .lineSpacing(4)
                 .foregroundStyle(model.output.isEmpty ? .secondary : .primary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, minHeight: 94, alignment: .topLeading)
@@ -997,15 +1333,15 @@ private enum QuietTypeGuideStep: Int, CaseIterable, Identifiable {
     case dictate
     case privacy
     case memory
-    case share
+    case help
 
     var id: Int { rawValue }
 
     var section: QuietTypeSection {
         switch self {
         case .welcome, .dictate, .privacy: .home
-        case .memory: .dictionary
-        case .share: .settings
+        case .memory: .setup
+        case .help: .help
         }
     }
 
@@ -1018,8 +1354,8 @@ private enum QuietTypeGuideStep: Int, CaseIterable, Identifiable {
         case .welcome: "Welcome to QuietType"
         case .dictate: "Click the mic, then speak naturally"
         case .privacy: "Everything runs on your Mac"
-        case .memory: "Teach it once"
-        case .share: "Help spread the word"
+        case .memory: "Train it once"
+        case .help: "Help is built in"
         }
     }
 
@@ -1030,11 +1366,11 @@ private enum QuietTypeGuideStep: Int, CaseIterable, Identifiable {
         case .dictate:
             return "Use the large mic button or the shortcut. When you stop, QuietType cleans the transcript and inserts the result into the active app."
         case .privacy:
-            return "The speech engine, text cleanup, app context, and correction memory stay local. The network counter should remain zero during normal dictation."
+            return "The speech engine, text cleanup, app context, and correction memory stay local. Your usage stats focus on transcription quality, speed, and words processed."
         case .memory:
-            return "SAGE gives QuietType governed memory for vocabulary, corrections, and writing preferences. You can search, review, and teach new behavior here."
-        case .share:
-            return "QuietType is free. The About section has the GitHub link and a short share message for privacy-conscious Mac users."
+            return "Read a few short scripts so QuietType can learn your cadence, preserve technical terms, and reuse those hints during dictation."
+        case .help:
+            return "If permissions, insertion, or accuracy feel off, Help gives you the shortest path to fix it without leaving QuietType."
         }
     }
 
@@ -1043,8 +1379,8 @@ private enum QuietTypeGuideStep: Int, CaseIterable, Identifiable {
         case .welcome: "moonphase.waxing.crescent"
         case .dictate: "mic.fill"
         case .privacy: "lock.fill"
-        case .memory: "brain.head.profile"
-        case .share: "square.and.arrow.up"
+        case .memory: "waveform.and.mic"
+        case .help: "questionmark.circle"
         }
     }
 
@@ -1160,19 +1496,23 @@ private struct GuidedOnboardingOverlay: View {
 private enum QuietTypeSection: String, CaseIterable, Identifiable {
     case home
     case history
+    case setup
     case dictionary
     case settings
+    case help
 
     var id: String { rawValue }
 
-    static let primary: [QuietTypeSection] = [.home, .history, .dictionary]
+    static let primary: [QuietTypeSection] = [.home, .history, .setup, .dictionary]
 
     var title: String {
         switch self {
         case .home: "Home"
         case .history: "History"
+        case .setup: "Setup"
         case .dictionary: "Memory"
         case .settings: "Settings"
+        case .help: "Help"
         }
     }
 
@@ -1180,9 +1520,140 @@ private enum QuietTypeSection: String, CaseIterable, Identifiable {
         switch self {
         case .home: "house.fill"
         case .history: "clock.arrow.circlepath"
+        case .setup: "waveform.and.mic"
         case .dictionary: "brain.head.profile"
         case .settings: "gearshape"
+        case .help: "questionmark.circle"
         }
+    }
+}
+
+private enum SetupStepCardState {
+    case done
+    case working
+    case action
+}
+
+private struct SetupStepCard: View {
+    var number: String
+    var title: String
+    var detail: String
+    var state: SetupStepCardState
+    var actionTitle: String
+    var action: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(number)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26, height: 26)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 1))
+                Spacer()
+                statusView
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.system(size: 17, weight: .semibold))
+                Text(detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+
+            if state == .action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(QuietButtonStyle(prominence: .primary))
+            }
+        }
+        .padding(15)
+        .frame(maxWidth: .infinity, minHeight: 158, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+    }
+
+    @ViewBuilder
+    private var statusView: some View {
+        switch state {
+        case .done:
+            Label("Done", systemImage: "checkmark.circle.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        case .working:
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.mini)
+                Text("Starting")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        case .action:
+            Label("Open", systemImage: "arrow.right.circle")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct HelpActionCard: View {
+    var icon: String
+    var title: String
+    var detail: String
+    var actionTitle: String
+    var action: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 32)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.system(size: 18, weight: .semibold))
+                Text(detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button(actionTitle, action: action)
+                .buttonStyle(QuietButtonStyle())
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 158, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct HelpFAQRow: View {
+    var question: String
+    var answer: String
+
+    var body: some View {
+        DisclosureGroup {
+            Text(answer)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 6)
+        } label: {
+            Text(question)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
     }
 }
 
@@ -1259,7 +1730,7 @@ private struct MemoryStatPill: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(value)
-                .font(.system(size: 28, weight: .semibold, design: .rounded))
+                .font(.system(size: 28, weight: .semibold))
             Text(title)
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -1269,6 +1740,221 @@ private struct MemoryStatPill: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct TrainingMeter: View {
+    var level: Double
+    var isRecording: Bool
+    var isAnalyzing: Bool
+    var durationText: String
+
+    private var clampedLevel: Double {
+        min(max(level, 0), 1)
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 10)
+                    .frame(width: 104, height: 104)
+                Circle()
+                    .trim(from: 0, to: isRecording ? max(0.08, clampedLevel) : (isAnalyzing ? 0.72 : 0))
+                    .stroke(
+                        Color.primary.opacity(isRecording || isAnalyzing ? 0.82 : 0.20),
+                        style: StrokeStyle(lineWidth: 10, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 104, height: 104)
+                    .animation(.easeOut(duration: 0.12), value: clampedLevel)
+                Image(systemName: isAnalyzing ? "checkmark" : (isRecording ? "waveform" : "mic"))
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(isRecording || isAnalyzing ? Color.primary : Color.secondary)
+            }
+
+            Text(isAnalyzing ? "Learning" : (isRecording ? "Recording" : "Ready"))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(isRecording || isAnalyzing ? .primary : .secondary)
+            Text(durationText)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .frame(width: 120)
+        .padding(.top, 2)
+    }
+}
+
+private struct TrainingTermChips: View {
+    var terms: [String]
+    var transcript: String
+    var isRecording: Bool
+
+    private var normalizedTranscript: String {
+        Self.normalize(transcript)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(isRecording ? "Terms to listen for" : "Term check")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            FlowLayout(spacing: 7, rowSpacing: 7) {
+                ForEach(terms, id: \.self) { term in
+                    let state = state(for: term)
+                    HStack(spacing: 5) {
+                        if state != .pending {
+                            Image(systemName: state == .found ? "checkmark" : "minus")
+                                .font(.caption.weight(.bold))
+                        }
+                        Text(term)
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(state.foreground)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(state.background)
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(state.border, lineWidth: 1))
+                }
+            }
+        }
+    }
+
+    private func state(for term: String) -> TrainingTermState {
+        guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !isRecording else {
+            return .pending
+        }
+        return normalizedTranscript.contains(Self.normalize(term)) ? .found : .missing
+    }
+
+    private static func normalize(_ value: String) -> String {
+        value.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+}
+
+private enum TrainingTermState {
+    case pending
+    case found
+    case missing
+
+    var foreground: Color {
+        switch self {
+        case .pending, .missing:
+            return .secondary
+        case .found:
+            return .white
+        }
+    }
+
+    var background: Color {
+        switch self {
+        case .pending:
+            return Color(nsColor: .windowBackgroundColor)
+        case .found:
+            return Color.primary
+        case .missing:
+            return Color.primary.opacity(0.04)
+        }
+    }
+
+    var border: Color {
+        switch self {
+        case .pending:
+            return Color.primary.opacity(0.10)
+        case .found:
+            return Color.primary.opacity(0.08)
+        case .missing:
+            return Color.primary.opacity(0.14)
+        }
+    }
+}
+
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+    var rowSpacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 0
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var maxWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                maxWidth = max(maxWidth, x - spacing)
+                x = 0
+                y += rowHeight + rowSpacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+
+        maxWidth = max(maxWidth, x > 0 ? x - spacing : 0)
+        return CGSize(width: width > 0 ? width : maxWidth, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + rowSpacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
+private struct ShortcutPicker: View {
+    @ObservedObject var model: MenuBarModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text("Shortcut")
+                    .font(.callout)
+                Spacer()
+                Text(model.hotKeyLabel)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                ForEach(MenuBarModel.HotKeyChoice.allCases) { choice in
+                    Button {
+                        model.setHotKeyChoice(choice)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(choice.label)
+                                .font(.callout.weight(.semibold))
+                            Text(choice.detail)
+                                .font(.caption)
+                                .foregroundStyle(model.hotKeyChoice == choice ? Color.white.opacity(0.72) : Color.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(QuietButtonStyle(prominence: model.hotKeyChoice == choice ? .primary : .secondary))
+                }
+            }
+        }
     }
 }
 
@@ -1846,6 +2532,287 @@ private struct RecognizedTermsDrawer: View {
     }
 }
 
+private struct QuietTypeUpdateResult {
+    var message: String
+}
+
+private enum QuietTypeUpdaterError: LocalizedError {
+    case releaseUnavailable(Int)
+    case releaseDecodeFailed
+    case noDMGAsset
+    case downloadUnavailable(Int)
+    case mountFailed
+    case appMissingInDMG
+    case bundleIdentifierMismatch(expected: String, actual: String)
+    case installFailed(String)
+    case commandFailed(String, Int32, String)
+
+    var errorDescription: String? {
+        switch self {
+        case .releaseUnavailable(let status):
+            if status == 401 || status == 403 || status == 404 {
+                return "GitHub release metadata is not accessible. Private beta releases require tester access or a public release asset."
+            }
+            return "GitHub release metadata returned HTTP \(status)."
+        case .releaseDecodeFailed:
+            return "GitHub returned release metadata QuietType could not read."
+        case .noDMGAsset:
+            return "No macOS arm64 DMG was found in the latest GitHub release."
+        case .downloadUnavailable(let status):
+            if status == 401 || status == 403 || status == 404 {
+                return "GitHub blocked the DMG download. Private beta assets require tester access or a public release asset."
+            }
+            return "DMG download returned HTTP \(status)."
+        case .mountFailed:
+            return "The downloaded DMG could not be mounted."
+        case .appMissingInDMG:
+            return "The DMG did not contain QuietType.app."
+        case .bundleIdentifierMismatch(let expected, let actual):
+            return "The downloaded app has bundle identifier \(actual), expected \(expected). Update cancelled to preserve macOS permissions."
+        case .installFailed(let reason):
+            return reason
+        case .commandFailed(let command, let code, let output):
+            return "\(command) failed with exit code \(code). \(output)"
+        }
+    }
+}
+
+private struct QuietTypeGitHubRelease: Decodable {
+    var tagName: String
+    var name: String?
+    var assets: [QuietTypeGitHubAsset]
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case name
+        case assets
+    }
+}
+
+private struct QuietTypeGitHubAsset: Decodable {
+    var name: String
+    var browserDownloadURL: URL
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case browserDownloadURL = "browser_download_url"
+    }
+}
+
+private struct QuietTypeReleaseVersion: Comparable {
+    var major: Int
+    var minor: Int
+    var patch: Int
+    var betaBuild: Int
+
+    static func current() -> QuietTypeReleaseVersion {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+        let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
+        return parse("v\(version)-beta.\(build)") ?? QuietTypeReleaseVersion(major: 0, minor: 1, patch: 0, betaBuild: build)
+    }
+
+    static func parse(_ value: String) -> QuietTypeReleaseVersion? {
+        let normalized = value
+            .lowercased()
+            .replacingOccurrences(of: "quiettype-", with: "")
+            .replacingOccurrences(of: "-macos-arm64.dmg", with: "")
+            .replacingOccurrences(of: "v", with: "")
+        let parts = normalized.components(separatedBy: "-beta.")
+        let versionParts = parts[0].split(separator: ".").compactMap { Int($0) }
+        guard versionParts.count >= 3 else {
+            return nil
+        }
+        let build = parts.count > 1 ? (Int(parts[1]) ?? 0) : 0
+        return QuietTypeReleaseVersion(
+            major: versionParts[0],
+            minor: versionParts[1],
+            patch: versionParts[2],
+            betaBuild: build
+        )
+    }
+
+    static func < (lhs: QuietTypeReleaseVersion, rhs: QuietTypeReleaseVersion) -> Bool {
+        if lhs.major != rhs.major { return lhs.major < rhs.major }
+        if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
+        if lhs.patch != rhs.patch { return lhs.patch < rhs.patch }
+        return lhs.betaBuild < rhs.betaBuild
+    }
+}
+
+private final class QuietTypeGitHubUpdater {
+    private let releaseURL = URL(string: "https://api.github.com/repos/l33tdawg/quiettype/releases/latest")!
+    private let fileManager = FileManager.default
+
+    func checkDownloadBackupAndInstall() async throws -> QuietTypeUpdateResult {
+        let release = try await fetchLatestRelease()
+        guard let asset = release.assets.first(where: { asset in
+            asset.name.localizedCaseInsensitiveContains("macOS-arm64.dmg")
+                || asset.name.localizedCaseInsensitiveContains("macos-arm64.dmg")
+        }) else {
+            throw QuietTypeUpdaterError.noDMGAsset
+        }
+
+        let currentVersion = QuietTypeReleaseVersion.current()
+        let latestVersion = QuietTypeReleaseVersion.parse(release.tagName)
+            ?? QuietTypeReleaseVersion.parse(asset.name)
+            ?? currentVersion
+
+        guard latestVersion > currentVersion else {
+            return QuietTypeUpdateResult(message: "QuietType is up to date. You are running \(display(currentVersion)).")
+        }
+
+        let dmgURL = try await download(asset)
+        let mountedVolume = try mount(dmgURL)
+        defer {
+            _ = try? run("/usr/bin/hdiutil", arguments: ["detach", mountedVolume.path])
+        }
+
+        let sourceApp = mountedVolume.appendingPathComponent("QuietType.app", isDirectory: true)
+        guard fileManager.fileExists(atPath: sourceApp.path) else {
+            throw QuietTypeUpdaterError.appMissingInDMG
+        }
+
+        try verifyBundleIdentity(sourceApp)
+        try backupAndInstall(sourceApp: sourceApp)
+        try verifyInstalledApp()
+
+        return QuietTypeUpdateResult(
+            message: "Installed \(display(latestVersion)) in /Applications. Quit and reopen QuietType to use the new version."
+        )
+    }
+
+    private func fetchLatestRelease() async throws -> QuietTypeGitHubRelease {
+        var request = URLRequest(url: releaseURL)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("QuietType-Updater", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw QuietTypeUpdaterError.releaseUnavailable(http.statusCode)
+        }
+        do {
+            return try JSONDecoder().decode(QuietTypeGitHubRelease.self, from: data)
+        } catch {
+            throw QuietTypeUpdaterError.releaseDecodeFailed
+        }
+    }
+
+    private func download(_ asset: QuietTypeGitHubAsset) async throws -> URL {
+        let updatesDirectory = try applicationSupportDirectory()
+            .appendingPathComponent("Updates", isDirectory: true)
+        try fileManager.createDirectory(at: updatesDirectory, withIntermediateDirectories: true)
+
+        let destination = updatesDirectory.appendingPathComponent(asset.name)
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+
+        var request = URLRequest(url: asset.browserDownloadURL)
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        request.setValue("QuietType-Updater", forHTTPHeaderField: "User-Agent")
+        let (temporaryURL, response) = try await URLSession.shared.download(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw QuietTypeUpdaterError.downloadUnavailable(http.statusCode)
+        }
+
+        try fileManager.moveItem(at: temporaryURL, to: destination)
+        return destination
+    }
+
+    private func mount(_ dmgURL: URL) throws -> URL {
+        let output = try run("/usr/bin/hdiutil", arguments: ["attach", dmgURL.path, "-nobrowse", "-readonly", "-plist"])
+        guard let data = output.data(using: .utf8),
+              let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+              let entities = plist["system-entities"] as? [[String: Any]],
+              let mountPath = entities.compactMap({ $0["mount-point"] as? String }).first
+        else {
+            throw QuietTypeUpdaterError.mountFailed
+        }
+        return URL(fileURLWithPath: mountPath, isDirectory: true)
+    }
+
+    private func backupAndInstall(sourceApp: URL) throws {
+        let destinationApp = URL(fileURLWithPath: "/Applications/QuietType.app", isDirectory: true)
+        let temporaryInstall = URL(fileURLWithPath: "/Applications/QuietType.app.updating", isDirectory: true)
+
+        if fileManager.fileExists(atPath: destinationApp.path) {
+            let backupDirectory = try applicationSupportDirectory()
+                .appendingPathComponent("Backups", isDirectory: true)
+            try fileManager.createDirectory(at: backupDirectory, withIntermediateDirectories: true)
+            let backupURL = backupDirectory.appendingPathComponent("QuietType-\(timestamp()).app", isDirectory: true)
+            try fileManager.copyItem(at: destinationApp, to: backupURL)
+        }
+
+        if fileManager.fileExists(atPath: temporaryInstall.path) {
+            try fileManager.removeItem(at: temporaryInstall)
+        }
+        try fileManager.copyItem(at: sourceApp, to: temporaryInstall)
+
+        if fileManager.fileExists(atPath: destinationApp.path) {
+            try fileManager.removeItem(at: destinationApp)
+        }
+        try fileManager.moveItem(at: temporaryInstall, to: destinationApp)
+    }
+
+    private func verifyBundleIdentity(_ appURL: URL) throws {
+        let expectedBundleID = Bundle.main.bundleIdentifier ?? "local.quiettype.mac"
+        let infoURL = appURL.appendingPathComponent("Contents/Info.plist")
+        guard let info = NSDictionary(contentsOf: infoURL),
+              let actualBundleID = info["CFBundleIdentifier"] as? String
+        else {
+            throw QuietTypeUpdaterError.bundleIdentifierMismatch(expected: expectedBundleID, actual: "missing")
+        }
+
+        guard actualBundleID == expectedBundleID else {
+            throw QuietTypeUpdaterError.bundleIdentifierMismatch(expected: expectedBundleID, actual: actualBundleID)
+        }
+    }
+
+    private func verifyInstalledApp() throws {
+        _ = try run("/usr/sbin/spctl", arguments: ["-a", "-t", "exec", "-vv", "/Applications/QuietType.app"])
+    }
+
+    private func applicationSupportDirectory() throws -> URL {
+        guard let directory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            throw QuietTypeUpdaterError.installFailed("Could not locate Application Support.")
+        }
+        return directory.appendingPathComponent("QuietType", isDirectory: true)
+    }
+
+    private func timestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter.string(from: Date())
+    }
+
+    private func display(_ version: QuietTypeReleaseVersion) -> String {
+        "v\(version.major).\(version.minor).\(version.patch) beta.\(version.betaBuild)"
+    }
+
+    @discardableResult
+    private func run(_ executable: String, arguments: [String]) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        process.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else {
+            throw QuietTypeUpdaterError.commandFailed(
+                URL(fileURLWithPath: executable).lastPathComponent,
+                process.terminationStatus,
+                output
+            )
+        }
+        return output
+    }
+}
+
 struct CalibrationSet: Identifiable, Equatable {
     var id: String
     var title: String
@@ -1921,18 +2888,23 @@ final class MenuBarModel: ObservableObject {
     @Published var calibrationSetIndex = 0
     @Published var calibrationSavedCount = 0
     @Published var isTrainingRecording = false
+    @Published var isTrainingAnalyzing = false
     @Published var trainingDuration = 0.0
     @Published var trainingInputLevel = 0.0
     @Published var trainingTranscriptDraft = ""
     @Published var trainingPairCount = 0
     @Published var statusMessage = ""
     @Published var hotKeyLabel = "⌃⇧D"
+    @Published var hotKeyChoice = HotKeyChoice.function
     @Published var microphonePermission: PermissionState = .unknown
     @Published var accessibilityPermission: PermissionState = .unknown
     @Published var cpuUsagePercent = 0
+    @Published var isCheckingForUpdates = false
+    @Published var updateStatus = ""
 
     private let permissionService = MacOSPermissionService()
     private let memoryStore = SQLiteMemoryStore.persistentDefault()
+    private let updateService = QuietTypeGitHubUpdater()
     private var sageDirectClient: SageDirectClient?
     private var whisperKitSupervisor: WhisperKitServerSupervisor?
     private var didStartAppServices = false
@@ -1952,9 +2924,12 @@ final class MenuBarModel: ObservableObject {
     private let chunkDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("quiettype-stream")
     private var streamingTranscriptionSession: StreamingAudioTranscriptionSession?
     private var hotKeyController: CarbonHotKeyController?
+    private var functionKeyMonitor: FunctionKeyToggleMonitor?
     private var lastHotKeyToggleAt: Date?
     private let overlayController = DictationOverlayController()
     private var cpuSampler = CPUUsageSampler()
+    private var microphoneAccessVerified = false
+    private static let hotKeyChoiceKey = "quiettype.hotKeyChoice"
     private static let calibrationSavedCountKey = "quiettype.calibrationSavedCount"
     private static let trainingPairCountKey = "quiettype.trainingPairCount"
     private static let requiredCalibrationSets = 3
@@ -1964,6 +2939,14 @@ final class MenuBarModel: ObservableObject {
     init() {
         calibrationSavedCount = UserDefaults.standard.integer(forKey: Self.calibrationSavedCountKey)
         trainingPairCount = UserDefaults.standard.integer(forKey: Self.trainingPairCountKey)
+        if let storedHotKey = UserDefaults.standard.string(forKey: Self.hotKeyChoiceKey),
+           let choice = HotKeyChoice(rawValue: storedHotKey) {
+            hotKeyChoice = choice
+            hotKeyLabel = choice.label
+        } else {
+            hotKeyChoice = .function
+            hotKeyLabel = HotKeyChoice.function.label
+        }
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
@@ -1987,6 +2970,15 @@ final class MenuBarModel: ObservableObject {
 
     var statusIcon: String {
         isRunning ? "waveform" : "mic"
+    }
+
+    var appVersionLabel: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        if build.isEmpty {
+            return "v\(version)"
+        }
+        return "v\(version) beta.\(build)"
     }
 
     var primaryPrompt: String {
@@ -2069,8 +3061,24 @@ final class MenuBarModel: ObservableObject {
         "\(min(calibrationSavedCount, Self.requiredCalibrationSets)) of \(Self.requiredCalibrationSets)"
     }
 
+    var trainingSetupProgress: Double {
+        Double(min(calibrationSavedCount, Self.requiredCalibrationSets)) / Double(Self.requiredCalibrationSets)
+    }
+
+    var trainingCompletionText: String {
+        if trainingComplete {
+            return "Setup training complete"
+        }
+        let remaining = max(0, Self.requiredCalibrationSets - calibrationSavedCount)
+        return "\(remaining) \(remaining == 1 ? "set" : "sets") left"
+    }
+
     var personalizationLabel: String {
         "\(personalizationPercent)%"
+    }
+
+    var wordsProcessedLabel: String {
+        abbreviatedCount(processedWordCount)
     }
 
     var setupNudgeText: String {
@@ -2089,10 +3097,10 @@ final class MenuBarModel: ObservableObject {
 
     var resumeSetupLabel: String {
         if !permissionsReady {
-            return "Grant permissions"
+            return "Start setup"
         }
         if !speechEngineReady {
-            return "Check engine"
+            return "Continue setup"
         }
         if !trainingComplete {
             return "Resume training"
@@ -2101,6 +3109,9 @@ final class MenuBarModel: ObservableObject {
     }
 
     var trainingButtonTitle: String {
+        if isTrainingAnalyzing {
+            return "Saving"
+        }
         if isTrainingRecording {
             return "Stop training"
         }
@@ -2108,10 +3119,37 @@ final class MenuBarModel: ObservableObject {
     }
 
     var trainingStatusText: String {
-        if isTrainingRecording {
-            return "Recording \(String(format: "%.1f", trainingDuration))s locally"
+        if isTrainingAnalyzing {
+            return "Learning locally"
         }
-        return "Last \(min(trainingPairCount, Self.maxTrainingPairCount)) local training pairs kept."
+        if isTrainingRecording {
+            return "Listening locally"
+        }
+        if !trainingTranscriptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Last sample analyzed locally"
+        }
+        return "Ready to record"
+    }
+
+    var trainingDurationText: String {
+        if isTrainingRecording || trainingDuration > 0 {
+            return String(format: "%.1fs", trainingDuration)
+        }
+        return "0.0s"
+    }
+
+    var trainingFootnote: String {
+        let kept = min(trainingPairCount, Self.maxTrainingPairCount)
+        if isTrainingAnalyzing {
+            return "Checking terms and saving your local sample."
+        }
+        if isTrainingRecording {
+            return "Audio stays local. Stop when you finish the script."
+        }
+        if kept == 0 {
+            return "QuietType keeps up to \(Self.maxTrainingPairCount) local training pairs."
+        }
+        return "\(kept) of \(Self.maxTrainingPairCount) local training pairs kept."
     }
 
     private var personalizationPercent: Int {
@@ -2136,6 +3174,20 @@ final class MenuBarModel: ObservableObject {
 
     var transcriptNoteCount: Int {
         localMemories.filter { $0.type == .transcriptNote }.count
+    }
+
+    private var processedWordCount: Int {
+        let noteWords = localMemories
+            .filter { $0.type == .transcriptNote }
+            .reduce(0) { total, memory in
+                total + wordCount(memory.payload["polished_text"] ?? memory.payload["raw_transcript"] ?? "")
+            }
+
+        if noteWords > 0 {
+            return noteWords
+        }
+
+        return wordCount(output)
     }
 
     var dictionaryMemories: [DictionaryMemoryItem] {
@@ -2230,6 +3282,25 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
+    private func wordCount(_ text: String) -> Int {
+        text.split { character in
+            character.isWhitespace || character.isNewline
+        }.count
+    }
+
+    private func abbreviatedCount(_ value: Int) -> String {
+        if value >= 1_000_000 {
+            return String(format: "%.1fM", Double(value) / 1_000_000.0)
+        }
+        if value >= 10_000 {
+            return "\(value / 1_000)K"
+        }
+        if value >= 1_000 {
+            return String(format: "%.1fK", Double(value) / 1_000.0)
+        }
+        return "\(value)"
+    }
+
     func refreshSageStatus() {
         let installation = SageDetector().detect()
         sageDetected = installation.isInstalled
@@ -2265,9 +3336,19 @@ final class MenuBarModel: ObservableObject {
         )
     }
 
-    func refreshPermissions(promptForAccessibility: Bool = false) async {
-        let snapshot = await permissionService.snapshot(promptForAccessibility: promptForAccessibility)
-        microphonePermission = snapshot.microphone
+    func refreshPermissions(promptForAccessibility: Bool = false, verifyMicrophoneAccess: Bool = false) async {
+        let snapshot = await permissionService.snapshot(
+            promptForAccessibility: promptForAccessibility,
+            verifyMicrophoneAccess: verifyMicrophoneAccess
+        )
+        if snapshot.microphone == .granted {
+            microphoneAccessVerified = true
+            microphonePermission = .granted
+        } else if microphoneAccessVerified, !verifyMicrophoneAccess {
+            microphonePermission = .granted
+        } else {
+            microphonePermission = snapshot.microphone
+        }
         accessibilityPermission = snapshot.accessibility
         updatePermissionsStartupStep()
     }
@@ -2278,13 +3359,30 @@ final class MenuBarModel: ObservableObject {
 
     func requestMicrophone() async {
         microphonePermission = await permissionService.requestMicrophone()
-        await refreshPermissions(promptForAccessibility: false)
+        await refreshPermissions(promptForAccessibility: false, verifyMicrophoneAccess: true)
     }
 
     func requestAccessibility() {
         accessibilityPermission = permissionService.requestAccessibility()
         Task {
             await refreshPermissions(promptForAccessibility: true)
+        }
+    }
+
+    func checkForUpdatesAndInstall() async {
+        guard !isCheckingForUpdates else {
+            return
+        }
+
+        isCheckingForUpdates = true
+        updateStatus = "Checking GitHub Releases..."
+        defer { isCheckingForUpdates = false }
+
+        do {
+            let result = try await updateService.checkDownloadBackupAndInstall()
+            updateStatus = result.message
+        } catch {
+            updateStatus = "Update check failed: \(error.localizedDescription)"
         }
     }
 
@@ -2312,6 +3410,8 @@ final class MenuBarModel: ObservableObject {
         trainingCaptureService = nil
         hotKeyController?.unregister()
         hotKeyController = nil
+        functionKeyMonitor?.unregister()
+        functionKeyMonitor = nil
         overlayController.hide()
         nativeSpeechStartupTask?.cancel()
         nativeSpeechStartupTask = nil
@@ -2320,27 +3420,67 @@ final class MenuBarModel: ObservableObject {
         nativeSpeechServerReady = false
     }
 
-    private func registerGlobalHotKey() {
-        guard hotKeyController == nil else {
+    func setHotKeyChoice(_ choice: HotKeyChoice) {
+        guard hotKeyChoice != choice else {
+            return
+        }
+        hotKeyChoice = choice
+        hotKeyLabel = choice.label
+        UserDefaults.standard.set(choice.rawValue, forKey: Self.hotKeyChoiceKey)
+        registerGlobalHotKey(force: true)
+    }
+
+    private func registerGlobalHotKey(force: Bool = false) {
+        if force {
+            hotKeyController?.unregister()
+            hotKeyController = nil
+            functionKeyMonitor?.unregister()
+            functionKeyMonitor = nil
+        }
+
+        guard hotKeyController == nil && functionKeyMonitor == nil else {
             return
         }
 
-        let preferred = CarbonHotKeyController(descriptor: .controlShiftD) { [weak self] phase in
-            guard phase == .pressed else {
-                return
+        switch hotKeyChoice {
+        case .function:
+            let monitor = FunctionKeyToggleMonitor { [weak self] in
+                Task { @MainActor [weak self] in
+                    await self?.toggleFromHotKey()
+                }
             }
-            Task { @MainActor [weak self] in
-                await self?.toggleFromHotKey()
-            }
-        }
 
-        do {
-            try preferred.register()
-            hotKeyController = preferred
-            hotKeyLabel = "⌃⇧D"
-            statusMessage = "Shortcut ready"
-        } catch {
-            lastError = "Could not register shortcut: \(error)"
+            do {
+                try monitor.register()
+                functionKeyMonitor = monitor
+                hotKeyLabel = HotKeyChoice.function.label
+                statusMessage = "Fn shortcut ready"
+            } catch {
+                lastError = "Could not register Fn shortcut: \(error)"
+                hotKeyChoice = .controlShiftD
+                hotKeyLabel = HotKeyChoice.controlShiftD.label
+                UserDefaults.standard.set(hotKeyChoice.rawValue, forKey: Self.hotKeyChoiceKey)
+                registerGlobalHotKey(force: true)
+            }
+
+        case .controlShiftD:
+            let controller = CarbonHotKeyController(descriptor: .controlShiftD) { [weak self] phase in
+                guard phase == .pressed else {
+                    return
+                }
+                Task { @MainActor [weak self] in
+                    await self?.toggleFromHotKey()
+                }
+            }
+
+            do {
+                try controller.register()
+                hotKeyController = controller
+                hotKeyLabel = HotKeyChoice.controlShiftD.label
+                statusMessage = "Shortcut ready"
+            } catch {
+                lastError = "Could not register shortcut: \(error)"
+            }
         }
     }
 
@@ -2593,7 +3733,7 @@ final class MenuBarModel: ObservableObject {
     }
 
     func runLocalSession() async {
-        await refreshPermissions(promptForAccessibility: false)
+        await refreshPermissions(promptForAccessibility: false, verifyMicrophoneAccess: true)
         guard permissionsReady else {
             lastError = "Microphone and Accessibility are required."
             statusMessage = "Setup incomplete"
@@ -2624,13 +3764,6 @@ final class MenuBarModel: ObservableObject {
         }
         refreshSpeechEngineStatus()
 
-        await refreshPermissions(promptForAccessibility: false)
-        guard permissionsReady else {
-            lastError = "Microphone and Accessibility are required."
-            statusMessage = "Setup incomplete"
-            return
-        }
-
         output = ""
         lastError = nil
         statusMessage = ""
@@ -2655,6 +3788,9 @@ final class MenuBarModel: ObservableObject {
         do {
             try service.start()
             captureService = service
+            microphoneAccessVerified = true
+            microphonePermission = .granted
+            updatePermissionsStartupStep()
             isRecording = true
             statusMessage = "Listening locally"
             overlayController.show(state: .listening, level: inputLevel)
@@ -2662,7 +3798,11 @@ final class MenuBarModel: ObservableObject {
             captureService = nil
             recordingStartedAt = nil
             isRecording = false
+            microphoneAccessVerified = false
+            microphonePermission = .denied
+            updatePermissionsStartupStep()
             lastError = "Could not start microphone: \(error)"
+            statusMessage = "Microphone permission needed"
         }
     }
 
@@ -2678,11 +3818,11 @@ final class MenuBarModel: ObservableObject {
             accessibilityPermission = permissionService.requestAccessibility()
         }
 
-        await refreshPermissions(promptForAccessibility: true)
+        await refreshPermissions(promptForAccessibility: true, verifyMicrophoneAccess: true)
 
-        guard permissionsReady else {
+        guard accessibilityPermission == .granted else {
             statusMessage = "Waiting for macOS permissions"
-            lastError = "Allow Microphone and Accessibility, then QuietType will continue automatically."
+            lastError = "Allow Accessibility so QuietType can insert polished text into the active app."
             return false
         }
 
@@ -3056,13 +4196,7 @@ final class MenuBarModel: ObservableObject {
 
         if microphonePermission != .granted {
             microphonePermission = await permissionService.requestMicrophone()
-            await refreshPermissions(promptForAccessibility: false)
-        }
-
-        guard microphonePermission == .granted else {
-            statusMessage = "Microphone permission needed"
-            lastError = "Allow Microphone to record local voice training."
-            return
+            await refreshPermissions(promptForAccessibility: false, verifyMicrophoneAccess: true)
         }
 
         trainingSamples = []
@@ -3081,6 +4215,9 @@ final class MenuBarModel: ObservableObject {
         do {
             try service.start()
             trainingCaptureService = service
+            microphoneAccessVerified = true
+            microphonePermission = .granted
+            updatePermissionsStartupStep()
             isTrainingRecording = true
             statusMessage = "Training locally"
             lastError = nil
@@ -3088,7 +4225,11 @@ final class MenuBarModel: ObservableObject {
             trainingCaptureService = nil
             trainingStartedAt = nil
             isTrainingRecording = false
+            microphoneAccessVerified = false
+            microphonePermission = .denied
+            updatePermissionsStartupStep()
             lastError = "Could not start training microphone: \(error)"
+            statusMessage = "Microphone permission needed"
         }
     }
 
@@ -3103,6 +4244,11 @@ final class MenuBarModel: ObservableObject {
             return
         }
 
+        isTrainingAnalyzing = true
+        defer {
+            isTrainingAnalyzing = false
+        }
+
         do {
             let directory = trainingDirectory()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -3112,6 +4258,7 @@ final class MenuBarModel: ObservableObject {
             lastTrainingAudioURL = audioURL
             statusMessage = "Learning locally"
             let rawTranscript = try? await makeAudioTranscriber().transcribe(audioFile: audioURL)
+            trainingTranscriptDraft = rawTranscript ?? ""
             await saveCalibrationSet(audioURL: audioURL, rawTranscript: rawTranscript)
         } catch {
             statusMessage = "Training save failed"
@@ -3312,6 +4459,31 @@ final class MenuBarModel: ObservableObject {
                 return RuleBasedSemanticEditor()
             case .ollama:
                 return OllamaSemanticEditor(model: model, fallback: RuleBasedSemanticEditor())
+            }
+        }
+    }
+
+    enum HotKeyChoice: String, CaseIterable, Identifiable {
+        case function
+        case controlShiftD
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .function:
+                return "Fn"
+            case .controlShiftD:
+                return "⌃⇧D"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .function:
+                return "Recommended"
+            case .controlShiftD:
+                return "Fallback"
             }
         }
     }

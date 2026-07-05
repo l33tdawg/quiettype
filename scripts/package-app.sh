@@ -14,6 +14,8 @@ SIGN_IDENTITY="${QUIETTYPE_CODESIGN_IDENTITY:--}"
 SIGN_OPTIONS="${QUIETTYPE_CODESIGN_OPTIONS:---options runtime}"
 BUNDLE_MODELS="${QUIETTYPE_BUNDLE_MODELS:-1}"
 WHISPERKIT_MODEL_SOURCE="${QUIETTYPE_WHISPERKIT_MODEL_SOURCE:-$DEFAULT_WHISPERKIT_MODEL}"
+APP_VERSION="${QUIETTYPE_VERSION:-}"
+APP_BUILD="${QUIETTYPE_BUILD:-}"
 
 if [[ -x "$ARM_RELEASE_BIN" ]]; then
   BIN="$ARM_RELEASE_BIN"
@@ -33,6 +35,17 @@ fi
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$ROOT/resources/LocalTypeMac/Info.plist" "$APP/Contents/Info.plist"
+if [[ -n "$APP_VERSION" ]]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$APP/Contents/Info.plist"
+fi
+if [[ -n "$APP_BUILD" ]]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_BUILD" "$APP/Contents/Info.plist"
+fi
+BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")"
+if [[ "$BUNDLE_ID" != "local.quiettype.mac" ]]; then
+  echo "Unexpected bundle identifier '$BUNDLE_ID'; refusing to package because this would reset macOS permissions." >&2
+  exit 1
+fi
 cp "$BIN" "$APP/Contents/MacOS/LocalTypeMac"
 if [[ -x "$SERVER_BIN" ]]; then
   cp "$SERVER_BIN" "$APP/Contents/MacOS/argmax-cli"
