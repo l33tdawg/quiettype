@@ -21,6 +21,31 @@ By default the private beta package also bundles the local WhisperKit/Core ML AS
 
 That makes the DMG much larger, but it gives testers the expected install-and-run experience. To intentionally ship a smaller app that uses an already-installed model, set `QUIETTYPE_BUNDLE_MODELS=0`.
 
+The beta package also bundles `SAGE.app` when available at:
+
+```text
+vendor/SAGE.app
+```
+
+QuietType checks a user-installed SAGE first, then the bundled SAGE GUI inside
+the app bundle. To prepare that bundle from the pinned/current SAGE release:
+
+```bash
+bash scripts/download-sage-gui.sh
+```
+
+By default this script downloads the latest release from
+`https://github.com/l33tdawg/sage`. Current beta builds pin SAGE to `v11.0.2`
+for reproducibility:
+
+```bash
+SAGE_RELEASE_TAG="v11.0.2" bash scripts/download-sage-gui.sh
+```
+
+To intentionally ship without bundled SAGE for a developer-only build, set
+`QUIETTYPE_BUNDLE_SAGE=0`. Public/private tester builds should keep SAGE
+bundled because QuietType requires SAGE governed local memory.
+
 Expected output:
 
 ```text
@@ -124,6 +149,8 @@ argmaxinc/whisperkit-coreml@97a5bf9bbc74c7d9c12c755d04dea59e672e3808
 ```
 
 This keeps the model out of git while still making CI releases reproducible.
+It also downloads the SAGE GUI release into `vendor/SAGE.app` before packaging.
+`SAGE_RELEASE_TAG` is currently pinned to `v11.0.2` to avoid version drift.
 
 ## 6. Tester note
 

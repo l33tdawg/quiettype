@@ -31,6 +31,8 @@ jobs:
       QUIETTYPE_NOTARY_PROFILE: "QUIETTYPE_NOTARY"
       QUIETTYPE_NOTARIZE: "1"
       QUIETTYPE_WHISPERKIT_MODEL_REVISION: "97a5bf9bbc74c7d9c12c755d04dea59e672e3808"
+      SAGE_RELEASE_TAG: "v11.0.2"
+      QUIETTYPE_FORCE_SAGE_DOWNLOAD: "1"
 
     steps:
       - name: Checkout
@@ -123,9 +125,10 @@ jobs:
             .swiftpm-home
             .clang-module-cache
             .model-cache
+            vendor/SAGE.app
             vendor/whisper.cpp
             vendor/argmax-oss-swift/.build
-          key: quiettype-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'scripts/*.sh') }}-${{ env.QUIETTYPE_WHISPERKIT_MODEL_REVISION }}
+          key: quiettype-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'scripts/*.sh') }}-${{ env.QUIETTYPE_WHISPERKIT_MODEL_REVISION }}-${{ env.SAGE_RELEASE_TAG }}
           restore-keys: |
             quiettype-${{ runner.os }}-${{ runner.arch }}-
 
@@ -143,6 +146,8 @@ jobs:
           bash scripts/build-whisper-cpp-fallback.sh
           MODEL_DIR="$(bash scripts/download-whisperkit-model.sh)"
           echo "QUIETTYPE_WHISPERKIT_MODEL_SOURCE=$MODEL_DIR" >> "$GITHUB_ENV"
+          SAGE_APP="$(bash scripts/download-sage-gui.sh)"
+          echo "QUIETTYPE_SAGE_APP_SOURCE=$SAGE_APP" >> "$GITHUB_ENV"
 
       - name: Build signed notarized DMG
         if: steps.release-secrets.outputs.ready == 'true'

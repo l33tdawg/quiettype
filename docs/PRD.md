@@ -558,11 +558,11 @@ User-facing promise:
 Speak freely. Transcribe locally. Nothing leaves your Mac.
 ```
 
-## 23. Optional SAGE Memory Integration
+## 23. Required SAGE Memory Integration
 
 ### 23.1 Overview
 
-If the user has SAGE installed locally, the dictation assistant should use SAGE as its governed memory store for long-lived user preferences, vocabulary, correction patterns, and app-specific writing profiles.
+QuietType should use SAGE as its governed memory store for long-lived user preferences, vocabulary, correction patterns, transcript review notes, and app-specific writing profiles. SAGE is the required memory substrate for the product experience, not an optional upsell or secondary backend.
 
 At startup, check for SAGE at:
 
@@ -582,7 +582,7 @@ If SAGE is detected, the app should:
 5. Preserve offline/privacy-first guarantees unless the user explicitly enables SAGE network participation.
 ```
 
-If SAGE is not detected, prompt the user to install it. SAGE integration enhances memory, governance, and portability, but must not become a hard dependency for MVP dictation.
+If SAGE is not detected, prompt the user to install it or use the bundled SAGE GUI when present. QuietType should guide the user through SAGE install, launch, vault unlock, setup completion, and `quiettype-agent` registration before dictation is enabled.
 
 ### 23.2 Detection Flow
 
@@ -594,8 +594,10 @@ Check /Applications/SAGE
        register dictation assistant as MCP agent
        enable SAGE memory backend
   -> if not present:
-       show optional install prompt
-       continue with built-in local memory backend
+       check bundled SAGE GUI in QuietType.app/Contents/Resources/SAGE.app
+       if bundled, start bundled SAGE and guide setup
+       otherwise show SAGE install prompt
+       keep dictation blocked until SAGE is ready
 ```
 
 ### 23.3 User Experience
@@ -603,8 +605,8 @@ Check /Applications/SAGE
 If SAGE is installed:
 
 ```text
-SAGE detected. Use SAGE as your private memory store for vocabulary, corrections and writing preferences?
-[Enable SAGE Memory] [Use Local Only]
+SAGE detected. QuietType will use local SAGE governed memory for vocabulary, corrections and writing preferences.
+[Register quiettype-agent] [Learn About SAGE]
 ```
 
 If SAGE is not installed:
@@ -614,12 +616,12 @@ SAGE was not found on this Mac.
 
 This app can use SAGE as a governed private memory store for your vocabulary, corrections and writing preferences.
 
-You can install SAGE now, or continue with the built-in local profile store.
+You can install SAGE now. QuietType will start after SAGE is installed, unlocked, and ready.
 
-[Install SAGE] [Continue Without SAGE]
+[Install SAGE] [Learn About SAGE]
 ```
 
-The user can change this later in settings.
+Settings should explain SAGE status, installed/bundled detection, vault unlock requirements, and `quiettype-agent` registration state.
 
 ### 23.4 MCP Agent Registration
 
@@ -629,7 +631,7 @@ Agent identity:
 
 ```json
 {
-  "agent_name": "QuietType",
+  "agent_name": "quiettype-agent",
   "agent_type": "local_dictation_assistant",
   "capabilities": [
     "dictation_profile_memory",
@@ -845,32 +847,29 @@ Add to MVP should-have:
 - Detect SAGE installation at `/Applications/SAGE`.
 - Prompt user to install SAGE if not present.
 - Register as an MCP agent when SAGE is available.
-- Use SAGE SDK/API as optional memory backend.
+- Use SAGE SDK/API as the required governed memory backend.
 - Store vocabulary, corrections, and style preferences in SAGE.
 - Retrieve relevant SAGE memories during dictation.
-- Allow user to keep dictation memory local-only even if SAGE is networked.
-- Support migration from local SQLite memory to SAGE.
+- Keep dictation memory local-only by default even if SAGE is networked.
+- Support migration of legacy local memory into SAGE where legacy builds created local records.
 
-Do not make SAGE a hard dependency for MVP.
-
-The product must work in three modes:
+The product must work in two SAGE-backed modes:
 
 ```text
-Mode 1: Local-only SQLite memory
-Mode 2: Local SAGE memory
-Mode 3: Hybrid SQLite cache + SAGE governed memory
+Mode 1: Local SAGE governed memory
+Mode 2: Hybrid operational cache + SAGE governed memory
 ```
 
 ### 23.14 Updated Definition of Done
 
 - App checks for SAGE at startup.
-- App can continue without SAGE.
+- App blocks dictation and guides setup when SAGE is missing, locked, or not running.
 - If SAGE is installed, app can register as a local MCP agent.
-- User can enable or disable SAGE memory.
+- User can see SAGE memory status and registration state.
 - Vocabulary memories can be written to SAGE.
 - Relevant SAGE memories can be retrieved during dictation.
 - Dictation memories remain local-only by default.
-- User can migrate or mirror existing local memory into SAGE.
+- Legacy local memory can be migrated or mirrored into SAGE when present.
 
 ### 23.15 Strategic Rationale
 

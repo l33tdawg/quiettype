@@ -15,12 +15,32 @@ final class SageMemoryStoreTests: XCTestCase {
         XCTAssertEqual(installation.appPath, app.path)
     }
 
+    func testDetectsBundledSageAppWhenUserInstallIsMissing() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SageDetectorTests-\(UUID().uuidString)", isDirectory: true)
+        let bundled = root
+            .appendingPathComponent("QuietType.app/Contents/Resources/SAGE.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: bundled, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let detector = SageDetector(
+            fileManager: .default,
+            appPath: root.appendingPathComponent("Applications/SAGE").path,
+            bundledAppPath: bundled.path,
+            includeDefaultPaths: false
+        )
+        let installation = detector.detect()
+
+        XCTAssertTrue(installation.isInstalled)
+        XCTAssertEqual(installation.appPath, bundled.path)
+    }
+
     func testQuietTypeRegistrationPayloadMatchesPRD() async throws {
         let store = SageMemoryStore(fallback: SQLiteMemoryStore())
         let data = try await store.registrationPayload()
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        XCTAssertEqual(json?["agent_name"] as? String, "QuietType")
+        XCTAssertEqual(json?["agent_name"] as? String, "quiettype-agent")
         XCTAssertEqual(json?["agent_type"] as? String, "local_dictation_assistant")
         XCTAssertEqual(json?["privacy_mode"] as? String, "local_first")
         XCTAssertEqual(json?["network_policy"] as? String, "user_controlled")

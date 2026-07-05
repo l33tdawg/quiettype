@@ -8,7 +8,7 @@ public struct SageAgentIdentity: Codable, Equatable, Sendable {
     public var networkPolicy: String
 
     public static let privateDictate = SageAgentIdentity(
-        agentName: "QuietType",
+        agentName: "quiettype-agent",
         agentType: "local_dictation_assistant",
         capabilities: [
             "dictation_profile_memory",
@@ -54,10 +54,16 @@ public struct SageDetector {
     public init(
         fileManager: FileManager = .default,
         appPath: String = "/Applications/SAGE",
+        bundledAppPath: String? = SageDetector.defaultBundledAppPath(),
+        includeDefaultPaths: Bool = true,
         localEndpoint: URL = URL(string: "http://127.0.0.1:8080")!
     ) {
         self.fileManager = fileManager
-        self.appPaths = Self.candidatePaths(preferredPath: appPath)
+        self.appPaths = Self.candidatePaths(
+            preferredPath: appPath,
+            bundledAppPath: bundledAppPath,
+            includeDefaultPaths: includeDefaultPaths
+        )
         self.localEndpoint = localEndpoint
     }
 
@@ -73,7 +79,17 @@ public struct SageDetector {
         )
     }
 
-    private static func candidatePaths(preferredPath: String) -> [String] {
+    public static func defaultBundledAppPath(bundle: Bundle = .main) -> String? {
+        bundle.resourceURL?
+            .appendingPathComponent("SAGE.app", isDirectory: true)
+            .path
+    }
+
+    private static func candidatePaths(
+        preferredPath: String,
+        bundledAppPath: String?,
+        includeDefaultPaths: Bool
+    ) -> [String] {
         let preferredAlternate: String
         if preferredPath.hasSuffix(".app") {
             preferredAlternate = String(preferredPath.dropLast(4))
@@ -81,17 +97,25 @@ public struct SageDetector {
             preferredAlternate = "\(preferredPath).app"
         }
 
-        let paths = [
+        var paths: [String?] = [
             preferredPath,
-            preferredAlternate,
-            "/Applications/SAGE.app",
-            "/Applications/SAGE",
-            "\(NSHomeDirectory())/Applications/SAGE.app",
-            "\(NSHomeDirectory())/Applications/SAGE"
+            preferredAlternate
         ]
 
+        if includeDefaultPaths {
+            paths.append(contentsOf: [
+                "/Applications/SAGE.app",
+                "/Applications/SAGE",
+                "\(NSHomeDirectory())/Applications/SAGE.app",
+                "\(NSHomeDirectory())/Applications/SAGE"
+            ])
+        }
+
+        paths.append(bundledAppPath)
+        let compactPaths = paths.compactMap { $0 }
+
         var seen = Set<String>()
-        return paths.filter { seen.insert($0).inserted }
+        return compactPaths.filter { seen.insert($0).inserted }
     }
 }
 

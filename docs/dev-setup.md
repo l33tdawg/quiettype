@@ -9,7 +9,7 @@ This repository is a Swift Package for QuietType, a local-first macOS dictation 
 - Apple Silicon is the intended development target.
 - Optional: Rosetta when working from a mixed-architecture or x86_64 shell.
 - Optional: Ollama listening on loopback only.
-- Optional: SAGE installed at `/Applications/SAGE`.
+- Required for app-level dictation flows: SAGE installed at `/Applications/SAGE` or bundled at `QuietType.app/Contents/Resources/SAGE.app`.
 
 ## Local Build and Test Caches
 
@@ -92,7 +92,7 @@ The product invariant is local-first operation:
 - Audio, transcript text, app context, vocabulary, correction history, and writing preferences should stay on the machine.
 - Loopback runtimes are allowed for local development.
 - Non-loopback Ollama and SAGE endpoints should be treated as invalid unless a future explicit user policy says otherwise.
-- SAGE must remain optional; the package must continue to work with the built-in local memory path.
+- QuietType requires local SAGE governed memory for app operation. Tests may still exercise legacy store types, but product paths should guide users to install, launch, unlock, and register SAGE instead of falling back to a standalone local memory store.
 
 ## Optional Ollama
 
@@ -104,12 +104,18 @@ http://127.0.0.1:11434/api/generate
 
 Only loopback hosts are acceptable: `127.0.0.1`, `localhost`, or `::1`. If Ollama is unavailable, development and tests should continue through deterministic rule-based behavior.
 
-## Optional SAGE
+## Required SAGE
 
-SAGE is an optional governed memory backend. The expected local installation path is:
+SAGE is the required governed memory backend. The expected local installation path is:
 
 ```text
 /Applications/SAGE
+```
+
+Beta packages may also bundle SAGE at:
+
+```text
+QuietType.app/Contents/Resources/SAGE.app
 ```
 
 The default local SAGE endpoint is:
@@ -118,4 +124,4 @@ The default local SAGE endpoint is:
 http://127.0.0.1:8080
 ```
 
-SAGE integration should register and communicate through the documented local SAGE SDK/API when present. If SAGE is not installed or not enabled, continue with local memory. Dictation memories remain local-only by default, even when SAGE is available.
+SAGE integration should register `quiettype-agent` and communicate through the documented local SAGE SDK/API. If SAGE is missing, locked, or not running, QuietType should guide the user through install/start/unlock/setup rather than silently continuing without governed memory. Dictation memories remain local-only by default.
