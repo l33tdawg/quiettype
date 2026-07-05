@@ -68,10 +68,10 @@ public struct WhisperCommandASRBackend: Sendable {
         )
     }
 
-    public func transcribe(wavFile: URL) async throws -> String {
+    public func transcribe(wavFile: URL, options: AudioTranscriptionOptions = .none) async throws -> String {
         try validateInputs(wavFile: wavFile)
 
-        let result = try await runCommand(arguments: commandArguments(wavFile: wavFile))
+        let result = try await runCommand(arguments: commandArguments(wavFile: wavFile, options: options))
         guard result.exitCode == 0 else {
             throw WhisperCommandASRError.processFailed(
                 exitCode: result.exitCode,
@@ -91,6 +91,10 @@ public struct WhisperCommandASRBackend: Sendable {
     }
 
     func commandArguments(wavFile: URL) -> [String] {
+        commandArguments(wavFile: wavFile, options: .none)
+    }
+
+    func commandArguments(wavFile: URL, options: AudioTranscriptionOptions) -> [String] {
         var arguments = [
             "-m",
             configuration.modelURL.path,
@@ -100,6 +104,10 @@ public struct WhisperCommandASRBackend: Sendable {
 
         if let language = configuration.language, !language.isEmpty {
             arguments.append(contentsOf: ["-l", language])
+        }
+
+        if let prompt = options.initialPrompt {
+            arguments.append(contentsOf: ["--prompt", prompt])
         }
 
         arguments.append(contentsOf: configuration.extraArguments)

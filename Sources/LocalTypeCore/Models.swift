@@ -70,6 +70,12 @@ public struct ASRConfusion: Codable, Equatable, Sendable {
     }
 }
 
+public enum SpellingPreference: String, Codable, Equatable, Sendable, CaseIterable {
+    case system
+    case british
+    case american
+}
+
 public struct DictationProfile: Codable, Equatable, Sendable {
     public var language: String
     public var speechRateWPM: Int
@@ -77,8 +83,21 @@ public struct DictationProfile: Codable, Equatable, Sendable {
     public var vadSensitivity: Double
     public var activeASRBackend: String
     public var activeEditorModel: String
+    public var spellingPreference: SpellingPreference
     public var vocabulary: [VocabularyEntry]
     public var confusions: [ASRConfusion]
+
+    private enum CodingKeys: String, CodingKey {
+        case language
+        case speechRateWPM
+        case pauseThresholdMS
+        case vadSensitivity
+        case activeASRBackend
+        case activeEditorModel
+        case spellingPreference
+        case vocabulary
+        case confusions
+    }
 
     public init(
         language: String = "en",
@@ -87,6 +106,7 @@ public struct DictationProfile: Codable, Equatable, Sendable {
         vadSensitivity: Double = 0.63,
         activeASRBackend: String = "stub",
         activeEditorModel: String = "ollama-local",
+        spellingPreference: SpellingPreference = .system,
         vocabulary: [VocabularyEntry] = [],
         confusions: [ASRConfusion] = []
     ) {
@@ -96,8 +116,22 @@ public struct DictationProfile: Codable, Equatable, Sendable {
         self.vadSensitivity = vadSensitivity
         self.activeASRBackend = activeASRBackend
         self.activeEditorModel = activeEditorModel
+        self.spellingPreference = spellingPreference
         self.vocabulary = vocabulary
         self.confusions = confusions
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.language = try container.decodeIfPresent(String.self, forKey: .language) ?? "en"
+        self.speechRateWPM = try container.decodeIfPresent(Int.self, forKey: .speechRateWPM) ?? 148
+        self.pauseThresholdMS = try container.decodeIfPresent(Int.self, forKey: .pauseThresholdMS) ?? 420
+        self.vadSensitivity = try container.decodeIfPresent(Double.self, forKey: .vadSensitivity) ?? 0.63
+        self.activeASRBackend = try container.decodeIfPresent(String.self, forKey: .activeASRBackend) ?? "stub"
+        self.activeEditorModel = try container.decodeIfPresent(String.self, forKey: .activeEditorModel) ?? "ollama-local"
+        self.spellingPreference = try container.decodeIfPresent(SpellingPreference.self, forKey: .spellingPreference) ?? .system
+        self.vocabulary = try container.decodeIfPresent([VocabularyEntry].self, forKey: .vocabulary) ?? []
+        self.confusions = try container.decodeIfPresent([ASRConfusion].self, forKey: .confusions) ?? []
     }
 
     public static let development = DictationProfile(

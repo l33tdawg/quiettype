@@ -124,7 +124,7 @@ public struct CascadingAudioFileTranscriber: AudioFileTranscribing {
         self.transcribers = transcribers
     }
 
-    public func transcribe(audioFile: URL) async throws -> String {
+    public func transcribe(audioFile: URL, options: AudioTranscriptionOptions) async throws -> String {
         guard !transcribers.isEmpty else {
             throw AudioTranscriberError.allBackendsFailed(["No local ASR backend is ready. Wait for startup or install the local fallback."])
         }
@@ -132,7 +132,7 @@ public struct CascadingAudioFileTranscriber: AudioFileTranscribing {
         var errors: [String] = []
         for transcriber in transcribers {
             do {
-                return try await transcriber.transcribe(audioFile: audioFile)
+                return try await transcriber.transcribe(audioFile: audioFile, options: options)
             } catch {
                 errors.append(String(describing: error))
             }
@@ -142,7 +142,7 @@ public struct CascadingAudioFileTranscriber: AudioFileTranscribing {
 }
 
 extension WhisperCommandASRBackend: AudioFileTranscribing {
-    public func transcribe(audioFile: URL) async throws -> String {
-        try await transcribe(wavFile: audioFile)
+    public func transcribe(audioFile: URL, options: AudioTranscriptionOptions) async throws -> String {
+        try await transcribe(wavFile: audioFile, options: options)
     }
 }

@@ -5948,7 +5948,12 @@ final class MenuBarModel: ObservableObject {
     }
 
     private func currentTranscriptionOptions() -> AudioTranscriptionOptions {
-        .none
+        AudioTranscriptionOptions(
+            initialPrompt: ASRPromptBuilder().prompt(
+                for: currentDictationProfile(),
+                appName: selectedProfile.appName
+            )
+        )
     }
 
     private func prepareNativeSpeechServerIfAvailable() async {

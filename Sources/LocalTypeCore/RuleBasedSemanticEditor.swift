@@ -23,6 +23,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
 
         text = resolveSimpleCorrections(text)
         text = format(text, for: request.appContext.profile)
+        text = applySpellingPreference(text, request.profile.spellingPreference)
 
         guard !text.isEmpty else {
             throw LocalTypeError.editorReturnedEmptyText
@@ -122,6 +123,10 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             || (lower.contains("order") && containsGroceryTerm(in: lower))
             || (lower.contains("washing liquid") && containsGroceryTerm(in: lower))
 
+        let hasDigitQuantitySequence = digitQuantityMarkerCount(in: text) >= 2
+        let hasStructuredQuantityIntent = hasDigitQuantitySequence
+            && (hasExplicitListIntent || hasGroceryContext || lower.contains("menu"))
+
         let hasNotesItemIntent = profile == .notes
             && (
                 lower.contains(" add ")
@@ -134,7 +139,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
                     || lower.hasPrefix("we need ")
             )
 
-        guard hasExplicitListIntent || hasShoppingIntent || hasMessyGroceryIntent || hasNotesItemIntent else {
+        guard hasExplicitListIntent || hasShoppingIntent || hasMessyGroceryIntent || hasNotesItemIntent || hasStructuredQuantityIntent else {
             return nil
         }
 
@@ -146,7 +151,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         )
         let items = splitListItems(from: body, numbered: numbered)
 
-        let minimumItems = hasExplicitListIntent || hasShoppingIntent || hasMessyGroceryIntent ? 2 : 3
+        let minimumItems = hasExplicitListIntent || hasShoppingIntent || hasMessyGroceryIntent || hasStructuredQuantityIntent ? 2 : 3
         guard items.count >= minimumItems else {
             return nil
         }
@@ -281,6 +286,12 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         return normalizeWhitespace(result)
     }
 
+    private func digitQuantityMarkerCount(in text: String) -> Int {
+        let regex = try? NSRegularExpression(pattern: #"\b\d+\b"#)
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex?.numberOfMatches(in: text, range: range) ?? 0
+    }
+
     private func splitListItems(from text: String, numbered: Bool) -> [String] {
         var value = text
             .replacingOccurrences(of: #"\bactually no\s+([^,.;]+?)\s+(?=\w)"#, with: " | remove $1 | ", options: [.regularExpression, .caseInsensitive])
@@ -324,6 +335,10 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             return words
         }
 
+        if let numberedItems = splitImplicitQuantityItems(words) {
+            return numberedItems
+        }
+
         var items: [String] = []
         var index = 0
         while index < words.count {
@@ -347,6 +362,102 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         }
 
         return items
+    }
+
+    private func splitImplicitQuantityItems(_ words: [String]) -> [String]? {
+        guard words.contains(where: isNumericMarker) else {
+            return nil
+        }
+
+        let leadingStopWords: Set<String> = [
+            "so",
+            "let's",
+            "lets",
+            "do",
+            "a",
+            "an",
+            "the",
+            "menu",
+            "list",
+            "items",
+            "item",
+            "following",
+            "with"
+        ]
+
+        var items: [String] = []
+        var currentQuantity: String?
+        var currentWords: [String] = []
+        var sawQuantity = false
+
+        func flush() {
+            guard let quantity = currentQuantity else {
+                currentWords.removeAll()
+                return
+            }
+            let itemWords = trimTrailingFillerWords(currentWords)
+            if !itemWords.isEmpty {
+                items.append(([quantity] + itemWords).joined(separator: " "))
+            }
+            currentQuantity = nil
+            currentWords.removeAll()
+        }
+
+        for word in words {
+            let normalizedWord = normalizeToken(word)
+            if isNumericMarker(word) {
+                flush()
+                currentQuantity = normalizeQuantity(word)
+                sawQuantity = true
+            } else if currentQuantity == nil {
+                if !leadingStopWords.contains(normalizedWord) {
+                    continue
+                }
+            } else {
+                currentWords.append(word)
+            }
+        }
+        flush()
+
+        guard sawQuantity, items.count >= 2 else {
+            return nil
+        }
+        return items
+    }
+
+    private func trimTrailingFillerWords(_ words: [String]) -> [String] {
+        let trailingFillers: Set<String> = [
+            "that's",
+            "thats",
+            "it",
+            "from",
+            "the",
+            "supermarket",
+            "store",
+            "shop",
+            "please",
+            "thanks",
+            "thank",
+            "you"
+        ]
+
+        var result = words
+        while let last = result.last, trailingFillers.contains(normalizeToken(last)) {
+            result.removeLast()
+        }
+        return result
+    }
+
+    private func isNumericMarker(_ word: String) -> Bool {
+        Int(normalizeToken(word)) != nil
+    }
+
+    private func normalizeQuantity(_ word: String) -> String {
+        normalizeToken(word)
+    }
+
+    private func normalizeToken(_ word: String) -> String {
+        word.trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines)).lowercased()
     }
 
     private func applyRemoveDirectives(_ items: [String]) -> [String] {
@@ -495,6 +606,49 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    private func applySpellingPreference(_ text: String, _ preference: SpellingPreference) -> String {
+        switch preference {
+        case .system:
+            return text
+        case .british:
+            return replaceSpellingVariants(in: text, variants: americanToBritishSpelling)
+        case .american:
+            return replaceSpellingVariants(in: text, variants: britishToAmericanSpelling)
+        }
+    }
+
+    private func replaceSpellingVariants(in text: String, variants: [String: String]) -> String {
+        var result = text
+        for (source, target) in variants.sorted(by: { $0.key.count > $1.key.count }) {
+            guard let regex = try? NSRegularExpression(
+                pattern: #"\b\#(NSRegularExpression.escapedPattern(for: source))\b"#,
+                options: [.caseInsensitive]
+            ) else {
+                continue
+            }
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            let matches = regex.matches(in: result, range: range)
+            for match in matches.reversed() {
+                guard let swiftRange = Range(match.range, in: result) else {
+                    continue
+                }
+                let original = String(result[swiftRange])
+                result.replaceSubrange(swiftRange, with: matchCase(of: original, replacement: target))
+            }
+        }
+        return result
+    }
+
+    private func matchCase(of original: String, replacement: String) -> String {
+        if original.uppercased() == original {
+            return replacement.uppercased()
+        }
+        if original.prefix(1).uppercased() == original.prefix(1) {
+            return replacement.prefix(1).uppercased() + replacement.dropFirst()
+        }
+        return replacement
+    }
 }
 
 private let spokenNumberValues: [String: Int] = [
@@ -560,3 +714,36 @@ private let groceryContextTerms = [
     "eggs",
     "yogurt"
 ]
+
+private let americanToBritishSpelling: [String: String] = [
+    "analyze": "analyse",
+    "analyzed": "analysed",
+    "analyzing": "analysing",
+    "behavior": "behaviour",
+    "behaviors": "behaviours",
+    "canceled": "cancelled",
+    "canceling": "cancelling",
+    "center": "centre",
+    "centers": "centres",
+    "color": "colour",
+    "colors": "colours",
+    "defense": "defence",
+    "favorite": "favourite",
+    "favorites": "favourites",
+    "gray": "grey",
+    "honor": "honour",
+    "honors": "honours",
+    "organize": "organise",
+    "organized": "organised",
+    "organizing": "organising",
+    "organization": "organisation",
+    "organizations": "organisations",
+    "theater": "theatre",
+    "theaters": "theatres",
+    "traveled": "travelled",
+    "traveling": "travelling"
+]
+
+private let britishToAmericanSpelling: [String: String] = Dictionary(
+    uniqueKeysWithValues: americanToBritishSpelling.map { ($0.value, $0.key) }
+)

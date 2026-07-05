@@ -28,6 +28,36 @@ final class WhisperCommandASRBackendTests: XCTestCase {
         )
     }
 
+    func testBuildsWhisperCLIArgumentsWithPrompt() throws {
+        let model = try temporaryFile(named: "model.bin")
+        let wav = try temporaryFile(named: "recording.wav")
+        let backend = WhisperCommandASRBackend(
+            executablePath: "/bin/echo",
+            modelPath: model.path,
+            language: "en",
+            extraArguments: ["--temperature", "0"]
+        )
+
+        XCTAssertEqual(
+            backend.commandArguments(
+                wavFile: wav,
+                options: AudioTranscriptionOptions(initialPrompt: "Vocabulary: CometBFT, Ed25519.")
+            ),
+            [
+                "-m",
+                model.path,
+                "-f",
+                wav.path,
+                "-l",
+                "en",
+                "--prompt",
+                "Vocabulary: CometBFT, Ed25519.",
+                "--temperature",
+                "0"
+            ]
+        )
+    }
+
     func testTranscribesTimestampedWhisperOutputFromCommandStdout() async throws {
         let model = try temporaryFile(named: "model.bin")
         let wav = try temporaryFile(named: "recording.wav")

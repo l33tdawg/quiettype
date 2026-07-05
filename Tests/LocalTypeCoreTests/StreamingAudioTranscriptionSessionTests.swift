@@ -35,15 +35,42 @@ final class StreamingAudioTranscriptionSessionTests: XCTestCase {
         XCTAssertEqual(result.chunkCount, 1)
         XCTAssertEqual(result.errors.count, 1)
     }
+
+    func testPassesTranscriptionOptionsToChunks() async throws {
+        let transcriber = StubAudioTranscriber(outputs: [
+            "chunk-0000.wav": "CometBFT"
+        ])
+        let session = StreamingAudioTranscriptionSession(
+            transcriber: transcriber,
+            options: AudioTranscriptionOptions(initialPrompt: "Vocabulary: CometBFT.")
+        )
+
+        await session.enqueue(WavAudioChunk(sequence: 0, url: URL(fileURLWithPath: "/tmp/chunk-0000.wav"), sampleRate: 16_000, sampleCount: 16_000))
+        let result = await session.finish()
+        let prompts = await transcriber.recordedPrompts()
+
+        XCTAssertEqual(result.text, "CometBFT")
+        XCTAssertEqual(prompts, ["Vocabulary: CometBFT."])
+    }
 }
 
-private struct StubAudioTranscriber: AudioFileTranscribing {
-    var outputs: [String: String]
+private actor StubAudioTranscriber: AudioFileTranscribing {
+    let outputs: [String: String]
+    private(set) var prompts: [String?] = []
 
-    func transcribe(audioFile: URL) async throws -> String {
+    init(outputs: [String: String]) {
+        self.outputs = outputs
+    }
+
+    func transcribe(audioFile: URL, options: AudioTranscriptionOptions) async throws -> String {
+        prompts.append(options.initialPrompt)
         guard let output = outputs[audioFile.lastPathComponent] else {
             throw AudioTranscriberError.emptyTranscript
         }
         return output
+    }
+
+    func recordedPrompts() -> [String?] {
+        prompts
     }
 }

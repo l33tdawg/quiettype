@@ -86,6 +86,58 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testGroupsDigitQuantityItemsInsteadOfBulletingEveryWord() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "shopping list 1 apples 2 onions 3 cucumber 4 garlic", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            - 1 apples
+            - 2 onions
+            - 3 cucumber
+            - 4 garlic
+            """
+        )
+    }
+
+    func testDoesNotTreatOrdinaryNumberedNotesAsShoppingList() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "review 2 options and 3 risks before the meeting", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "Review 2 options and 3 risks before the meeting.")
+    }
+
+    func testDropsConversationalLeadInAndTailAroundDigitQuantityList() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "so let's do a menu 1 apples 2 onions 3 cucumber 4 garlic that's it from the supermarket", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            - 1 apples
+            - 2 onions
+            - 3 cucumber
+            - 4 garlic
+            """
+        )
+    }
+
     func testFormatsSetupVoiceTrainingShoppingSentenceAsQuantityList() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Notes", profile: .notes)
@@ -176,6 +228,32 @@ final class DictationPipelineTests: XCTestCase {
         )
 
         XCTAssertEqual(result.text, "Need to get approval from Alice and Bob before we ship.")
+    }
+
+    func testAppliesBritishSpellingPreference() async throws {
+        let profile = DictationProfile(spellingPreference: .british)
+        let pipeline = DictationPipeline(profile: profile, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "my favorite color is gray and we should organize the notes", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "My favourite colour is grey and we should organise the notes.")
+    }
+
+    func testAppliesAmericanSpellingPreference() async throws {
+        let profile = DictationProfile(spellingPreference: .american)
+        let pipeline = DictationPipeline(profile: profile, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "my favourite colour is grey and we should organise the notes", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "My favorite color is gray and we should organize the notes.")
     }
 
     func testRemovesCancelledGroceryItems() async throws {

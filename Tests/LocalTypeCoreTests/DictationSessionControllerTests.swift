@@ -72,6 +72,34 @@ final class DictationSessionControllerTests: XCTestCase {
         XCTAssertEqual(insertedText, result.text)
     }
 
+    func testMemoryRecallAppliesNameSpellingCorrection() async throws {
+        let memoryStore = SQLiteMemoryStore()
+        _ = try await memoryStore.put(
+            DictationMemory(
+                type: .correction,
+                payload: ["raw": "Dylan", "corrected": "Dhillon"],
+                contexts: ["Slack", "name"],
+                source: "quiettype_review_correction",
+                confidence: 0.95
+            )
+        )
+
+        let inserter = BufferingTextInserter()
+        let controller = DictationSessionController(
+            profile: DictationProfile(vocabulary: [], confusions: []),
+            asrBackend: TranscriptASRBackend(transcript: "send this to dylan"),
+            contextCollector: StaticContextCollector(context: AppContext(appName: "Slack", profile: .messaging)),
+            inserter: inserter,
+            memoryStore: memoryStore,
+            semanticEditor: RuleBasedSemanticEditor()
+        )
+
+        try await controller.begin()
+        let result = try await controller.finishAndInsert()
+
+        XCTAssertEqual(result.text, "Send this to Dhillon.")
+    }
+
     func testBeginPassesMemoryEnrichedProfileToASR() async throws {
         let memoryStore = SQLiteMemoryStore()
         _ = try await memoryStore.put(

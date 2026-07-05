@@ -18,7 +18,7 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
         self.timeoutSeconds = timeoutSeconds
     }
 
-    public func transcribe(audioFile: URL) async throws -> String {
+    public func transcribe(audioFile: URL, options: AudioTranscriptionOptions) async throws -> String {
         guard endpoint.isLoopbackHTTP else {
             throw AudioTranscriberError.nonLoopbackEndpoint(endpoint.absoluteString)
         }
@@ -28,7 +28,7 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
         request.httpMethod = "POST"
         request.timeoutInterval = timeoutSeconds
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try multipartBody(audioFile: audioFile, boundary: boundary)
+        request.httpBody = try multipartBody(audioFile: audioFile, boundary: boundary, options: options)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -42,14 +42,20 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
         guard !transcript.isEmpty else {
             throw AudioTranscriberError.emptyTranscript
         }
+        guard !WhisperCommandASRBackend.isNoiseOnlyTranscript(transcript) else {
+            throw AudioTranscriberError.noiseOnlyTranscript(transcript)
+        }
         return transcript
     }
 
-    private func multipartBody(audioFile: URL, boundary: String) throws -> Data {
+    private func multipartBody(audioFile: URL, boundary: String, options: AudioTranscriptionOptions) throws -> Data {
         var data = Data()
         data.appendMultipartField(name: "model", value: model, boundary: boundary)
         if let language {
             data.appendMultipartField(name: "language", value: language, boundary: boundary)
+        }
+        if let prompt = options.initialPrompt {
+            data.appendMultipartField(name: "prompt", value: prompt, boundary: boundary)
         }
         data.appendMultipartField(name: "response_format", value: "json", boundary: boundary)
         data.appendMultipartFile(name: "file", filename: audioFile.lastPathComponent, contentType: "audio/wav", fileData: try Data(contentsOf: audioFile), boundary: boundary)

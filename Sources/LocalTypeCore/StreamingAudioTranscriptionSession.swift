@@ -2,13 +2,15 @@ import Foundation
 
 public actor StreamingAudioTranscriptionSession {
     private let transcriber: AudioFileTranscribing
+    private let options: AudioTranscriptionOptions
     private var queue: [WavAudioChunk] = []
     private var transcripts: [Int: String] = [:]
     private var errors: [String] = []
     private var isProcessing = false
 
-    public init(transcriber: AudioFileTranscribing) {
+    public init(transcriber: AudioFileTranscribing, options: AudioTranscriptionOptions = .none) {
         self.transcriber = transcriber
+        self.options = options
     }
 
     public func enqueue(_ chunk: WavAudioChunk) {
@@ -39,7 +41,7 @@ public actor StreamingAudioTranscriptionSession {
         while !queue.isEmpty {
             let chunk = queue.removeFirst()
             do {
-                let text = try await transcriber.transcribe(audioFile: chunk.url)
+                let text = try await transcriber.transcribe(audioFile: chunk.url, options: options)
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     transcripts[chunk.sequence] = trimmed

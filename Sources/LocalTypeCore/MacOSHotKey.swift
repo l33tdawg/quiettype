@@ -34,6 +34,38 @@ public struct HotKeyDescriptor: Equatable, Sendable {
     )
 }
 
+public enum FunctionKeySystemUse: Equatable, Sendable {
+    case quietTypeOnly
+    case macOSAssigned(Int)
+    case unknown
+
+    public static var current: FunctionKeySystemUse {
+        guard let defaults = UserDefaults(suiteName: "com.apple.HIToolbox") else {
+            return .unknown
+        }
+        let value = defaults.integer(forKey: "AppleFnUsageType")
+        return value == 0 ? .quietTypeOnly : .macOSAssigned(value)
+    }
+
+    public var conflictsWithQuietType: Bool {
+        if case .macOSAssigned = self {
+            return true
+        }
+        return false
+    }
+
+    public var displayText: String {
+        switch self {
+        case .quietTypeOnly:
+            return "Fn is available"
+        case .macOSAssigned:
+            return "Fn is also used by macOS"
+        case .unknown:
+            return "Fn availability unknown"
+        }
+    }
+}
+
 public final class CarbonHotKeyController {
     private let descriptor: HotKeyDescriptor
     private let handler: @Sendable (HotKeyPhase) -> Void
