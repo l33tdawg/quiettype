@@ -238,6 +238,29 @@ public final class SageDirectClient: @unchecked Sendable {
         )
     }
 
+    public func registeredAgent(agentID: String) async throws -> SageAgentRegistration? {
+        var request = URLRequest(url: endpoint.appendingPathComponent("v1/agents"))
+        request.httpMethod = "GET"
+        request.timeoutInterval = 3
+
+        let (data, response) = try await session.data(for: request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(statusCode) else {
+            throw SageDirectClientError.requestFailed(statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+
+        let decoded = try JSONDecoder().decode(SageAgentListResponse.self, from: data)
+        guard let agent = decoded.agents.first(where: { $0.agentID == agentID || $0.name == "quiettype-agent" || $0.registeredName == "quiettype-agent" }) else {
+            return nil
+        }
+
+        return SageAgentRegistration(
+            agentID: agent.agentID,
+            status: agent.status == "active" ? "already_registered" : agent.status,
+            name: agent.registeredName ?? agent.name
+        )
+    }
+
     public func isHealthy() async -> Bool {
         do {
             var request = URLRequest(url: endpoint.appendingPathComponent("health"))
@@ -347,6 +370,24 @@ private struct SageAgentRegistrationResponse: Decodable {
         case agentID = "agent_id"
         case status
         case name
+    }
+}
+
+private struct SageAgentListResponse: Decodable {
+    var agents: [SageAgentDTO]
+}
+
+private struct SageAgentDTO: Decodable {
+    var agentID: String
+    var name: String
+    var registeredName: String?
+    var status: String
+
+    enum CodingKeys: String, CodingKey {
+        case agentID = "agent_id"
+        case name
+        case registeredName = "registered_name"
+        case status
     }
 }
 

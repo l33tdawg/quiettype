@@ -670,7 +670,12 @@ struct TesterView: View {
 
     private var firstRunIllustrationColumn: some View {
         VStack(spacing: 26) {
-            FirstRunMacIllustration(stage: firstRunStage, model: model)
+            FirstRunMacIllustration(
+                stage: firstRunStage,
+                model: model,
+                primaryAction: firstRunPrimaryIllustrationAction,
+                secondaryAction: firstRunSecondaryIllustrationAction
+            )
                 .frame(width: 390, height: 330)
 
             VStack(spacing: 8) {
@@ -686,6 +691,52 @@ struct TesterView: View {
         }
         .padding(56)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func firstRunPrimaryIllustrationAction() {
+        switch firstRunStage {
+        case .sage:
+            Task {
+                if model.sageDetected {
+                    await model.registerSageAgentIfAvailable()
+                } else {
+                    await model.installSage()
+                }
+            }
+        case .access:
+            Task {
+                if model.microphonePermission != .granted {
+                    await model.requestMicrophone()
+                }
+                if model.accessibilityPermission != .granted {
+                    model.requestAccessibility()
+                }
+                model.startAppServices()
+            }
+        case .training:
+            Task {
+                await model.toggleCalibrationRecording()
+            }
+        case .experience:
+            firstRunAssistantComplete = true
+            selectedSection = .home
+            if !hasSeenGuide {
+                guideStep = .welcome
+            }
+        }
+    }
+
+    private func firstRunSecondaryIllustrationAction() {
+        switch firstRunStage {
+        case .sage:
+            NSWorkspace.shared.open(URL(string: "https://l33tdawg.github.io/sage/")!)
+        case .access:
+            selectedSection = .help
+        case .training:
+            selectedSection = .setup
+        case .experience:
+            model.copyOutput()
+        }
     }
 
     private var homePage: some View {
@@ -2607,6 +2658,8 @@ private struct FirstRunMacIllustration: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
     var stage: QuietTypeFirstRunStage
     @ObservedObject var model: MenuBarModel
+    var primaryAction: () -> Void
+    var secondaryAction: () -> Void
 
     var body: some View {
         ZStack {
@@ -2660,21 +2713,19 @@ private struct FirstRunMacIllustration: View {
                 }
 
                 HStack(spacing: 10) {
-                    Text(stage.secondaryAction)
-                        .font(.system(size: 14 + typeDelta, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(Color.primary.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    Button(action: secondaryAction) {
+                        Text(stage.secondaryAction)
+                            .font(.system(size: 14 + typeDelta, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(QuietButtonStyle())
 
-                    Text(stage.primaryAction(model: model))
-                        .font(.system(size: 14 + typeDelta, weight: .semibold))
-                        .foregroundStyle(Color(nsColor: .windowBackgroundColor))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(Color.primary)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    Button(action: primaryAction) {
+                        Text(stage.primaryAction(model: model))
+                            .font(.system(size: 14 + typeDelta, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(QuietButtonStyle(prominence: .primary))
                 }
             }
             .padding(28)
@@ -5257,19 +5308,29 @@ final class MenuBarModel: ObservableObject {
             sageDirectClient = client
             sageAgentID = identity.agentID
 
-            let registration = try await client.registerQuietTypeAgent()
-            sageAgentStatus = registration.status == "already_registered" ? "Registered" : "Registered"
-            sageStatus = "SAGE connected · quiettype-agent"
-            updateStartupStep(
-                id: "sage",
-                detail: "quiettype-agent registered with local SAGE.",
-                state: .ready
-            )
-            await refreshDictionaryMemories()
+            let registration: SageAgentRegistration
+            do {
+                registration = try await client.registerQuietTypeAgent()
+            } catch {
+                if let existing = try await client.registeredAgent(agentID: identity.agentID) {
+                    registration = existing
+                } else {
+                    throw error
+                }
+            }
+
+            markSageRegistered(agentID: registration.agentID)
+            await refreshDictionaryMemoriesPreservingRegistration(using: client)
         } catch {
             sageDirectClient = nil
             let sageHealthReachable = await candidateClient?.isHealthy() ?? false
-            if isSageVaultLocked(error) {
+            if sageHealthReachable,
+               let candidateClient,
+               let identity = try? SageSigningIdentity.loadOrCreate(),
+               let existing = try? await candidateClient.registeredAgent(agentID: identity.agentID) {
+                sageDirectClient = candidateClient
+                markSageRegistered(agentID: existing.agentID)
+            } else if isSageVaultLocked(error) {
                 sageAgentStatus = "Unlock SAGE"
                 sageStatus = "SAGE locked · unlock required"
             } else if isSageNotRunning(error) {
@@ -5291,6 +5352,38 @@ final class MenuBarModel: ObservableObject {
                 detail: sageRegistrationFailureDetail(error, healthy: sageHealthReachable),
                 state: .warning
             )
+        }
+    }
+
+    private func markSageRegistered(agentID: String) {
+        sageAgentID = agentID
+        sageAgentStatus = "Registered"
+        sageStatus = "SAGE connected · quiettype-agent"
+        lastError = nil
+        updateStartupStep(
+            id: "sage",
+            detail: "quiettype-agent registered with local SAGE.",
+            state: .ready
+        )
+    }
+
+    private func refreshDictionaryMemoriesPreservingRegistration(using client: SageDirectClient) async {
+        do {
+            sageMemories = try await client.searchMemories(query: Self.defaultMemorySearchQuery, limit: 16)
+            if sageMemories.isEmpty {
+                sageMemories = try await client.listMemories(limit: 16)
+            }
+            if lastError?.hasPrefix("SAGE memory") == true || lastError?.hasPrefix("SAGE setup") == true {
+                lastError = nil
+            }
+        } catch {
+            // Registration is the first-run gate. Review-memory listing can fail
+            // while SAGE is still healthy, already set up, or warming its memory API.
+            // Keep the user moving and let Review/Refresh surface memory-specific
+            // errors without trapping onboarding.
+            sageDirectClient = client
+            sageAgentStatus = "Registered"
+            sageStatus = "SAGE connected · quiettype-agent"
         }
     }
 
