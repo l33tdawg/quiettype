@@ -85,7 +85,38 @@ Folder: /docs
 
 The landing page lives at `docs/index.html`, with Open Graph assets at `docs/og.png` and `docs/og.svg`.
 
-## 5. Tester note
+## 5. GitHub Actions release automation
+
+The workflow at `.github/workflows/beta-release.yml` builds, signs, notarizes,
+staples and uploads a private beta DMG on pushes to `main`. When the push is a
+tag like `v0.1.0-beta.7`, it also creates a GitHub prerelease.
+
+Required repository secrets:
+
+```text
+DEVELOPER_ID_CERTIFICATE_BASE64
+DEVELOPER_ID_CERTIFICATE_PASSWORD
+CI_KEYCHAIN_PASSWORD
+APPLE_ID
+APPLE_TEAM_ID
+APPLE_APP_SPECIFIC_PASSWORD
+```
+
+`DEVELOPER_ID_CERTIFICATE_BASE64` should be the base64-encoded `.p12` export of
+the Developer ID Application certificate. The workflow uses the existing app
+bundle identifier `local.quiettype.mac`; do not change it unless you intend to
+reset macOS permissions for testers.
+
+The workflow downloads the WhisperKit/Core ML model from the pinned upstream
+revision:
+
+```text
+argmaxinc/whisperkit-coreml@97a5bf9bbc74c7d9c12c755d04dea59e672e3808
+```
+
+This keeps the model out of git while still making CI releases reproducible.
+
+## 6. Tester note
 
 Send testers:
 

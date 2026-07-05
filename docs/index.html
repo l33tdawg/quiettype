@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>QuietType - Private local dictation for Mac</title>
-  <meta name="description" content="QuietType turns natural speech into polished writing on your Mac. Local transcription, local memory, no cloud processing.">
+  <title>QuietType - Private voice input for coding agents</title>
+  <meta name="description" content="QuietType lets you talk to Codex, Claude Code, ChatGPT, and other coding agents faster without sending your voice or drafts to the cloud.">
   <meta name="author" content="Dhillon 'l33tdawg' Kannabhiran">
-  <meta property="og:title" content="QuietType - Speak freely. Transcribe locally.">
-  <meta property="og:description" content="A private local dictation assistant for Mac. Nothing leaves your Mac.">
+  <meta property="og:title" content="QuietType - Talk to your coding agents locally.">
+  <meta property="og:description" content="Fast private voice input for Codex, Claude Code, ChatGPT, terminals, editors, and docs. Nothing leaves your Mac.">
   <meta property="og:image" content="https://l33tdawg.github.io/quiettype/og.png">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
@@ -377,8 +377,8 @@
     <section class="shell hero">
       <div>
         <div class="eyebrow"><span class="dot"></span> Private beta for macOS Apple Silicon</div>
-        <h1>Speak freely. Transcribe locally.</h1>
-      <p class="subhead">QuietType turns natural speech into polished writing on your Mac. Local speech recognition, local correction memory, and no cloud processing.</p>
+        <h1>Talk to your coding agents faster.</h1>
+      <p class="subhead">QuietType turns natural speech into precise instructions for Codex, Claude Code, ChatGPT, terminals, editors, and docs. Fast local transcription, local correction memory, and no cloud processing.</p>
         <div class="hero-actions">
           <a class="button primary" href="https://github.com/l33tdawg/quiettype/releases">Get the private beta</a>
           <a class="button" href="#how">How it works</a>
@@ -401,36 +401,55 @@
             </svg>
           </div>
           <div class="activity">
-            <div class="activity-row">SAGE memory <span>Optional</span></div>
+            <div class="activity-row">Agent instructions <span>Fast</span></div>
             <div class="activity-row">Secure transcription <span>On-device</span></div>
-            <div class="activity-row">Audio and text <span>Never uploaded</span></div>
+            <div class="activity-row">Audio and prompts <span>Never uploaded</span></div>
           </div>
         </div>
       </div>
     </section>
 
     <section id="how" class="shell section">
-      <h2>Dictation that behaves like writing.</h2>
-      <p class="section-lede">Literal transcription leaves the mess in. QuietType cleans natural speech into usable text while preserving what matters: names, acronyms, technical terms, lists, and corrections.</p>
+      <h2>Voice input built for agent workflows.</h2>
+      <p class="section-lede">Typing long instructions into coding agents is slow. Cloud dictation is fast, but it can expose prompts, code context, client names, and private drafts. QuietType gives you the speed of speech with a local-only path.</p>
       <div class="grid">
         <article class="tile">
-          <h3>Natural speech in</h3>
-          <p>Speak with pauses, corrections, and rough phrasing. QuietType is designed for real dictation, not studio-clean voice commands.</p>
+          <h3>Prompt naturally</h3>
+          <p>Tell Codex or Claude Code what to build, review, test, or refactor without turning every thought into typed prose first.</p>
         </article>
         <article class="tile">
-          <h3>Polished text out</h3>
-          <p>It removes fillers, handles “actually” corrections, formats lists, normalizes numbers, and adapts tone for messages, notes, email, and code editors.</p>
+          <h3>Keep technical terms</h3>
+          <p>QuietType preserves project names, acronyms, identifiers, model names, and security vocabulary so agent instructions stay precise.</p>
         </article>
         <article class="tile">
-          <h3>Personal over time</h3>
-          <p>Voice training and correction memory teach QuietType your vocabulary, preferred spellings, and writing style without sending private text away.</p>
+          <h3>Paste anywhere</h3>
+          <p>Use it in Cursor, VS Code, terminals, browser agents, chat apps, issue trackers, notes, and email. The active app receives polished text.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="shell section">
+      <h2>Why this matters for builders.</h2>
+      <p class="section-lede">Agentic coding works best when you give rich context. QuietType makes rich context cheap to produce without making your voice, prompts, or local project vocabulary someone else’s training exhaust.</p>
+      <div class="grid">
+        <article class="tile">
+          <h3>Longer, clearer instructions</h3>
+          <p>Say the full intent: constraints, edge cases, files to inspect, and how to verify the work. QuietType cleans the delivery without flattening the meaning.</p>
+        </article>
+        <article class="tile">
+          <h3>Less context leakage</h3>
+          <p>Prompts can contain source paths, vulnerability details, customer context, or unreleased product plans. QuietType does not need a cloud ASR service to capture them.</p>
+        </article>
+        <article class="tile">
+          <h3>Faster than typing</h3>
+          <p>Keep your hands in the editor and use voice for the high-bandwidth parts: planning, review notes, test requests, and multi-step agent instructions.</p>
         </article>
       </div>
     </section>
 
     <section id="security" class="shell section">
-      <h2>Built for people who do not want cloud dictation.</h2>
-      <p class="section-lede">Cloud-first tools can be convenient, but they ask for the most sensitive input you have: your voice, your drafts, and the app context around them. QuietType’s default is local-only.</p>
+      <h2>Built for people who cannot leak prompts.</h2>
+      <p class="section-lede">Cloud-first dictation can be convenient, but it asks for the most sensitive input you have: your voice, your drafts, and the app context around them. QuietType’s default is local-only.</p>
       <div class="grid">
         <article class="tile">
           <h3>No audio upload</h3>
@@ -460,13 +479,13 @@
     </section>
 
     <section class="shell section">
-      <h2>Cloud-first dictation vs QuietType.</h2>
+      <h2>Cloud-first voice input vs QuietType.</h2>
       <div class="compare">
         <div class="compare-panel">
           <h3>Cloud-first tools</h3>
           <ul>
             <li>Audio may leave the device.</li>
-            <li>Transcript and app context may be processed remotely.</li>
+            <li>Prompts, transcript text, and app context may be processed remotely.</li>
             <li>Personal vocabulary usually lives in someone else’s system.</li>
             <li>Great output, but privacy depends on provider policy.</li>
           </ul>
@@ -477,20 +496,20 @@
             <li>Audio stays on the Mac.</li>
             <li>Text cleanup runs locally.</li>
             <li>Vocabulary and corrections are local-first.</li>
-            <li>Designed for privacy-sensitive users from day one.</li>
+            <li>Designed for builders, security teams, and privacy-sensitive users from day one.</li>
           </ul>
         </div>
       </div>
     </section>
 
     <section class="shell closing">
-      <h2>Nothing leaves your Mac.</h2>
+      <h2>Speak freely. Transcribe locally. Nothing leaves your Mac.</h2>
       <a class="button primary" href="https://github.com/l33tdawg/quiettype/releases">Download beta</a>
     </section>
   </main>
 
   <footer>
-    <div class="shell">QuietType is a private local dictation assistant for macOS Apple Silicon by Dhillon "l33tdawg" Kannabhiran. Contact <a href="mailto:dhillon@levelupctf.com">dhillon@levelupctf.com</a>.</div>
+    <div class="shell">QuietType is private local voice input for macOS Apple Silicon by Dhillon "l33tdawg" Kannabhiran. Contact <a href="mailto:dhillon@levelupctf.com">dhillon@levelupctf.com</a>.</div>
   </footer>
 </body>
 </html>

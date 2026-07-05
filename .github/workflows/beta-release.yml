@@ -1,0 +1,173 @@
+name: Beta release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "App version"
+        required: true
+        default: "0.1.0"
+      build:
+        description: "Beta build number"
+        required: true
+        default: "7"
+
+permissions:
+  contents: write
+
+jobs:
+  signed-dmg:
+    name: Build, sign, notarize DMG
+    runs-on: macos-15
+    timeout-minutes: 90
+
+    env:
+      QUIETTYPE_CODESIGN_IDENTITY: "Developer ID Application: Dhillon Kannabhiran (2N7GKZ8D8Z)"
+      QUIETTYPE_NOTARY_PROFILE: "QUIETTYPE_NOTARY"
+      QUIETTYPE_NOTARIZE: "1"
+      QUIETTYPE_WHISPERKIT_MODEL_REVISION: "97a5bf9bbc74c7d9c12c755d04dea59e672e3808"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve beta version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-beta\.([0-9]+)$ ]]; then
+            echo "QUIETTYPE_VERSION=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
+            echo "QUIETTYPE_BUILD=${BASH_REMATCH[2]}" >> "$GITHUB_ENV"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "QUIETTYPE_VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
+            echo "QUIETTYPE_BUILD=${{ inputs.build }}" >> "$GITHUB_ENV"
+          else
+            echo "QUIETTYPE_VERSION=0.1.0" >> "$GITHUB_ENV"
+            echo "QUIETTYPE_BUILD=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Select Xcode
+        shell: bash
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+
+      - name: Check release secrets
+        id: release-secrets
+        env:
+          DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          CI_KEYCHAIN_PASSWORD: ${{ secrets.CI_KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        shell: bash
+        run: |
+          if [[ -n "$DEVELOPER_ID_CERTIFICATE_BASE64" && -n "$DEVELOPER_ID_CERTIFICATE_PASSWORD" && -n "$CI_KEYCHAIN_PASSWORD" && -n "$APPLE_ID" && -n "$APPLE_TEAM_ID" && -n "$APPLE_APP_SPECIFIC_PASSWORD" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::QuietType release signing secrets are not configured. Skipping signed DMG build."
+          fi
+
+      - name: Install signing certificate
+        if: steps.release-secrets.outputs.ready == 'true'
+        env:
+          DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.CI_KEYCHAIN_PASSWORD }}
+        shell: bash
+        run: |
+          if [[ -z "$DEVELOPER_ID_CERTIFICATE_BASE64" || -z "$DEVELOPER_ID_CERTIFICATE_PASSWORD" || -z "$KEYCHAIN_PASSWORD" ]]; then
+            echo "Missing signing secrets." >&2
+            exit 1
+          fi
+          CERT_PATH="$RUNNER_TEMP/developer-id.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/quiettype-signing.keychain-db"
+          if ! printf "%s" "$DEVELOPER_ID_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH" 2>/dev/null; then
+            printf "%s" "$DEVELOPER_ID_CERTIFICATE_BASE64" | base64 -D > "$CERT_PATH"
+          fi
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$DEVELOPER_ID_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+      - name: Configure notarytool
+        if: steps.release-secrets.outputs.ready == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        shell: bash
+        run: |
+          if [[ -z "$APPLE_ID" || -z "$APPLE_TEAM_ID" || -z "$APPLE_APP_SPECIFIC_PASSWORD" ]]; then
+            echo "Missing notarization secrets." >&2
+            exit 1
+          fi
+          xcrun notarytool store-credentials "$QUIETTYPE_NOTARY_PROFILE" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD"
+
+      - name: Restore caches
+        if: steps.release-secrets.outputs.ready == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            .swiftpm-home
+            .clang-module-cache
+            .model-cache
+            vendor/whisper.cpp
+            vendor/argmax-oss-swift/.build
+          key: quiettype-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'scripts/*.sh') }}-${{ env.QUIETTYPE_WHISPERKIT_MODEL_REVISION }}
+          restore-keys: |
+            quiettype-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Prepare native ASR backend
+        if: steps.release-secrets.outputs.ready == 'true'
+        shell: bash
+        run: |
+          mkdir -p vendor
+          if [[ ! -d vendor/argmax-oss-swift/.git ]]; then
+            git clone https://github.com/argmaxinc/argmax-oss-swift.git vendor/argmax-oss-swift
+          fi
+          git -C vendor/argmax-oss-swift fetch --depth 1 origin dcf3a00f0ae4d5b57bc0aad92063b102b70d5fd1
+          git -C vendor/argmax-oss-swift checkout dcf3a00f0ae4d5b57bc0aad92063b102b70d5fd1
+          bash scripts/build-whisperkit-server.sh
+          bash scripts/build-whisper-cpp-fallback.sh
+          MODEL_DIR="$(bash scripts/download-whisperkit-model.sh)"
+          echo "QUIETTYPE_WHISPERKIT_MODEL_SOURCE=$MODEL_DIR" >> "$GITHUB_ENV"
+
+      - name: Build signed notarized DMG
+        if: steps.release-secrets.outputs.ready == 'true'
+        shell: bash
+        run: bash scripts/beta-release.sh
+
+      - name: Upload DMG artifact
+        if: steps.release-secrets.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: QuietType-${{ env.QUIETTYPE_VERSION }}-beta.${{ env.QUIETTYPE_BUILD }}-macOS-arm64
+          path: |
+            dist/QuietType-${{ env.QUIETTYPE_VERSION }}-beta.${{ env.QUIETTYPE_BUILD }}-macOS-arm64.dmg
+            dist/QuietType-${{ env.QUIETTYPE_VERSION }}-beta.${{ env.QUIETTYPE_BUILD }}-macOS-arm64.dmg.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub prerelease
+        if: github.ref_type == 'tag' && steps.release-secrets.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          DMG="dist/QuietType-${QUIETTYPE_VERSION}-beta.${QUIETTYPE_BUILD}-macOS-arm64.dmg"
+          gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --prerelease \
+            --title "QuietType ${QUIETTYPE_VERSION} beta ${QUIETTYPE_BUILD}" \
+            --notes "Private beta for macOS Apple Silicon. Fast local voice input for coding agents, local memory, no cloud transcription."

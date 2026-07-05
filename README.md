@@ -1,6 +1,10 @@
 # QuietType
 
-Offline, privacy-first Typeless-style dictation assistant for macOS Apple Silicon.
+Offline, privacy-first voice input for coding agents and macOS apps.
+
+QuietType is for people who want to talk to Codex, Claude Code, ChatGPT, Cursor,
+terminals, editors, notes, and email without sending their voice or raw prompts
+to a cloud transcription service.
 
 The product goal is not literal transcription. It is a local streaming speech compiler:
 
@@ -10,6 +14,7 @@ natural speech -> streaming ASR -> correction layer -> local semantic editor -> 
 
 See [docs/PRD.md](docs/PRD.md) for the product requirements.
 See [docs/macos-signing.md](docs/macos-signing.md) for local app signing notes.
+See [docs/beta-release.md](docs/beta-release.md) for local and GitHub Actions release notes.
 
 ## Current Prototype
 
