@@ -42,12 +42,31 @@ public struct SageMemorySubmission: Equatable, Sendable {
     public var status: String
 }
 
-public enum SageDirectClientError: Error, Equatable {
+public enum SageDirectClientError: LocalizedError, Equatable {
     case invalidEndpoint(URL)
     case invalidKeyData
     case keychainReadFailed(OSStatus)
     case keychainWriteFailed(OSStatus)
     case requestFailed(Int, String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidEndpoint(let url):
+            return "SAGE must be reached through a local endpoint. Current endpoint: \(url.absoluteString)"
+        case .invalidKeyData:
+            return "QuietType could not read its SAGE agent key."
+        case .keychainReadFailed(let status):
+            return "QuietType could not read its SAGE agent key from Keychain. Status \(status)."
+        case .keychainWriteFailed(let status):
+            return "QuietType could not save its SAGE agent key to Keychain. Status \(status)."
+        case .requestFailed(let status, let body):
+            let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                return "SAGE returned HTTP \(status)."
+            }
+            return "SAGE returned HTTP \(status): \(String(trimmed.prefix(160)))"
+        }
+    }
 }
 
 public final class SageSigningIdentity: @unchecked Sendable {
@@ -217,6 +236,21 @@ public final class SageDirectClient: @unchecked Sendable {
             status: decoded.status,
             name: decoded.name
         )
+    }
+
+    public func isHealthy() async -> Bool {
+        do {
+            var request = URLRequest(url: endpoint.appendingPathComponent("health"))
+            request.httpMethod = "GET"
+            request.timeoutInterval = 2
+            let (_, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                return false
+            }
+            return (200..<300).contains(http.statusCode)
+        } catch {
+            return false
+        }
     }
 
     public func listMemories(limit: Int = 12) async throws -> [SageMemoryRecord] {
