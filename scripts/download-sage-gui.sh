@@ -6,6 +6,9 @@ REPO="${SAGE_GITHUB_REPO:-l33tdawg/sage}"
 TAG="${SAGE_RELEASE_TAG:-latest}"
 OUT="${QUIETTYPE_SAGE_APP_SOURCE:-$ROOT/vendor/SAGE.app}"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/quiettype-sage.XXXXXX")"
+EXPECTED_BUNDLE_ID="${SAGE_EXPECTED_BUNDLE_ID:-com.sage.brain}"
+EXPECTED_ARCH="${SAGE_EXPECTED_ARCH:-arm64}"
+EXPECTED_SHA256="${SAGE_ASSET_SHA256:-}"
 
 cleanup() {
   if [[ -d "$TMP/mount" ]]; then
@@ -18,14 +21,42 @@ trap cleanup EXIT
 require_sage_app() {
   local sage_app="$1"
   local executable="$sage_app/Contents/MacOS/sage-gui"
+  local plist="$sage_app/Contents/Info.plist"
 
   if [[ ! -d "$sage_app" ]]; then
     echo "SAGE.app not found at $sage_app" >&2
     exit 1
   fi
 
+  if [[ ! -f "$plist" ]]; then
+    echo "Downloaded SAGE.app is missing Info.plist: $plist" >&2
+    exit 1
+  fi
+
+  local bundle_id
+  bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")"
+  if [[ -n "$EXPECTED_BUNDLE_ID" && "$bundle_id" != "$EXPECTED_BUNDLE_ID" ]]; then
+    echo "Unexpected SAGE bundle identifier '$bundle_id'; expected '$EXPECTED_BUNDLE_ID'." >&2
+    exit 1
+  fi
+
+  if [[ "$TAG" != "latest" ]]; then
+    local version expected_version
+    version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist" 2>/dev/null || true)"
+    expected_version="${TAG#v}"
+    if [[ "$version" != "$TAG" && "$version" != "$expected_version" ]]; then
+      echo "Unexpected SAGE version '$version'; expected '$TAG'." >&2
+      exit 1
+    fi
+  fi
+
   if [[ ! -x "$executable" ]]; then
     echo "Downloaded SAGE.app is not runnable; missing executable: $executable" >&2
+    exit 1
+  fi
+
+  if [[ -n "$EXPECTED_ARCH" ]] && ! file "$executable" | grep -q "$EXPECTED_ARCH"; then
+    echo "Downloaded SAGE executable does not contain '$EXPECTED_ARCH': $executable" >&2
     exit 1
   fi
 }
@@ -86,6 +117,17 @@ curl -fL \
   -H "User-Agent: QuietType-SAGE-Bundler" \
   "$ASSET_URL" \
   -o "$ASSET"
+
+if [[ -n "$EXPECTED_SHA256" ]]; then
+  ACTUAL_SHA256="$(shasum -a 256 "$ASSET" | awk '{print $1}')"
+  EXPECTED_SHA256_LOWER="$(printf "%s" "$EXPECTED_SHA256" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256_LOWER" ]]; then
+    echo "SAGE asset checksum mismatch for $ASSET_NAME" >&2
+    echo "Expected: $EXPECTED_SHA256_LOWER" >&2
+    echo "Actual:   $ACTUAL_SHA256" >&2
+    exit 1
+  fi
+fi
 
 rm -rf "$OUT"
 mkdir -p "$(dirname "$OUT")"

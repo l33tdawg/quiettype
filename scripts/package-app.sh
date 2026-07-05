@@ -20,18 +20,49 @@ WHISPERKIT_MODEL_SOURCE="${QUIETTYPE_WHISPERKIT_MODEL_SOURCE:-$DEFAULT_WHISPERKI
 SAGE_APP_SOURCE="${QUIETTYPE_SAGE_APP_SOURCE:-$DEFAULT_SAGE_APP}"
 APP_VERSION="${QUIETTYPE_VERSION:-}"
 APP_BUILD="${QUIETTYPE_BUILD:-}"
+SAGE_EXPECTED_BUNDLE_ID="${SAGE_EXPECTED_BUNDLE_ID:-com.sage.brain}"
+SAGE_EXPECTED_VERSION="${SAGE_EXPECTED_VERSION:-${SAGE_RELEASE_TAG:-}}"
+SAGE_EXPECTED_ARCH="${SAGE_EXPECTED_ARCH:-arm64}"
 
 require_sage_app() {
   local sage_app="$1"
   local executable="$sage_app/Contents/MacOS/sage-gui"
+  local plist="$sage_app/Contents/Info.plist"
 
   if [[ ! -d "$sage_app" ]]; then
     echo "Missing SAGE app bundle: $sage_app" >&2
     exit 1
   fi
 
+  if [[ ! -f "$plist" ]]; then
+    echo "SAGE app is missing Info.plist: $plist" >&2
+    exit 1
+  fi
+
+  local bundle_id
+  bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")"
+  if [[ -n "$SAGE_EXPECTED_BUNDLE_ID" && "$bundle_id" != "$SAGE_EXPECTED_BUNDLE_ID" ]]; then
+    echo "Unexpected SAGE bundle identifier '$bundle_id'; expected '$SAGE_EXPECTED_BUNDLE_ID'." >&2
+    exit 1
+  fi
+
+  if [[ -n "$SAGE_EXPECTED_VERSION" && "$SAGE_EXPECTED_VERSION" != "latest" ]]; then
+    local version expected_version
+    version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist" 2>/dev/null || true)"
+    expected_version="${SAGE_EXPECTED_VERSION#v}"
+    if [[ "$version" != "$SAGE_EXPECTED_VERSION" && "$version" != "$expected_version" ]]; then
+      echo "Unexpected SAGE version '$version'; expected '$SAGE_EXPECTED_VERSION'." >&2
+      exit 1
+    fi
+  fi
+
   if [[ ! -x "$executable" ]]; then
     echo "Bundled SAGE app is not runnable; missing executable: $executable" >&2
+    exit 1
+  fi
+
+  if [[ -n "$SAGE_EXPECTED_ARCH" ]] && ! file "$executable" | grep -q "$SAGE_EXPECTED_ARCH"; then
+    echo "Bundled SAGE executable does not contain '$SAGE_EXPECTED_ARCH': $executable" >&2
     exit 1
   fi
 }
@@ -112,8 +143,10 @@ if [[ -x "$APP/Contents/MacOS/whisper-cli" ]]; then
 fi
 if [[ -d "$APP/Contents/Resources/SAGE.app" ]]; then
   codesign --force --deep --sign "$SIGN_IDENTITY" $SIGN_OPTIONS "$APP/Contents/Resources/SAGE.app" >/dev/null
+  codesign --verify --deep --strict --verbose=2 "$APP/Contents/Resources/SAGE.app" >/dev/null
 fi
 codesign --force --sign "$SIGN_IDENTITY" $SIGN_OPTIONS "${MAIN_ENTITLEMENTS_OPTIONS[@]}" "$APP/Contents/MacOS/LocalTypeMac" >/dev/null
 codesign --force --sign "$SIGN_IDENTITY" $SIGN_OPTIONS "${MAIN_ENTITLEMENTS_OPTIONS[@]}" "$APP" >/dev/null
+codesign --verify --deep --strict --verbose=2 "$APP" >/dev/null
 
 echo "$APP"

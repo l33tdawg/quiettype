@@ -42,6 +42,19 @@ for reproducibility:
 SAGE_RELEASE_TAG="v11.0.2" bash scripts/download-sage-gui.sh
 ```
 
+For stricter release reproducibility, pass the expected release asset checksum:
+
+```bash
+SAGE_RELEASE_TAG="v11.0.2" \
+SAGE_ASSET_SHA256="EXPECTED_DMG_OR_ZIP_SHA256" \
+  bash scripts/download-sage-gui.sh
+```
+
+The downloader and packager both validate that the bundled app is
+`com.sage.brain`, matches the pinned SAGE version when one is provided, contains
+an arm64 `sage-gui` executable, and can be re-signed inside QuietType before the
+DMG is built.
+
 To intentionally ship without bundled SAGE for a developer-only build, set
 `QUIETTYPE_BUNDLE_SAGE=0`. Public/private tester builds should keep SAGE
 bundled because QuietType requires SAGE governed local memory.
