@@ -267,7 +267,7 @@ struct TesterView: View {
 
     var body: some View {
         Group {
-            if model.setupComplete && firstRunAssistantComplete {
+            if model.setupComplete || firstRunAssistantComplete {
                 appShell
             } else {
                 firstRunSetupExperience
@@ -303,8 +303,16 @@ struct TesterView: View {
         }
         .onAppear {
             model.startAppServices()
+            if model.setupComplete {
+                firstRunAssistantComplete = true
+            }
             if model.setupComplete && firstRunAssistantComplete && !hasSeenGuide {
                 guideStep = .welcome
+            }
+        }
+        .onChange(of: model.setupComplete) { isComplete in
+            if isComplete {
+                firstRunAssistantComplete = true
             }
         }
         .onReceive(permissionTimer) { _ in
@@ -554,13 +562,16 @@ struct TesterView: View {
         case .sage:
             return [
                 FirstRunActionItem(
-                    title: "Set up SAGE governed memory",
-                    detail: model.sageDetected ? "SAGE is installed. Complete SAGE setup, unlock it if needed, then connect quiettype-agent." : "QuietType uses SAGE as its local governed memory layer. Install SAGE before dictation starts.",
-                    status: model.sageReady ? "Done" : model.sageDetected ? "Connect" : "Install",
-                    isComplete: model.sageReady,
+                    title: model.sageReady ? "SAGE memory is ready" : "Set up SAGE governed memory",
+                    detail: model.sageReady ? "quiettype-agent is registered. Continue to permissions, speech, and voice training." : model.sageDetected ? "SAGE is installed. Complete SAGE setup, unlock it if needed, then connect quiettype-agent." : "QuietType uses SAGE as its local governed memory layer. Install SAGE before dictation starts.",
+                    status: model.sageReady ? "Continue" : model.sageDetected ? "Connect" : "Install",
+                    isComplete: false,
                     action: {
                         Task {
-                            if model.sageDetected {
+                            if model.sageReady {
+                                firstRunAssistantComplete = true
+                                selectedSection = .home
+                            } else if model.sageDetected {
                                 await model.registerSageAgentIfAvailable()
                             } else {
                                 await model.installSage()
@@ -697,7 +708,10 @@ struct TesterView: View {
         switch firstRunStage {
         case .sage:
             Task {
-                if model.sageDetected {
+                if model.sageReady {
+                    firstRunAssistantComplete = true
+                    selectedSection = .home
+                } else if model.sageDetected {
                     await model.registerSageAgentIfAvailable()
                 } else {
                     await model.installSage()
@@ -734,6 +748,7 @@ struct TesterView: View {
             selectedSection = .help
         case .training:
             selectedSection = .setup
+            selectedSetupTab = .training
         case .experience:
             model.copyOutput()
         }
@@ -814,7 +829,7 @@ struct TesterView: View {
         .padding(.vertical, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
-            selectedSetupTab = suggestedSetupTab
+            selectedSetupTab = guideStep == .memory ? .training : suggestedSetupTab
         }
         .animation(.easeInOut(duration: 0.18), value: selectedSetupTab)
     }
@@ -857,7 +872,7 @@ struct TesterView: View {
             }
             Spacer()
             Button(model.setupComplete ? "Add training" : "Continue") {
-                selectedSetupTab = suggestedSetupTab
+                selectedSetupTab = model.setupComplete ? .training : suggestedSetupTab
             }
             .buttonStyle(QuietButtonStyle(prominence: .primary))
         }
@@ -880,63 +895,72 @@ struct TesterView: View {
                 if model.setupComplete {
                     Label("Complete", systemImage: "checkmark.circle.fill")
                         .font(.callout.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.primary)
                 }
             }
 
-            HStack(spacing: 12) {
-                SetupStepCard(
-                    number: "1",
-                    title: "Enable SAGE",
-                    detail: "Install SAGE and complete its setup so quiettype-agent can register.",
-                    state: model.sageReady ? .done : .action,
-                    actionTitle: model.sageDetected ? "Connect" : "Install"
-                ) {
-                    selectedSetupTab = .access
-                    Task {
-                        if model.sageDetected {
-                            await model.registerSageAgentIfAvailable()
-                        } else {
-                            await model.installSage()
-                        }
-                    }
+            if model.setupComplete {
+                HStack(spacing: 10) {
+                    SetupCompletePill(number: "1", title: "SAGE", detail: "Connected")
+                    SetupCompletePill(number: "2", title: "Access", detail: "Allowed")
+                    SetupCompletePill(number: "3", title: "Engine", detail: "Warm")
+                    SetupCompletePill(number: "4", title: "Training", detail: "\(model.trainingProgressLabel) sets")
                 }
-
-                SetupStepCard(
-                    number: "2",
-                    title: "Allow access",
-                    detail: "Use Microphone to hear you and Accessibility to insert text.",
-                    state: model.permissionsReady ? .done : .action,
-                    actionTitle: "Open"
-                ) {
-                    Task {
+            } else {
+                HStack(spacing: 12) {
+                    SetupStepCard(
+                        number: "1",
+                        title: "Enable SAGE",
+                        detail: "Install SAGE and complete its setup so quiettype-agent can register.",
+                        state: model.sageReady ? .done : .action,
+                        actionTitle: model.sageDetected ? "Connect" : "Install"
+                    ) {
                         selectedSetupTab = .access
-                        if model.microphonePermission != .granted {
-                            await model.requestMicrophone()
-                        }
-                        if model.accessibilityPermission != .granted {
-                            model.requestAccessibility()
+                        Task {
+                            if model.sageDetected {
+                                await model.registerSageAgentIfAvailable()
+                            } else {
+                                await model.installSage()
+                            }
                         }
                     }
-                }
 
-                SetupStepCard(
-                    number: "3",
-                    title: "Start dictation",
-                    detail: "QuietType starts the local speech engine in the background.",
-                    state: model.speechEngineReady ? .done : .working,
-                    actionTitle: "Wait"
-                ) {}
+                    SetupStepCard(
+                        number: "2",
+                        title: "Allow access",
+                        detail: "Use Microphone to hear you and Accessibility to insert text.",
+                        state: model.permissionsReady ? .done : .action,
+                        actionTitle: "Open"
+                    ) {
+                        Task {
+                            selectedSetupTab = .access
+                            if model.microphonePermission != .granted {
+                                await model.requestMicrophone()
+                            }
+                            if model.accessibilityPermission != .granted {
+                                model.requestAccessibility()
+                            }
+                        }
+                    }
 
-                SetupStepCard(
-                    number: "4",
-                    title: "Train your voice",
-                    detail: "Read short scripts so names and technical terms are preserved.",
-                    state: model.trainingComplete ? .done : .action,
-                    actionTitle: "Train"
-                ) {
-                    selectedSection = .setup
-                    selectedSetupTab = .training
+                    SetupStepCard(
+                        number: "3",
+                        title: "Start dictation",
+                        detail: "QuietType starts the local speech engine in the background.",
+                        state: model.speechEngineReady ? .done : .working,
+                        actionTitle: "Wait"
+                    ) {}
+
+                    SetupStepCard(
+                        number: "4",
+                        title: "Train your voice",
+                        detail: "Read short scripts so names and technical terms are preserved.",
+                        state: model.trainingComplete ? .done : .action,
+                        actionTitle: "Train"
+                    ) {
+                        selectedSection = .setup
+                        selectedSetupTab = .training
+                    }
                 }
             }
         }
@@ -1233,6 +1257,8 @@ struct TesterView: View {
                             detail: "Recheck access after changing macOS privacy settings.",
                             actionTitle: "Recheck"
                         ) {
+                            selectedSection = .setup
+                            selectedSetupTab = .access
                             Task {
                                 await model.refreshPermissions(verifyMicrophoneAccess: true)
                             }
@@ -1250,7 +1276,7 @@ struct TesterView: View {
                             icon: "brain.head.profile",
                             title: "Improve accuracy",
                             detail: "Add spellings, corrections, and preferred writing style.",
-                            actionTitle: "Open Memory"
+                            actionTitle: "Open Review"
                         ) {
                             selectedSection = .dictionary
                         }
@@ -1283,12 +1309,12 @@ struct TesterView: View {
                 .font(.title3.weight(.semibold))
 
             HelpFAQRow(
-                question: "Why does QuietType require SAGE?",
-                answer: "SAGE is QuietType's governed memory layer. It keeps corrections, vocabulary, training hints, and transcript notes auditable and portable with your SAGE identity. QuietType will not run with a separate local memory fallback."
+                question: "Does anything leave my Mac?",
+                answer: "No dictation content is sent to cloud services. Dictation, cleanup, training samples, and SAGE memory stay local. Manual update checks contact GitHub only when you choose Check for updates or Install SAGE."
             )
             HelpFAQRow(
-                question: "What happens while SAGE is downloading?",
-                answer: "QuietType downloads the SAGE installer from the SAGE GitHub release, opens it, and waits for you to install SAGE, launch it, and complete SAGE setup. After that, click Recheck so quiettype-agent can register."
+                question: "Why does QuietType require SAGE?",
+                answer: "SAGE is QuietType's governed memory layer. It keeps corrections, vocabulary, training hints, and transcript notes auditable and portable with your SAGE identity. QuietType will not run with a separate local memory fallback."
             )
             HelpFAQRow(
                 question: "QuietType says Microphone is needed, but macOS shows it is allowed.",
@@ -1300,11 +1326,11 @@ struct TesterView: View {
             )
             HelpFAQRow(
                 question: "The transcript misses names or technical terms.",
-                answer: "Open Setup and complete voice training, then open Memory to teach exact spellings such as project names, acronyms, and product terms."
+                answer: "Open Setup and complete voice training, then open Review to teach exact spellings such as project names, acronyms, and product terms."
             )
             HelpFAQRow(
-                question: "Does anything leave my Mac?",
-                answer: "No dictation content is sent to cloud services. Dictation, cleanup, training samples, and SAGE memory stay local. Manual update checks contact GitHub only when you choose Check for updates or Install SAGE."
+                question: "What happens while SAGE is downloading?",
+                answer: "QuietType downloads the SAGE installer from the SAGE GitHub release, opens it, and waits for you to install SAGE, launch it, and complete SAGE setup. After that, click Recheck so quiettype-agent can register."
             )
         }
         .padding(18)
@@ -1332,6 +1358,11 @@ struct TesterView: View {
                 selectedSetupTab = .training
             }
             self.guideStep = next
+            if next == .memory {
+                DispatchQueue.main.async {
+                    selectedSetupTab = .training
+                }
+            }
         } else {
             finishGuide()
         }
@@ -1400,8 +1431,8 @@ struct TesterView: View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 4), spacing: 14) {
             MetricTile(icon: "text.bubble", value: "\(model.sessionsToday)", label: "Sessions today")
             MetricTile(icon: "speedometer", value: model.currentWordsPerMinuteLabel, label: "Speaking pace")
-            MetricTile(icon: "bolt.fill", value: model.lastLatencyMS.map { "\($0) ms" } ?? "Warm", label: "Release latency")
-            MetricTile(icon: "textformat.abc", value: model.wordsProcessedLabel, label: "Total words")
+            MetricTile(icon: "brain.head.profile", value: "\(model.sageLessonCount)", label: "SAGE lessons")
+            MetricTile(icon: "checklist.checked", value: "\(model.transcriptNoteCount)", label: "Review notes")
         }
         .anchorPreference(key: GuideSpotlightPreferenceKey.self, value: .bounds) { anchor in
             [.privacy: anchor]
@@ -1512,7 +1543,6 @@ struct TesterView: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             VStack(alignment: .leading, spacing: 16) {
                 sharePanel
-                advancedPanel
             }
             .frame(width: 420, alignment: .topLeading)
         }
@@ -1608,7 +1638,7 @@ struct TesterView: View {
                     .buttonStyle(QuietButtonStyle())
 
                     Button("Learn about SAGE") {
-                        NSWorkspace.shared.open(URL(string: "https://github.com/l33tdawg/sage")!)
+                        NSWorkspace.shared.open(URL(string: "https://l33tdawg.github.io/sage/")!)
                     }
                     .buttonStyle(QuietButtonStyle())
 
@@ -2087,7 +2117,7 @@ struct TesterView: View {
 
     private var outputPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(alignment: .center, spacing: 10) {
                 Text("Polished text")
                     .font(.title3.weight(.semibold))
                 Spacer()
@@ -2100,19 +2130,7 @@ struct TesterView: View {
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
-            }
 
-            Text(model.output.isEmpty ? "Your polished text will appear here." : model.output)
-                .font(.system(size: 19, weight: .regular))
-                .lineSpacing(4)
-                .foregroundStyle(model.output.isEmpty ? .secondary : .primary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, minHeight: 94, alignment: .topLeading)
-                .padding(14)
-                .background(Color(nsColor: .textBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-
-            HStack {
                 Button {
                     model.copyOutput()
                 } label: {
@@ -2121,16 +2139,29 @@ struct TesterView: View {
                 .buttonStyle(QuietButtonStyle())
                 .disabled(model.output.isEmpty)
 
-                Button {
-                    model.clearOutput()
-                } label: {
-                    Label("Clear", systemImage: "xmark")
-                        .labelStyle(.titleAndIcon)
+                if !model.output.isEmpty {
+                    Button {
+                        model.clearOutput()
+                    } label: {
+                        Label("Clear", systemImage: "xmark")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(QuietButtonStyle(prominence: .secondary))
+                    .opacity(0.78)
                 }
-                .buttonStyle(QuietButtonStyle(prominence: .secondary))
-                .disabled(model.output.isEmpty)
-                .opacity(model.output.isEmpty ? 0 : 0.78)
+            }
 
+            Text(model.output.isEmpty ? "Your polished text will appear here." : model.output)
+                .font(.system(size: 19, weight: .regular))
+                .lineSpacing(4)
+                .foregroundStyle(model.output.isEmpty ? .secondary : .primary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, minHeight: 78, alignment: .topLeading)
+                .padding(14)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            HStack {
                 Spacer()
                 statusLine
             }
@@ -2157,34 +2188,6 @@ struct TesterView: View {
         .foregroundStyle(.secondary)
     }
 
-    private var advancedPanel: some View {
-        DisclosureGroup("Advanced testing") {
-            VStack(alignment: .leading, spacing: 12) {
-                QuietSegmentedControl(
-                    title: "Editor",
-                    selection: $model.editorMode,
-                    options: MenuBarModel.EditorMode.allCases
-                ) { mode in
-                    mode.label
-                }
-
-                if model.editorMode == .ollama {
-                    TextField("Ollama model", text: $model.ollamaModel)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Prototype speech text")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    TextField("Speech text", text: $model.transcript, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(4...7)
-                }
-            }
-            .padding(.top, 8)
-        }
-    }
 }
 
 private enum QuietTypeGuideStep: Int, CaseIterable, Identifiable {
@@ -2810,6 +2813,46 @@ private enum SetupStepCardState {
     case action
 }
 
+private struct SetupCompletePill: View {
+    @Environment(\.quietTypeTypeDelta) private var typeDelta
+    var number: String
+    var title: String
+    var detail: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(number)
+                .font(.system(size: 11 + typeDelta, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .clipShape(Circle())
+                .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 1))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14 + typeDelta, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 12 + typeDelta, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 13 + typeDelta, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+    }
+}
+
 private struct SetupStepCard: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
     var number: String
@@ -2946,17 +2989,15 @@ private struct HelpFAQRow: View {
     var answer: String
 
     var body: some View {
-        DisclosureGroup {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(question)
+                .font(.system(size: 14 + typeDelta, weight: .semibold))
+                .foregroundStyle(.primary)
             Text(answer)
                 .font(.system(size: 14 + typeDelta, weight: .regular))
                 .foregroundStyle(.secondary)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 6)
-        } label: {
-            Text(question)
-                .font(.system(size: 14 + typeDelta, weight: .semibold))
-                .foregroundStyle(.primary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -3467,9 +3508,23 @@ private struct TeachQuietTypeSheet: View {
                 ) { kind in
                     kind.label
                 }
-                QuietTextField(label: model.teachingKind.rawLabel, text: $model.teachRaw)
-                QuietTextField(label: model.teachingKind.correctedLabel, text: $model.teachCorrected)
-                QuietTextField(label: "Context", text: $model.teachingContext)
+                QuietTextField(
+                    label: model.teachingKind.rawLabel,
+                    placeholder: model.teachingKind.rawPlaceholder,
+                    text: $model.teachRaw
+                )
+                QuietTextField(
+                    label: model.teachingKind.correctedLabel,
+                    placeholder: model.teachingKind.correctedPlaceholder,
+                    text: $model.teachCorrected
+                )
+                if model.teachingKind != .style {
+                    QuietTextField(
+                        label: "Where this applies",
+                        placeholder: model.teachingKind.contextPlaceholder,
+                        text: $model.teachingContext
+                    )
+                }
             }
 
             HStack(alignment: .top, spacing: 12) {
@@ -3772,8 +3827,7 @@ struct StartupStep: Identifiable, Equatable {
     static let defaults = [
         StartupStep(id: "sage", title: "SAGE memory", detail: "Checking governed local memory.", state: .pending),
         StartupStep(id: "permissions", title: "macOS permissions", detail: "Checking microphone and Accessibility.", state: .pending),
-        StartupStep(id: "nativeSpeech", title: "Secure transcription engine", detail: "Waiting to start the Apple Silicon engine.", state: .pending),
-        StartupStep(id: "fallbackSpeech", title: "Local fallback", detail: "Checking local whisper.cpp fallback.", state: .pending)
+        StartupStep(id: "nativeSpeech", title: "Secure transcription engine", detail: "Waiting to start the Apple Silicon engine.", state: .pending)
     ]
 }
 
@@ -3902,6 +3956,7 @@ private struct QuietSegmentedControl<Option: Identifiable & Hashable>: View {
 private struct QuietTextField: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
     var label: String
+    var placeholder: String = ""
     @Binding var text: String
 
     var body: some View {
@@ -3909,7 +3964,7 @@ private struct QuietTextField: View {
             Text(label)
                 .font(.system(size: 12 + typeDelta, weight: .semibold))
                 .foregroundStyle(.secondary)
-            TextField(label, text: $text)
+            TextField(placeholder.isEmpty ? label : placeholder, text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15 + typeDelta, weight: .medium))
                 .padding(.horizontal, 12)
@@ -4872,20 +4927,46 @@ final class MenuBarModel: ObservableObject {
     }
 
     var filteredDictionaryMemories: [DictionaryMemoryItem] {
+        let categoryFiltered: [DictionaryMemoryItem]
         switch memoryFilter {
         case .all:
-            return dictionaryMemories
+            categoryFiltered = dictionaryMemories
         case .vocabulary:
-            return dictionaryMemories.filter { $0.kind.localizedCaseInsensitiveContains("Vocabulary") }
+            categoryFiltered = dictionaryMemories.filter { $0.kind.localizedCaseInsensitiveContains("Vocabulary") }
         case .corrections:
-            return dictionaryMemories.filter {
+            categoryFiltered = dictionaryMemories.filter {
                 $0.kind.localizedCaseInsensitiveContains("Correction")
                     || $0.summary.localizedCaseInsensitiveContains("prefer")
             }
         case .sage:
-            return dictionaryMemories.filter { $0.source.localizedCaseInsensitiveContains("SAGE") }
+            categoryFiltered = dictionaryMemories.filter { $0.source.localizedCaseInsensitiveContains("SAGE") }
         case .local:
-            return dictionaryMemories.filter { $0.source.localizedCaseInsensitiveContains("Session") }
+            categoryFiltered = dictionaryMemories.filter { $0.source.localizedCaseInsensitiveContains("Session") }
+        }
+
+        let query = sageQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            return categoryFiltered
+        }
+
+        let terms = query
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+
+        return categoryFiltered.filter { memory in
+            let haystack = [
+                memory.title,
+                memory.summary,
+                memory.kind,
+                memory.source,
+                memory.id,
+                memory.rawTranscript ?? "",
+                memory.polishedText ?? ""
+            ].joined(separator: " ")
+
+            return terms.allSatisfy { term in
+                haystack.localizedCaseInsensitiveContains(term)
+            }
         }
     }
 
@@ -5010,11 +5091,7 @@ final class MenuBarModel: ObservableObject {
             speechEngineStatus = "Native speech unavailable"
         }
 
-        updateStartupStep(
-            id: "fallbackSpeech",
-            detail: fallbackSpeechReady ? "Diagnostic fallback is installed, but normal dictation waits for native WhisperKit." : "No diagnostic fallback found.",
-            state: fallbackSpeechReady ? .warning : .warning
-        )
+        startupSteps.removeAll { $0.id == "fallbackSpeech" }
     }
 
     func refreshPermissions(promptForAccessibility: Bool = false, verifyMicrophoneAccess: Bool = false) async {
@@ -6852,7 +6929,7 @@ final class MenuBarModel: ObservableObject {
             case .vocabulary:
                 return "Spoken form"
             case .style:
-                return "Context"
+                return "Where this applies"
             case .translation:
                 return "Rough phrase"
             }
@@ -6868,6 +6945,45 @@ final class MenuBarModel: ObservableObject {
                 return "Preference"
             case .translation:
                 return "Polished form"
+            }
+        }
+
+        var rawPlaceholder: String {
+            switch self {
+            case .correction:
+                return "Example: Dylan"
+            case .vocabulary:
+                return "Example: comet bee eff tee"
+            case .style:
+                return "Example: Slack messages, emails, code review notes"
+            case .translation:
+                return "Example: we need apples bananas and milk"
+            }
+        }
+
+        var correctedPlaceholder: String {
+            switch self {
+            case .correction:
+                return "Example: Dhillon"
+            case .vocabulary:
+                return "Example: CometBFT"
+            case .style:
+                return "Example: Keep messages concise, direct, and natural."
+            case .translation:
+                return "Example: - Apples\n- Bananas\n- Milk"
+            }
+        }
+
+        var contextPlaceholder: String {
+            switch self {
+            case .correction:
+                return "Example: names, Slack, coding agents"
+            case .vocabulary:
+                return "Example: technical terms, crypto, benchmarks"
+            case .style:
+                return ""
+            case .translation:
+                return "Example: grocery lists, notes, numbered steps"
             }
         }
 
