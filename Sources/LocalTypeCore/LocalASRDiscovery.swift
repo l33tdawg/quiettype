@@ -126,7 +126,7 @@ public struct CascadingAudioFileTranscriber: AudioFileTranscribing {
 
     public func transcribe(audioFile: URL, options: AudioTranscriptionOptions) async throws -> String {
         guard !transcribers.isEmpty else {
-            throw AudioTranscriberError.allBackendsFailed(["No local ASR backend is ready. Wait for startup or install the local fallback."])
+            throw AudioTranscriberError.allBackendsFailed(["No local ASR backend is ready. Wait for the Apple Silicon speech engine to finish startup."])
         }
 
         var errors: [String] = []

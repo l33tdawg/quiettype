@@ -4666,7 +4666,7 @@ final class MenuBarModel: ObservableObject {
             return "Ready for private Apple Silicon dictation. Text inserts automatically."
         }
         if fallbackSpeechReady {
-            return "Native speech is warming. QuietType will wait instead of using the lower-quality fallback."
+            return "Native speech is warming. QuietType will start when the Apple Silicon engine is ready."
         }
         return "Secure transcription is starting in the background."
     }
@@ -4676,7 +4676,7 @@ final class MenuBarModel: ObservableObject {
             return "Native speech ready"
         }
         if fallbackSpeechReady {
-            return "Native warming"
+            return "Native speech starting"
         }
         return "Startup running"
     }
@@ -5734,9 +5734,7 @@ final class MenuBarModel: ObservableObject {
                 }
 
                 let elapsed = Int(Date().timeIntervalSince(startedAt))
-                let detail = fallbackSpeechReady
-                    ? "Native engine is warming in the background. Diagnostic fallback is installed but not used for normal dictation."
-                    : "Native engine is warming in the background. First launch can take a few minutes."
+                let detail = "Native engine is warming in the background. First launch can take a few minutes."
                 updateStartupStep(
                     id: "nativeSpeech",
                     detail: elapsed > 0 ? "\(detail) \(elapsed)s elapsed." : detail,
@@ -5749,10 +5747,10 @@ final class MenuBarModel: ObservableObject {
             let detail = String(describing: error)
             updateStartupStep(
                 id: "nativeSpeech",
-                detail: fallbackSpeechReady ? "Native engine is not ready yet. QuietType will wait instead of using the diagnostic fallback." : detail,
+                detail: fallbackSpeechReady ? "Native speech is not ready yet. QuietType will wait for the Apple Silicon engine." : detail,
                 state: .failed
             )
-            lastError = fallbackSpeechReady ? "Native WhisperKit is unavailable. QuietType did not use the lower-quality fallback." : detail
+            lastError = fallbackSpeechReady ? "Native WhisperKit is unavailable. QuietType will wait for the Apple Silicon speech engine." : detail
         }
 
         refreshSpeechEngineStatus()
@@ -5936,7 +5934,7 @@ final class MenuBarModel: ObservableObject {
         await prepareNativeSpeechServerIfAvailable()
         guard nativeSpeechServerReady else {
             statusMessage = "Native speech warming"
-            lastError = "QuietType is waiting for the Apple Silicon speech engine. It will not use the lower-quality fallback for normal dictation."
+            lastError = "QuietType is waiting for the Apple Silicon speech engine before dictation starts."
             return false
         }
 
@@ -6102,7 +6100,7 @@ final class MenuBarModel: ObservableObject {
             await prepareNativeSpeechServerIfAvailable()
             guard nativeSpeechServerReady else {
                 throw AudioTranscriberError.allBackendsFailed([
-                    "Native WhisperKit is unavailable. QuietType did not use the lower-quality diagnostic fallback."
+                    "Native WhisperKit is unavailable. QuietType is waiting for the Apple Silicon speech engine."
                 ])
             }
             statusMessage = "Transcribing locally"
