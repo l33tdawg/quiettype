@@ -1,10 +1,12 @@
 # QuietType
 
-Private, local voice input for coding agents and macOS apps.
+Native macOS dictation for coding agents and desktop workflows.
 
 QuietType lets you talk to Codex, Claude Code, ChatGPT, Cursor, terminals,
-editors, notes and email without sending your voice or raw prompts to a cloud
-transcription service.
+editors, notes and email through local ML on your Mac. It uses native Apple
+technology for capture, permissions, insertion, Keychain storage and
+WhisperKit/Core ML transcription, with no cloud processing path for normal
+dictation.
 
 > Speak freely. Transcribe locally. Nothing leaves your Mac.
 
@@ -16,10 +18,7 @@ Coding agents work best when you give them rich context: what to inspect, what
 to change, how to test it, what to avoid and what tradeoffs to explain. Typing
 that much context is slow. Cloud dictation is fast, but it can expose exactly
 the material builders and security teams care about: source paths, bug details,
-client context, unreleased plans, private prompts and voice samples.
-
-Voice is also biometric data. In the age of fake AI video and voice cloning, a
-dictation tool should not treat raw voice samples as harmless telemetry.
+client context, unreleased plans, private prompts, vocabulary and review notes.
 
 QuietType is built for the opposite default:
 
@@ -29,12 +28,12 @@ QuietType is built for the opposite default:
 - no uploaded prompt text
 - no remote LLM cleanup path
 - no telemetry by default
-- local correction and vocabulary memory
-- optional local SAGE governed memory
+- local ML transcription on Apple Silicon
+- mandatory local SAGE governed memory for corrections, vocabulary and review notes
 
 ## Main Features
 
-### Fast voice input for agents
+### Fast voice input for agents and desktop workflows
 
 Use QuietType anywhere you can type:
 
@@ -64,20 +63,25 @@ natural speech
 
 The beta bundles a local WhisperKit/Core ML speech model for Apple Silicon.
 Normal dictation does not require OpenAI, Gemini, Anthropic or any hosted ASR
-provider.
+provider. The macOS app is native Swift/SwiftUI/AppKit, so microphone capture,
+Accessibility insertion, hotkeys, Keychain-backed storage and model execution
+stay aligned with Apple platform security.
 
-### Encrypted memory
+### Governed local memory with SAGE
 
-QuietType keeps local memory encrypted at rest using AES-GCM with a
-Keychain-backed key. Memory is used to improve transcription quality: preferred
-spellings, technical vocabulary, correction patterns, app-specific style and
-training hints.
+QuietType uses [SAGE](https://github.com/l33tdawg/sage) as the mandatory
+BFT-governed local memory layer for preferred spellings, technical vocabulary,
+correction patterns and dictation review notes. SAGE gives QuietType an
+auditable memory substrate instead of a loose local notes file: memories are
+governed, inspectable and designed for local-first agent workflows.
 
-When SAGE is installed, QuietType registers as `quiettype-agent` and can use
-SAGE as an optional governed local memory store. SAGE memories remain
-local-first by default.
+Learn more at the [SAGE public page](https://l33tdawg.github.io/sage/).
 
-### Voice training without cloud training
+Private beta builds are designed to bundle SAGE GUI so first-run setup can
+start the local SAGE node without asking users to hunt for a separate download.
+Release builds can pin a known-good SAGE GUI release to avoid version drift.
+
+### Local personalization without cloud training
 
 The setup flow asks users to read short scripts. QuietType uses those local
 samples to improve cadence, vocabulary and spelling hints. Samples stay on the
@@ -92,7 +96,8 @@ user's machine.
 - clipboard fallback
 - microphone and Accessibility setup guidance
 - setup progress and local activity status
-- SAGE memory search/review UI
+- SAGE memory search/review UI for corrections, vocabulary and review notes
+- bundled SAGE GUI for first-run governed memory setup
 - signed and notarized beta DMG
 
 ## Privacy Model
@@ -106,13 +111,13 @@ should not leave the Mac.
 | Voice training samples | Local only |
 | Raw transcript text | Local only |
 | Prompt cleanup | Local only |
-| Vocabulary memory | Encrypted local store |
-| SAGE memory | Optional, local-first |
+| Vocabulary memory | Mandatory local SAGE memory |
+| Correction/review notes | Mandatory local SAGE memory |
 | Cloud fallback | None |
 
-Network participation is not required for normal dictation. If a future SAGE
-network policy is enabled, dictation memories should remain local-only unless
-the user explicitly changes that policy.
+Network participation is not required for normal dictation. QuietType treats
+SAGE as a local governed memory layer; dictation memories should remain
+local-only unless the user explicitly changes a future SAGE network policy.
 
 ## Status
 

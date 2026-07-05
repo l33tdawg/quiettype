@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
   <title id="title">QuietType</title>
-  <desc id="desc">QuietType private local dictation for Mac.</desc>
+  <desc id="desc">QuietType native on-device dictation for Mac.</desc>
   <rect width="1200" height="630" fill="#F7F7F5"/>
   <g transform="translate(164 315) scale(.34)">
     <rect x="-512" y="-512" width="1024" height="1024" rx="224" fill="#F7F7F5"/>
@@ -15,7 +15,7 @@
   </g>
   <text x="340" y="260" fill="#202020" font-family="-apple-system, BlinkMacSystemFont, SF Pro Display, Arial, sans-serif" font-size="92" font-weight="800">QuietType</text>
   <text x="344" y="346" fill="#202020" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="40" font-weight="650">Speak freely. Transcribe locally.</text>
-  <text x="346" y="414" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="30" font-weight="560">Private local dictation for Mac. Nothing leaves your device.</text>
+  <text x="346" y="414" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="30" font-weight="560">Native macOS dictation. No cloud processing.</text>
   <line x1="344" y1="482" x2="986" y2="482" stroke="#DFDFDB" stroke-width="2"/>
-  <text x="344" y="530" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="24" font-weight="650">Local ASR · Local memory · No cloud processing</text>
+  <text x="344" y="530" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="24" font-weight="650">Core ML ASR · SAGE memory · Local-first</text>
 </svg>

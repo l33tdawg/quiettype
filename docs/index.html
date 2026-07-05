@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>QuietType - Private voice input for coding agents</title>
-  <meta name="description" content="QuietType lets you talk to Codex, Claude Code, ChatGPT, Cursor and other coding agents faster without sending your voice, prompts or drafts to the cloud.">
+  <title>QuietType - On-device dictation for coding agents</title>
+  <meta name="description" content="QuietType is native macOS dictation for coding agents and desktop workflows, with local ML transcription, no cloud processing and mandatory SAGE governed local memory.">
   <meta name="author" content="Dhillon 'l33tdawg' Kannabhiran">
   <link rel="canonical" href="https://l33tdawg.github.io/quiettype/">
   <meta property="og:url" content="https://l33tdawg.github.io/quiettype/">
-  <meta property="og:title" content="QuietType - Talk to your coding agents locally.">
-  <meta property="og:description" content="Fast private voice input for Codex, Claude Code, ChatGPT, terminals, editors and docs. Nothing leaves your Mac.">
+  <meta property="og:title" content="QuietType - Native macOS dictation for agents.">
+  <meta property="og:description" content="Fast on-device transcription for Codex, Claude Code, ChatGPT, terminals, editors and docs. No cloud processing. SAGE governed memory.">
   <meta property="og:image" content="https://l33tdawg.github.io/quiettype/og.png">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
@@ -661,6 +661,7 @@
       <nav class="nav-links" aria-label="Primary">
         <a href="#agent-workflows">Use cases</a>
         <a href="#privacy">Privacy</a>
+        <a href="#sage">SAGE</a>
         <a href="#screenshots">Screenshots</a>
         <a class="button" href="https://github.com/l33tdawg/quiettype/releases">Private beta</a>
       </nav>
@@ -671,9 +672,9 @@
     <section class="hero">
       <div class="shell hero-grid">
         <div class="reveal">
-          <div class="eyebrow">Private beta for macOS Apple Silicon</div>
+          <div class="eyebrow">Native private beta for macOS Apple Silicon</div>
           <h1>Talk to your coding agents faster.</h1>
-          <p class="subhead">QuietType turns natural speech into precise instructions for Codex, Claude Code, ChatGPT, Cursor, terminals, editors and docs. Your voice, prompts, samples and memories stay on your Mac.</p>
+          <p class="subhead">QuietType turns natural speech into precise instructions for Codex, Claude Code, ChatGPT, Cursor, terminals, editors and docs using local ML on your Mac. No cloud processing. SAGE-governed memory for corrections, vocabulary and review notes.</p>
           <div class="hero-actions">
             <a class="button primary" href="https://github.com/l33tdawg/quiettype/releases">
               <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
@@ -697,15 +698,15 @@
             <img src="./screenshots/quiettype-onboarding.png" alt="QuietType macOS app showing private setup and dictation controls">
           </div>
           <div class="terminal-strip" aria-label="Example agent instruction">
-            <span id="typedPrompt">Ask Codex to review the auth flow, preserve the Ed25519 terminology, add tests, and explain the tradeoffs.</span><span class="cursor"></span>
+            <span id="typedPrompt">Ask Codex to review the auth flow, preserve the Ed25519 terminology, add tests, and store the correction in SAGE.</span><span class="cursor"></span>
           </div>
         </div>
       </div>
 
       <div class="shell stats reveal" aria-label="QuietType private processing stats">
-        <div class="stat"><strong>0</strong><span>cloud voice calls</span></div>
-        <div class="stat"><strong>local</strong><span>speech engine</span></div>
-        <div class="stat"><strong>SAGE</strong><span>optional governed memory</span></div>
+        <div class="stat"><strong>0</strong><span>cloud processing calls</span></div>
+        <div class="stat"><strong>Core ML</strong><span>on-device transcription</span></div>
+        <div class="stat"><strong>SAGE</strong><span>required governed memory</span></div>
         <div class="stat"><strong>Fn</strong><span>preferred hotkey</span></div>
       </div>
     </section>
@@ -714,7 +715,7 @@
       <div class="shell">
         <div class="section-header reveal">
           <h2>Built for agent workflows, not generic dictation.</h2>
-          <p class="section-lede">The best coding-agent prompts are long, contextual and specific. QuietType makes them fast to produce while keeping sensitive source paths, bug details, customer context and unreleased plans local.</p>
+          <p class="section-lede">The best coding-agent prompts are long, contextual and specific. QuietType makes them fast to produce while keeping sensitive source paths, bug details, customer context, vocabulary and unreleased plans local.</p>
         </div>
 
         <div class="grid">
@@ -741,25 +742,25 @@
       <section class="section">
         <div class="shell">
           <div class="section-header reveal">
-            <h2>Your voice is biometric data.</h2>
-            <p class="section-lede">In an era of voice cloning and fake AI video, a dictation tool should not treat raw voice samples as harmless telemetry. QuietType is designed so your voice, transcripts, prompts and training samples stay on your machine.</p>
+            <h2>Private by architecture.</h2>
+            <p class="section-lede">QuietType is designed so voice, transcripts, prompts, vocabulary, corrections and review notes stay on your machine. The normal dictation path is native macOS capture, on-device transcription, local cleanup, local insertion and SAGE-governed local memory.</p>
           </div>
 
           <div class="proof-grid">
             <div class="proof-main reveal">
               <div class="proof-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6l-7-3Z"/></svg></div>
-              <strong>Cloud quality without cloud custody.</strong>
-              <p class="section-lede">QuietType’s default path is local ASR, local cleanup, local insertion and local memory. Network participation is never required for normal dictation.</p>
+              <strong>Fast dictation without cloud custody.</strong>
+              <p class="section-lede">QuietType uses Apple platform primitives and local ML instead of hosted ASR. Network participation is never required for normal dictation.</p>
             </div>
 
             <div class="proof-list">
               <article class="proof reveal">
                 <div class="proof-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M12 8v8"/><path d="M8 12h8"/><path d="M4 12a8 8 0 1 0 16 0 8 8 0 0 0-16 0Z"/></svg></div>
-                <div><h3>No voice upload</h3><p>Voice samples and training recordings are processed locally. They are not sent to a hosted speech API.</p></div>
+                <div><h3>No audio upload</h3><p>Speech and setup recordings are processed locally. They are not sent to a hosted speech API.</p></div>
               </article>
               <article class="proof reveal">
                 <div class="proof-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M6 10V8a6 6 0 1 1 12 0v2"/><rect x="4" y="10" width="16" height="10" rx="2"/></svg></div>
-                <div><h3>Encrypted local memory</h3><p>QuietType’s local memory store is encrypted with AES-GCM and a Keychain-backed key. SAGE memory is optional and local-first.</p></div>
+                <div><h3>SAGE governed memory</h3><p>Corrections, vocabulary and review notes are stored through mandatory local SAGE memory, governed by BFT consensus and kept local-first.</p></div>
               </article>
               <article class="proof reveal">
                 <div class="proof-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg></div>
@@ -775,16 +776,42 @@
       </section>
     </div>
 
+    <section id="sage" class="section">
+      <div class="shell">
+        <div class="section-header reveal">
+          <h2>SAGE is the memory layer.</h2>
+          <p class="section-lede">QuietType uses SAGE as mandatory BFT-governed local memory for the material that makes dictation better over time: preferred spellings, project vocabulary, correction patterns and review notes from real desktop work.</p>
+        </div>
+        <div class="grid">
+          <article class="tile reveal">
+            <div class="icon-wrap"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></svg></div>
+            <h3>Governed corrections</h3>
+            <p>Every durable spelling, vocabulary and review note belongs in a governed memory path rather than an opaque local scratchpad.</p>
+          </article>
+          <article class="tile reveal">
+            <div class="icon-wrap"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M7 7v10a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7"/><path d="M9 11h6"/><path d="M9 15h3"/></svg></div>
+            <h3>Agent-ready memory</h3>
+            <p>SAGE gives QuietType a local memory substrate built for coding agents, terminology-heavy work and auditable correction history. Beta builds are designed to bring the SAGE GUI with the app for a guided first-run setup.</p>
+          </article>
+          <article class="tile reveal">
+            <div class="icon-wrap"><svg class="icon" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg></div>
+            <h3>Open SAGE</h3>
+            <p><a href="https://l33tdawg.github.io/sage/">Read the SAGE overview</a> or inspect the <a href="https://github.com/l33tdawg/sage">SAGE GitHub repository</a>.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
     <section class="section">
       <div class="shell">
         <div class="section-header reveal">
           <h2>The local speech compiler.</h2>
-          <p class="section-lede">QuietType is not a wrapper around transcription. It streams audio, stabilizes partial text, applies correction memory, formats the result and inserts it into the active app.</p>
+          <p class="section-lede">QuietType is not a wrapper around transcription. It streams audio, stabilizes partial text, applies SAGE correction memory, formats the result and inserts it into the active app.</p>
         </div>
         <div class="flow">
           <div class="flow-step reveal"><small>01</small><strong>Speak</strong><span>Press Fn or your configured shortcut and speak naturally.</span></div>
-          <div class="flow-step reveal"><small>02</small><strong>Stream</strong><span>Local ASR starts processing audio chunks while you are still talking.</span></div>
-          <div class="flow-step reveal"><small>03</small><strong>Correct</strong><span>Vocabulary, cadence and SAGE/local memories bias spellings and terms.</span></div>
+          <div class="flow-step reveal"><small>02</small><strong>Stream</strong><span>On-device ASR starts processing audio chunks while you are still talking.</span></div>
+          <div class="flow-step reveal"><small>03</small><strong>Correct</strong><span>SAGE memories bias vocabulary, correction patterns, spellings and terms.</span></div>
           <div class="flow-step reveal"><small>04</small><strong>Polish</strong><span>Fillers, false starts, lists, numbers and corrections are cleaned locally.</span></div>
           <div class="flow-step reveal"><small>05</small><strong>Insert</strong><span>The final text lands in the active app without a cloud round trip.</span></div>
         </div>
@@ -795,7 +822,7 @@
       <div class="shell">
         <div class="section-header reveal">
           <h2>Quiet, readable, Mac-native.</h2>
-          <p class="section-lede">The app keeps the operational details visible without making the user manage backend machinery. Setup, memory and privacy controls stay close to the dictation workflow.</p>
+          <p class="section-lede">The app keeps the operational details visible without making the user manage backend machinery. Setup, SAGE memory review and privacy controls stay close to the dictation workflow.</p>
         </div>
         <div class="screens">
           <figure class="screenshot-card reveal">
@@ -821,9 +848,9 @@
           <ul>
             <li>Signed and notarized macOS DMG</li>
             <li>Bundled local WhisperKit/Core ML model</li>
-            <li>SAGE governed memory integration</li>
+            <li>Mandatory SAGE governed local memory</li>
             <li>Fn-first shortcut and active-app insertion</li>
-            <li>No cloud voice processing</li>
+            <li>No cloud dictation processing</li>
           </ul>
         </div>
       </div>
@@ -832,7 +859,7 @@
 
   <footer>
     <div class="shell">
-      QuietType is private local voice input for macOS Apple Silicon by Dhillon "l33tdawg" Kannabhiran.
+      QuietType is native on-device dictation for macOS Apple Silicon by Dhillon "l33tdawg" Kannabhiran.
       Contact <a href="mailto:dhillon@levelupctf.com">dhillon@levelupctf.com</a>.
     </div>
   </footer>
