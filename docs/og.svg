@@ -25,10 +25,10 @@
       <rect x="605" y="363" width="31" height="37" rx="15.5"/>
     </g>
   </g>
-  <text x="340" y="238" fill="#202020" font-family="-apple-system, BlinkMacSystemFont, SF Pro Display, Arial, sans-serif" font-size="92" font-weight="800">QuietType</text>
-  <text x="344" y="324" fill="#202020" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="40" font-weight="650">Talk to your coding agents faster.</text>
-  <text x="346" y="392" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="30" font-weight="560">On-device dictation for Codex, Claude Code,</text>
-  <text x="346" y="434" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="30" font-weight="560">ChatGPT, Cursor and terminal workflows.</text>
-  <line x1="344" y1="482" x2="986" y2="482" stroke="#DFDFDB" stroke-width="2"/>
-  <text x="344" y="530" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="24" font-weight="650">No cloud transcription · SAGE memory · Apple Silicon</text>
+  <text x="376" y="238" fill="#202020" font-family="-apple-system, BlinkMacSystemFont, SF Pro Display, Arial, sans-serif" font-size="92" font-weight="800">QuietType</text>
+  <text x="380" y="324" fill="#202020" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="40" font-weight="650">Talk to your coding agents faster.</text>
+  <text x="382" y="392" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="30" font-weight="560">On-device dictation for Codex, Claude Code,</text>
+  <text x="382" y="434" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="30" font-weight="560">ChatGPT, Cursor and terminal workflows.</text>
+  <line x1="380" y1="482" x2="1022" y2="482" stroke="#DFDFDB" stroke-width="2"/>
+  <text x="380" y="530" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="24" font-weight="650">No cloud transcription · SAGE memory · Apple Silicon</text>
 </svg>
