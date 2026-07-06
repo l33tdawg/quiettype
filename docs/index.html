@@ -505,22 +505,17 @@
 
     .screens {
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 18px;
       align-items: start;
     }
 
     .screenshot-card {
-      grid-column: span 2;
       padding: 12px;
       border: 1px solid var(--line);
       border-radius: 10px;
       background: var(--panel);
       box-shadow: 0 18px 52px rgba(0, 0, 0, 0.08);
-    }
-
-    .screenshot-card.wide {
-      grid-column: span 3;
     }
 
     .screenshot-card img {
@@ -633,11 +628,6 @@
       .screens,
       .release {
         grid-template-columns: 1fr;
-      }
-
-      .screenshot-card,
-      .screenshot-card.wide {
-        grid-column: auto;
       }
 
       .grid,
@@ -858,11 +848,11 @@
           <p class="section-lede">The app keeps the operational details visible without making the user manage backend machinery. Setup, SAGE memory review and privacy controls stay close to the dictation workflow.</p>
         </div>
         <div class="screens">
-          <figure class="screenshot-card wide reveal">
+          <figure class="screenshot-card reveal">
             <img src="./screenshots/quiettype-home.png" alt="QuietType Home screen with dictation controls and review signals">
             <figcaption class="caption">Home dashboard in light mode.</figcaption>
           </figure>
-          <figure class="screenshot-card wide reveal">
+          <figure class="screenshot-card reveal">
             <img src="./screenshots/quiettype-home-dark.png" alt="QuietType Home screen in dark mode with high-contrast status cards">
             <figcaption class="caption">Home dashboard in dark mode.</figcaption>
           </figure>
@@ -873,10 +863,6 @@
           <figure class="screenshot-card reveal">
             <img src="./screenshots/quiettype-settings.png" alt="QuietType Settings screen showing dictation controls, readiness, SAGE memory and version">
             <figcaption class="caption">Settings, readiness and updates.</figcaption>
-          </figure>
-          <figure class="screenshot-card reveal">
-            <img src="./screenshots/quiettype-about.png" alt="QuietType About screen with sharing links">
-            <figcaption class="caption">About and sharing.</figcaption>
           </figure>
         </div>
       </div>

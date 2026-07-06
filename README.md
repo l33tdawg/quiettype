@@ -12,6 +12,12 @@ dictation.
 
 ![QuietType home dashboard](docs/screenshots/quiettype-home.png)
 
+<p align="center">
+  <a href="https://github.com/l33tdawg/QuietType/releases/download/v1.0.0-beta.1/QuietType-1.0.0-beta.1-macOS-arm64.dmg">
+    <img alt="Download QuietType 1.0.0 beta 1 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.0%20beta%201-black?style=for-the-badge&logo=apple">
+  </a>
+</p>
+
 ## Why
 
 Coding agents work best when you give them rich context: what to inspect, what
@@ -90,8 +96,6 @@ user's machine.
 ![QuietType transcript review](docs/screenshots/quiettype-review.png)
 
 ![QuietType settings](docs/screenshots/quiettype-settings.png)
-
-![QuietType about and sharing](docs/screenshots/quiettype-about.png)
 
 ![QuietType dark mode dashboard](docs/screenshots/quiettype-home-dark.png)
 
