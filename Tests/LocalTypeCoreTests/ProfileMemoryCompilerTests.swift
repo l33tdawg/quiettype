@@ -48,4 +48,29 @@ final class ProfileMemoryCompilerTests: XCTestCase {
         XCTAssertTrue(profile.confusions.contains { $0.corrected == "CometBFT" })
         XCTAssertFalse(profile.confusions.contains { $0.heard == "ultimate go" && $0.corrected == "Utimaco" })
     }
+
+    func testCorrectionMemoryAddsRecordedSpokenForms() {
+        let memories = [
+            DictationMemory(
+                type: .correction,
+                payload: [
+                    "raw": "steven",
+                    "corrected": "Stephen",
+                    "spoken_forms": "steven, stephen, seven"
+                ],
+                contexts: ["pronunciation_training"],
+                source: "user_teaching",
+                confidence: 0.95
+            )
+        ]
+
+        let profile = ProfileMemoryCompiler.enrich(
+            DictationProfile(speechRateWPM: 148, vocabulary: [], confusions: []),
+            with: memories
+        )
+
+        XCTAssertTrue(profile.confusions.contains { $0.heard == "steven" && $0.corrected == "Stephen" })
+        XCTAssertTrue(profile.confusions.contains { $0.heard == "stephen" && $0.corrected == "Stephen" })
+        XCTAssertTrue(profile.confusions.contains { $0.heard == "seven" && $0.corrected == "Stephen" })
+    }
 }

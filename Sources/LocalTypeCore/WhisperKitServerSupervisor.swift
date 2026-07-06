@@ -54,7 +54,7 @@ public final class WhisperKitServerSupervisor: @unchecked Sendable {
         URL(string: "http://\(host):\(port)")!
     }
 
-    public func ensureRunning() async throws {
+    public func ensureRunning(stopOnTimeout: Bool = true) async throws {
         if await isServerHealthy() {
             return
         }
@@ -68,7 +68,9 @@ public final class WhisperKitServerSupervisor: @unchecked Sendable {
             try await Task.sleep(nanoseconds: 500_000_000)
         }
 
-        stop()
+        if stopOnTimeout {
+            stop()
+        }
         throw WhisperKitServerSupervisorError.startupTimedOut(logTail())
     }
 

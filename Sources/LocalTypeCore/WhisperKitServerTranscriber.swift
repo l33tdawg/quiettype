@@ -38,7 +38,7 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
             throw AudioTranscriberError.badResponse(http.statusCode)
         }
 
-        let transcript = try parseTranscript(from: data)
+        let transcript = try Self.parseTranscript(from: data)
         guard !transcript.isEmpty else {
             throw AudioTranscriberError.emptyTranscript
         }
@@ -63,16 +63,45 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
         return data
     }
 
-    private func parseTranscript(from data: Data) throws -> String {
-        if let decoded = try? JSONDecoder().decode(TranscriptionResponse.self, from: data) {
-            return decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func parseTranscript(from data: Data) throws -> String {
+        if let object = try? JSONSerialization.jsonObject(with: data) {
+            if let object = object as? [String: Any] {
+                return WhisperCommandASRBackend.sanitizeTranscript(Self.extractText(from: object))
+            }
+            if let text = object as? String {
+                return WhisperCommandASRBackend.sanitizeTranscript(text)
+            }
+            return ""
         }
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return WhisperCommandASRBackend.sanitizeTranscript(String(data: data, encoding: .utf8) ?? "")
     }
-}
 
-private struct TranscriptionResponse: Decodable {
-    var text: String
+    private static func extractText(from object: [String: Any]) -> String {
+        if let text = object["text"] as? String,
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return text
+        }
+        if let transcript = object["transcript"] as? String,
+           !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return transcript
+        }
+        if let result = object["result"] as? [String: Any] {
+            let text = extractText(from: result)
+            if !text.isEmpty {
+                return text
+            }
+        }
+        if let segments = object["segments"] as? [[String: Any]] {
+            return segments
+                .compactMap { segment in
+                    (segment["text"] as? String)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+        }
+        return ""
+    }
 }
 
 private extension Data {

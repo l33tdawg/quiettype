@@ -117,15 +117,15 @@ public struct WhisperCommandASRBackend: Sendable {
     public static func parseTranscript(stdout: String, stderr: String = "") -> String {
         let timestampedStdout = timestampedTranscript(from: stdout)
         if !timestampedStdout.isEmpty {
-            return removeNoiseMarkers(from: timestampedStdout)
+            return sanitizeTranscript(timestampedStdout)
         }
 
         let plainStdout = plainTranscript(from: stdout)
         if !plainStdout.isEmpty {
-            return removeNoiseMarkers(from: plainStdout)
+            return sanitizeTranscript(plainStdout)
         }
 
-        return removeNoiseMarkers(from: timestampedTranscript(from: stderr))
+        return sanitizeTranscript(timestampedTranscript(from: stderr))
     }
 
     private func validateInputs(wavFile: URL) throws {
@@ -280,25 +280,13 @@ public struct WhisperCommandASRBackend: Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func removeNoiseMarkers(from text: String) -> String {
-        let markers = [
-            "[MUSIC]",
-            "[Music]",
-            "[music]",
-            "(music)",
-            "[NOISE]",
-            "[Noise]",
-            "[noise]",
-            "(noise)",
-            "[APPLAUSE]",
-            "[Applause]",
-            "[applause]",
-            "(applause)",
-            "♪"
-        ]
-        let cleaned = markers.reduce(text) { partial, marker in
-            partial.replacingOccurrences(of: marker, with: " ")
-        }
+    public static func sanitizeTranscript(_ text: String) -> String {
+        let singingPattern = #"(?i)(\[\s*singing\s*\]|\(\s*singing\s*\)|\*\s*singing\s*\*)"#
+        let noisePattern = #"(?i)(\[\s*(music|noise|applause|laughter|silence|inaudible)\s*\]|\(\s*(music|noise|applause|laughter|silence|inaudible)\s*\)|\*\s*(music|noise|applause|laughter|silence|inaudible)\s*\*)"#
+        let cleaned = text
+            .replacingOccurrences(of: singingPattern, with: " [singing] ", options: .regularExpression)
+            .replacingOccurrences(of: noisePattern, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "♪", with: " ")
         return normalize(cleaned)
     }
 }

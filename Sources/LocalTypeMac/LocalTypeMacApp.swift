@@ -13,7 +13,7 @@ struct LocalTypeMacApp: App {
         WindowGroup("QuietType") {
             TesterView(model: model)
         }
-        .defaultSize(width: 1360, height: 860)
+        .defaultSize(width: 1360, height: 900)
         .windowResizability(.contentSize)
         .commands {
             CommandGroup(replacing: .appTermination) {
@@ -34,8 +34,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @MainActor
+private final class DictationOverlayPanel: NSPanel {
+    var cancelAction: (() -> Void)?
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .leftMouseUp,
+           cancelAction != nil,
+           cancelHitRect.contains(event.locationInWindow) {
+            if event.type == .leftMouseUp {
+                cancelAction?()
+            }
+            return
+        }
+        super.sendEvent(event)
+    }
+
+    private var cancelHitRect: NSRect {
+        let size = frame.size
+        return NSRect(x: size.width - 66, y: size.height - 66, width: 52, height: 52)
+    }
+}
+
+@MainActor
 final class DictationOverlayController {
-    private var panel: NSPanel?
+    private var panel: DictationOverlayPanel?
+    private var presentationID = 0
 
     func show(
         state: OverlayState,
@@ -44,9 +70,12 @@ final class DictationOverlayController {
         transcript: String? = nil,
         onCancel: (() -> Void)? = nil
     ) {
+        presentationID += 1
         let panel = panel ?? makePanel()
+        panel.alphaValue = 1
         let hasTranscript = !(transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasAction = onCancel != nil
+        panel.cancelAction = onCancel
         panel.ignoresMouseEvents = !(hasTranscript || hasAction)
         let compactWidth: CGFloat = hasAction ? 328 : 280
         panel.setContentSize(hasTranscript ? NSSize(width: 390, height: 154) : NSSize(width: compactWidth, height: 82))
@@ -67,17 +96,37 @@ final class DictationOverlayController {
             return
         }
 
+        presentationID += 1
+        panel.cancelAction = nil
+        let hideID = presentationID
         if delay <= 0 {
+            panel.alphaValue = 1
             panel.orderOut(nil)
         } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak panel] in
-                panel?.orderOut(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak panel] in
+                guard let self, self.presentationID == hideID, let panel else {
+                    return
+                }
+
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.22
+                    context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    panel.animator().alphaValue = 0
+                } completionHandler: { [weak self, weak panel] in
+                    Task { @MainActor in
+                        guard let self, self.presentationID == hideID, let panel else {
+                            return
+                        }
+                        panel.orderOut(nil)
+                        panel.alphaValue = 1
+                    }
+                }
             }
         }
     }
 
-    private func makePanel() -> NSPanel {
-        let panel = NSPanel(
+    private func makePanel() -> DictationOverlayPanel {
+        let panel = DictationOverlayPanel(
             contentRect: NSRect(x: 0, y: 0, width: 280, height: 82),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -88,6 +137,7 @@ final class DictationOverlayController {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
+        panel.becomesKeyOnlyIfNeeded = true
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         return panel
@@ -145,6 +195,7 @@ private struct DictationOverlayView: View {
     var detail: String?
     var transcript: String?
     var onCancel: (() -> Void)?
+    @State private var copiedTranscript = false
 
     private var cleanedTranscript: String {
         (transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -176,11 +227,12 @@ private struct DictationOverlayView: View {
                     Spacer(minLength: 0)
                     Button(action: onCancel) {
                         Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(.primary)
-                            .frame(width: 28, height: 28)
-                            .background(Color.primary.opacity(0.08))
+                            .frame(width: 32, height: 32)
+                            .background(.thinMaterial)
                             .clipShape(Circle())
+                            .overlay(Circle().stroke(Color.white.opacity(0.22), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                     .help("Cancel dictation")
@@ -195,9 +247,11 @@ private struct DictationOverlayView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button {
-                    copyOverlayTranscript(cleanedTranscript)
+                    if copyOverlayTranscript(cleanedTranscript) {
+                        copiedTranscript = true
+                    }
                 } label: {
-                    Label("Copy transcript", systemImage: "doc.on.doc")
+                    Label(copiedTranscript ? "Copied" : "Copy transcript", systemImage: copiedTranscript ? "checkmark" : "doc.on.doc")
                         .font(.system(size: 13, weight: .semibold))
                         .frame(maxWidth: .infinity)
                 }
@@ -209,18 +263,24 @@ private struct DictationOverlayView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .background {
+            RoundedRectangle(cornerRadius: 18)
+                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.18))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.white.opacity(0.22), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.white.opacity(0.30), lineWidth: 1)
         )
+        .shadow(color: Color.black.opacity(0.16), radius: 20, y: 10)
     }
 
-    private func copyOverlayTranscript(_ text: String) {
+    private func copyOverlayTranscript(_ text: String) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        return pasteboard.setString(text, forType: .string)
     }
 }
 
@@ -228,29 +288,38 @@ private struct OverlayWaveform: View {
     var level: Double
     var isActive: Bool
 
-    private let bars = 12
+    private let bars = 18
 
     var body: some View {
         HStack(alignment: .center, spacing: 3) {
             ForEach(0..<bars, id: \.self) { index in
                 Capsule()
-                    .fill(Color.primary.opacity(isActive ? 0.70 : 0.22))
-                    .frame(width: 6, height: barHeight(index))
+                    .fill(Color.primary.opacity(opacity(for: index)))
+                    .frame(width: 4, height: barHeight(index))
                     .animation(.easeOut(duration: 0.10), value: level)
             }
         }
-        .opacity(isActive ? 1 : 0.35)
+        .opacity(isActive ? 1 : 0.28)
     }
 
     private func barHeight(_ index: Int) -> CGFloat {
         let phase = abs(Double(index) - Double(bars - 1) / 2.0)
         let shape = 1.0 - min(phase / Double(bars), 0.65)
-        let base = isActive ? max(0.10, level) : 0.10
+        let base = isActive ? min(max(level, 0), 1) : 0
         return CGFloat(4 + (base * shape * 18))
+    }
+
+    private func opacity(for index: Int) -> Double {
+        guard isActive else {
+            return 0.20
+        }
+        let threshold = Int((min(max(level, 0), 1) * Double(bars)).rounded(.up))
+        return index < threshold ? 0.78 : 0.16
     }
 }
 
 struct TesterView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var model: MenuBarModel
     @AppStorage("quiettype.hasSeenGuide") private var hasSeenGuide = false
     @AppStorage("quiettype.firstRunAssistantComplete") private var firstRunAssistantComplete = false
@@ -261,8 +330,9 @@ struct TesterView: View {
     @State private var selectedSetupTab: QuietTypeSetupTab = .overview
     @State private var showingTeachSheet = false
     @State private var showingRecognizedTerms = false
-    @State private var editingTranscriptNote: DictionaryMemoryItem?
     @State private var guideStep: QuietTypeGuideStep?
+    @State private var launchHeroMessage = QuietTypeHeroMessage.random()
+    @State private var showLaunchHero = true
     private let permissionTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -291,13 +361,10 @@ struct TesterView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .preferredColorScheme(appearanceChoice.colorScheme)
         .environment(\.quietTypeTypeDelta, textSizeChoice.pointDelta)
-        .frame(width: 1360, height: 860)
+        .frame(width: 1360, height: 900)
         .animation(.easeInOut(duration: 0.22), value: selectedSection)
         .animation(.easeInOut(duration: 0.18), value: guideStep)
         .animation(.easeInOut(duration: 0.22), value: model.setupComplete)
-        .sheet(item: $editingTranscriptNote) { memory in
-            TranscriptNoteEditor(memory: memory, model: model)
-        }
         .sheet(isPresented: $showingTeachSheet) {
             TeachQuietTypeSheet(model: model)
         }
@@ -309,6 +376,7 @@ struct TesterView: View {
             if model.setupComplete && firstRunAssistantComplete && !hasSeenGuide {
                 guideStep = .welcome
             }
+            scheduleLaunchHeroDismissal()
         }
         .onChange(of: model.setupComplete) { isComplete in
             if isComplete {
@@ -333,6 +401,17 @@ struct TesterView: View {
             sidebar
             Divider()
             mainContent
+        }
+    }
+
+    private func scheduleLaunchHeroDismissal() {
+        guard showLaunchHero else {
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+            withAnimation(.easeInOut(duration: 0.65)) {
+                showLaunchHero = false
+            }
         }
     }
 
@@ -365,11 +444,14 @@ struct TesterView: View {
         )
     }
 
+    private var isDarkAppearance: Bool {
+        colorScheme == .dark
+    }
+
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack(spacing: 10) {
-                Image(systemName: "moonphase.waxing.crescent")
-                    .font(.title2)
+                appBrandIcon
                 VStack(alignment: .leading, spacing: 1) {
                     Text("QuietType")
                         .font(.system(size: 24, weight: .semibold, design: .rounded))
@@ -381,7 +463,7 @@ struct TesterView: View {
             .padding(.top, 26)
 
             VStack(spacing: 8) {
-                ForEach(QuietTypeSection.primary) { section in
+                ForEach(sidebarPrimarySections) { section in
                     Button {
                         selectedSection = section
                     } label: {
@@ -393,17 +475,7 @@ struct TesterView: View {
 
             Spacer()
 
-            VStack(alignment: .leading, spacing: 12) {
-                Label("SAGE memory", systemImage: "lock.fill")
-                    .font(.callout.weight(.semibold))
-                Text("Dictation lessons use local SAGE BFT-governed memory.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(16)
-            .background(Color(nsColor: .windowBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            sidebarDisplayControls
 
             Button {
                 selectedSection = .settings
@@ -423,6 +495,76 @@ struct TesterView: View {
         .padding(.horizontal, 18)
         .frame(width: 238)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.72))
+    }
+
+    @ViewBuilder
+    private var appBrandIcon: some View {
+        if let url = Bundle.main.url(forResource: "QuietTypeIcon", withExtension: "icns"),
+           let image = NSImage(contentsOf: url) {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 36, height: 36)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            Image(systemName: "waveform.circle.fill")
+                .font(.system(size: 30, weight: .semibold))
+        }
+    }
+
+    private var sidebarDisplayControls: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Display")
+                .font(.system(size: 10 + textSizeChoice.pointDelta, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 2) {
+                    ForEach(QuietTypeAppearanceChoice.allCases) { choice in
+                        SidebarIconToggle(
+                            label: choice.label,
+                            selected: appearanceChoice == choice
+                        ) {
+                            Image(systemName: choice.sidebarSymbol)
+                                .font(.system(size: 13, weight: .semibold))
+                        } action: {
+                            appearanceChoiceRaw = choice.rawValue
+                        }
+                    }
+                }
+                .padding(2)
+                .frame(maxWidth: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor).opacity(0.48))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.primary.opacity(0.05), lineWidth: 1))
+
+                HStack(spacing: 2) {
+                    ForEach(QuietTypeTextSizeChoice.allCases) { choice in
+                        SidebarIconToggle(
+                            label: choice.label,
+                            selected: textSizeChoice == choice
+                        ) {
+                            Text("A")
+                                .font(.system(size: choice.sidebarGlyphSize, weight: .semibold, design: .rounded))
+                        } action: {
+                            textSizeChoiceRaw = choice.rawValue
+                        }
+                    }
+                }
+                .padding(2)
+                .frame(maxWidth: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor).opacity(0.48))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.primary.opacity(0.05), lineWidth: 1))
+            }
+        }
+        .padding(.bottom, 4)
+    }
+
+    private var sidebarPrimarySections: [QuietTypeSection] {
+        QuietTypeSection.primary
     }
 
     @ViewBuilder
@@ -758,6 +900,8 @@ struct TesterView: View {
         nativePage {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                    .opacity(showLaunchHero ? 1 : 0)
+                    .accessibilityHidden(!showLaunchHero)
                 if !model.setupComplete {
                     setupNudgePanel
                 }
@@ -974,7 +1118,7 @@ struct TesterView: View {
             VStack(alignment: .leading, spacing: 20) {
                 pageHeader(
                     title: "Review",
-                    subtitle: "Transcript notes, corrections, vocabulary, and SAGE governed memory."
+                    subtitle: "Review transcripts and teach QuietType corrections."
                 )
 
                 dictionaryStats
@@ -1122,9 +1266,9 @@ struct TesterView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Memory library")
+                    Text("Transcript review")
                         .font(.title3.weight(.semibold))
-                    Text(model.sageAgentID.isEmpty ? model.sageAgentStatus : "quiettype-agent · \(model.sageAgentID.prefix(12))")
+                    Text("Edit transcripts when QuietType hears something wrong.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -1134,9 +1278,10 @@ struct TesterView: View {
                         .controlSize(.small)
                 }
                 Button {
+                    model.setTeachingKind(.correction)
                     showingTeachSheet = true
                 } label: {
-                    Label("Add lesson", systemImage: "square.and.pencil")
+                    Label("Add correction", systemImage: "square.and.pencil")
                 }
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
                 Button("Refresh") {
@@ -1164,30 +1309,25 @@ struct TesterView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 1))
 
-            HStack(spacing: 8) {
-                ForEach(MenuBarModel.MemoryFilter.visibleCases) { filter in
-                    Button(filter.label) {
-                        model.memoryFilter = filter
-                    }
-                    .buttonStyle(QuietButtonStyle(prominence: model.memoryFilter == filter ? .primary : .secondary))
-                }
-                Spacer()
-            }
-
             if model.filteredDictionaryMemories.isEmpty {
                 EmptyStatePanel(
                     icon: "text.bubble",
-                    title: model.sageReady ? "No lessons yet" : "SAGE setup required",
-                    subtitle: model.sageReady ? "Add a spelling, correction, or voice training set, then filter and review it here." : "QuietType needs SAGE BFT-governed memory before lessons, transcript notes, or dictation can run."
+                    title: model.sageReady ? "No transcripts yet" : "SAGE setup required",
+                    subtitle: model.sageReady ? "QuietType will show transcript reviews and corrections here after dictation." : "QuietType needs SAGE BFT-governed memory before transcript review can run."
                 )
             } else {
-                VStack(spacing: 10) {
+                VStack(spacing: 0) {
                     ForEach(model.filteredDictionaryMemories) { memory in
-                        DictionaryMemoryRow(memory: memory) {
-                            editingTranscriptNote = memory
-                        }
+                        DictionaryMemoryRow(memory: memory, saveAction: { rawTranscript, polishedText in
+                            await model.updateTranscriptNote(memoryID: memory.id, rawTranscript: rawTranscript, polishedText: polishedText)
+                        }, deleteAction: {
+                            await model.deleteReviewMemory(memoryID: memory.id)
+                        })
                     }
                 }
+                .background(Color(nsColor: .windowBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
             }
         }
         .padding(16)
@@ -1200,7 +1340,7 @@ struct TesterView: View {
             VStack(alignment: .leading, spacing: 20) {
                 pageHeader(
                     title: "Settings",
-                    subtitle: "Controls for appearance, dictation, updates, and sharing."
+                    subtitle: "Controls for dictation, SAGE memory, updates, and sharing."
                 )
                 settingsPanel
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1217,8 +1357,10 @@ struct TesterView: View {
                     subtitle: "Setup, SAGE memory, privacy, and quick fixes."
                 )
 
+                helpFAQPanel
+
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 2), spacing: 14) {
                         HelpActionCard(
                             icon: "brain.head.profile",
                             title: "SAGE setup",
@@ -1237,9 +1379,7 @@ struct TesterView: View {
                         ) {
                             selectedSection = .setup
                         }
-                    }
 
-                    HStack {
                         HelpActionCard(
                             icon: "questionmark.circle",
                             title: "Guided tour",
@@ -1263,9 +1403,7 @@ struct TesterView: View {
                                 await model.refreshPermissions(verifyMicrophoneAccess: true)
                             }
                         }
-                    }
 
-                    HStack {
                         HelpInfoCard(
                             icon: "lock.shield",
                             title: "How SAGE helps",
@@ -1282,8 +1420,6 @@ struct TesterView: View {
                         }
                     }
                 }
-
-                helpFAQPanel
             }
             .padding(34)
             .anchorPreference(key: GuideSpotlightPreferenceKey.self, value: .bounds) { anchor in
@@ -1305,37 +1441,47 @@ struct TesterView: View {
 
     private var helpFAQPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Troubleshooting")
-                .font(.title3.weight(.semibold))
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "wrench.and.screwdriver")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                Text("Troubleshooting")
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                Spacer()
+            }
 
-            HelpFAQRow(
-                question: "Does anything leave my Mac?",
-                answer: "No dictation content is sent to cloud services. Dictation, cleanup, training samples, and SAGE memory stay local. Manual update checks contact GitHub only when you choose Check for updates or Install SAGE."
-            )
-            HelpFAQRow(
-                question: "Why does QuietType require SAGE?",
-                answer: "SAGE is QuietType's governed memory layer. It keeps corrections, vocabulary, training hints, and transcript notes auditable and portable with your SAGE identity. QuietType will not run with a separate local memory fallback."
-            )
-            HelpFAQRow(
-                question: "QuietType says Microphone is needed, but macOS shows it is allowed.",
-                answer: "Quit every copy of QuietType, open the app from /Applications, then click Recheck. If it still looks stale, remove the old QuietType entry in System Settings > Privacy & Security > Microphone, launch the current app, and allow it again."
-            )
-            HelpFAQRow(
-                question: "Nothing is inserted after dictation.",
-                answer: "Open Setup and make sure Accessibility is allowed. QuietType needs Accessibility to paste polished text into the active app."
-            )
-            HelpFAQRow(
-                question: "The transcript misses names or technical terms.",
-                answer: "Open Setup and complete voice training, then open Review to teach exact spellings such as project names, acronyms, and product terms."
-            )
-            HelpFAQRow(
-                question: "What happens while SAGE is downloading?",
-                answer: "QuietType downloads the SAGE installer from the SAGE GitHub release, opens it, and waits for you to install SAGE, launch it, and complete SAGE setup. After that, click Recheck so quiettype-agent can register."
-            )
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
+                HelpFAQRow(
+                    question: "Does anything leave my Mac?",
+                    answer: "No dictation content is sent to cloud services. Dictation, cleanup, training samples, and SAGE memory stay local. Manual update checks contact GitHub only when you choose Check for updates or Install SAGE."
+                )
+                HelpFAQRow(
+                    question: "Why does QuietType require SAGE?",
+                    answer: "SAGE keeps corrections, vocabulary, training hints, and transcript notes auditable and portable with your SAGE identity."
+                )
+                HelpFAQRow(
+                    question: "Microphone is allowed, but QuietType still asks.",
+                    answer: "Quit every copy of QuietType, open the app from /Applications, then click Recheck. If it still looks stale, remove the old QuietType entry in macOS Privacy settings and allow it again."
+                )
+                HelpFAQRow(
+                    question: "Nothing is inserted after dictation.",
+                    answer: "Open Setup and make sure Accessibility is allowed. QuietType needs Accessibility to paste polished text into the active app."
+                )
+                HelpFAQRow(
+                    question: "Names or technical terms are wrong.",
+                    answer: "Open Setup for voice training, then teach exact spellings in Review for project names, acronyms, and product terms."
+                )
+                HelpFAQRow(
+                    question: "What happens while SAGE downloads?",
+                    answer: "QuietType opens the SAGE installer and waits for you to install SAGE, launch it, and complete setup. After that, click Recheck."
+                )
+            }
         }
         .padding(18)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
     }
 
     private func pageHeader(title: String, subtitle: String) -> some View {
@@ -1403,9 +1549,9 @@ struct TesterView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Speak freely. Transcribe locally.")
+                Text(launchHeroMessage.title)
                     .font(.system(size: 40, weight: .bold))
-                Text("Nothing leaves your Mac.")
+                Text(launchHeroMessage.subtitle)
                     .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(.secondary)
             }
@@ -1497,15 +1643,34 @@ struct TesterView: View {
                 permissionWarningBanner
             }
 
-            QuietSegmentedControl(
-                title: "Section",
-                selection: $selectedSettingsTab,
-                options: QuietTypeSettingsTab.allCases
-            ) { tab in
-                tab.label
-            }
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    QuietSegmentedControl(
+                        title: "",
+                        selection: $selectedSettingsTab,
+                        options: QuietTypeSettingsTab.allCases
+                    ) { tab in
+                        tab.label
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .background(Color(nsColor: .windowBackgroundColor).opacity(0.58))
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.08))
+                        .frame(height: 1)
+                }
 
-            settingsTabContent
+                settingsTabContent
+                    .padding(18)
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+            .shadow(color: .black.opacity(0.03), radius: 12, y: 5)
         }
     }
 
@@ -1520,31 +1685,24 @@ struct TesterView: View {
     }
 
     private var generalSettingsLayout: some View {
-        HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 16) {
-                appearancePanel
-                dictationControlsPanel
-            }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+        VStack(alignment: .leading, spacing: 18) {
+            dictationControlsPanel
 
-            VStack(alignment: .leading, spacing: 16) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 3), spacing: 16) {
                 setupStatusPanel
                 memoryBackendPanel
                 quickUpdatePanel
             }
-            .frame(width: 360, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var aboutSettingsLayout: some View {
-        HStack(alignment: .top, spacing: 18) {
+        HStack(alignment: .top) {
+            Spacer(minLength: 0)
             aboutPanel
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            VStack(alignment: .leading, spacing: 16) {
-                sharePanel
-            }
-            .frame(width: 420, alignment: .topLeading)
+                .frame(maxWidth: 840, alignment: .top)
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -1552,19 +1710,23 @@ struct TesterView: View {
     private var dictationControlsPanel: some View {
         settingsSection(title: "Dictation controls") {
             VStack(alignment: .leading, spacing: 14) {
-                Toggle("Insert polished text automatically", isOn: Binding(
-                    get: { !model.previewOnly },
-                    set: { model.previewOnly = !$0 }
-                ))
-                .toggleStyle(.checkbox)
-                .tint(.primary)
+                HStack(spacing: 18) {
+                    Toggle("Insert polished text automatically", isOn: Binding(
+                        get: { !model.previewOnly },
+                        set: { model.previewOnly = !$0 }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .tint(.primary)
 
-                Toggle("Save transcript review notes to SAGE", isOn: Binding(
-                    get: { model.historyReviewEnabled },
-                    set: { model.setHistoryReviewEnabled($0) }
-                ))
-                .toggleStyle(.checkbox)
-                .tint(.primary)
+                    Toggle("Save review notes to SAGE", isOn: Binding(
+                        get: { model.historyReviewEnabled },
+                        set: { model.setHistoryReviewEnabled($0) }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .tint(.primary)
+
+                    Spacer(minLength: 0)
+                }
 
                 QuietSegmentedControl(
                     title: "Spelling",
@@ -1669,7 +1831,8 @@ struct TesterView: View {
 
     private var memoryBackendPanel: some View {
         settingsSection(title: "SAGE governed memory") {
-            HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
                 Image(systemName: model.sageReady ? "checkmark.seal.fill" : "brain.head.profile")
                     .font(.system(size: 24, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -1678,7 +1841,7 @@ struct TesterView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(model.sageReady ? "quiettype-agent registered" : model.sageDetected ? "SAGE setup incomplete" : "SAGE required")
                         .font(.callout.weight(.semibold))
-                    Text(model.sageReady ? "Vocabulary, corrections, review notes, and training hints are committed through SAGE governed memory." : "QuietType does not use a standalone local memory fallback. Install SAGE, complete SAGE setup, then register quiettype-agent.")
+                    Text(model.sageReady ? "Corrections, review notes, and training hints are committed through SAGE governed memory." : "Install SAGE, finish setup, then connect quiettype-agent.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1690,30 +1853,34 @@ struct TesterView: View {
                 }
 
                 Spacer()
-
-                if !model.sageDetected {
-                    Button("Install SAGE") {
-                        Task {
-                            await model.installSage()
-                        }
-                    }
-                    .buttonStyle(QuietButtonStyle(prominence: .primary))
-                    .disabled(model.isInstallingSage)
-                } else if !model.sageReady {
-                    Button("Register") {
-                        Task {
-                            await model.registerSageAgentIfAvailable()
-                        }
-                    }
-                    .buttonStyle(QuietButtonStyle(prominence: .primary))
                 }
 
-                Button("Recheck") {
-                    Task {
-                        await model.recheckSage()
+                HStack(spacing: 10) {
+                    if !model.sageDetected {
+                        Button("Install SAGE") {
+                            Task {
+                                await model.installSage()
+                            }
+                        }
+                        .buttonStyle(QuietButtonStyle(prominence: .primary))
+                        .disabled(model.isInstallingSage)
+                    } else if !model.sageReady {
+                        Button("Register") {
+                            Task {
+                                await model.registerSageAgentIfAvailable()
+                            }
+                        }
+                        .buttonStyle(QuietButtonStyle(prominence: .primary))
                     }
+
+                    Button("Recheck") {
+                        Task {
+                            await model.recheckSage()
+                        }
+                    }
+                    .buttonStyle(QuietButtonStyle())
+                    Spacer()
                 }
-                .buttonStyle(QuietButtonStyle())
             }
         }
     }
@@ -1736,6 +1903,15 @@ struct TesterView: View {
                     detail: model.sageReady ? "quiettype-agent is registered with governed memory." : "Required before dictation can start.",
                     state: model.sageReady ? .ready : .needsAction
                 )
+
+                Button {
+                    selectedSection = .setup
+                    selectedSetupTab = model.setupComplete ? .overview : suggestedSetupTab
+                } label: {
+                    Label(model.setupComplete ? "Run setup again" : "Finish setup", systemImage: "waveform.and.mic")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(QuietButtonStyle(prominence: model.setupComplete ? .secondary : .primary))
             }
         }
     }
@@ -1758,6 +1934,8 @@ struct TesterView: View {
                 }
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
                 .disabled(model.isCheckingForUpdates)
+
+                updateStatusMessage
             }
         }
     }
@@ -1898,63 +2076,85 @@ struct TesterView: View {
                     .disabled(model.isCheckingForUpdates)
                 }
 
-                if !model.updateStatus.isEmpty {
-                    Text(model.updateStatus)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                updateStatusMessage
             }
+        }
+    }
+
+    @ViewBuilder
+    private var updateStatusMessage: some View {
+        if !model.updateStatus.isEmpty {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: model.isCheckingForUpdates ? "arrow.triangle.2.circlepath" : "info.circle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, height: 18)
+                Text(model.updateStatus)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 2)
         }
     }
 
     private var aboutPanel: some View {
-        settingsSection(title: "About QuietType") {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Speak freely. Transcribe locally. Nothing leaves your Mac.")
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
-                Text("QuietType is a local-first dictation assistant by Dhillon \"l33tdawg\" Kannabhiran. It uses on-device transcription and SAGE BFT-governed memory for corrections, vocabulary, transcript notes, and writing preferences. Contact: dhillon@levelupctf.com.")
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .center, spacing: 16) {
+            appBrandIcon
+                .frame(width: 44, height: 44)
 
-                HStack {
-                    Button("Show guided tour") {
-                        hasSeenGuide = false
-                        selectedSection = .home
-                        guideStep = .welcome
-                    }
-                    .buttonStyle(QuietButtonStyle())
-                    Button("GitHub") {
-                        NSWorkspace.shared.open(URL(string: "https://github.com/l33tdawg/quiettype")!)
-                    }
-                    .buttonStyle(QuietButtonStyle())
+            Text("Speak freely. Transcribe locally. Nothing leaves your Mac.")
+                .font(.system(size: 26, weight: .semibold, design: .rounded))
+                .multilineTextAlignment(.center)
+            Text("QuietType is a local-first dictation assistant by Dhillon \"l33tdawg\" Kannabhiran. It uses on-device transcription and SAGE BFT-governed memory for corrections, vocabulary, transcript notes, and writing preferences. Contact: dhillon@levelupctf.com.")
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 640)
+
+            HStack(spacing: 10) {
+                Button("Show guided tour") {
+                    hasSeenGuide = false
+                    selectedSection = .home
+                    guideStep = .welcome
                 }
+                .buttonStyle(QuietButtonStyle())
+                Button("GitHub") {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/l33tdawg/quiettype")!)
+                }
+                .buttonStyle(QuietButtonStyle())
             }
-        }
-    }
 
-    private var sharePanel: some View {
-        settingsSection(title: "Share QuietType") {
-            VStack(alignment: .leading, spacing: 14) {
+            Divider()
+                .padding(.vertical, 4)
+
+            VStack(alignment: .center, spacing: 8) {
+                Text("Share QuietType")
+                    .font(.system(size: 18, weight: .semibold, design: .rounded))
                 Text("Help privacy-conscious Mac users find local dictation.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 10) {
-                    ShareButton(title: "X", systemImage: "xmark") {
-                        openShareURL(for: .x)
-                    }
-                    ShareButton(title: "LinkedIn", systemImage: "briefcase") {
-                        openShareURL(for: .linkedin)
-                    }
-                    ShareButton(title: "Facebook", systemImage: "person.2") {
-                        openShareURL(for: .facebook)
-                    }
+            }
+
+            HStack(spacing: 10) {
+                ShareButton(title: "X", systemImage: "xmark") {
+                    openShareURL(for: .x)
+                }
+                ShareButton(title: "LinkedIn", systemImage: "briefcase") {
+                    openShareURL(for: .linkedin)
+                }
+                ShareButton(title: "Facebook", systemImage: "person.2") {
+                    openShareURL(for: .facebook)
                 }
             }
+            .frame(maxWidth: 520)
         }
+        .padding(.top, 56)
+        .frame(maxWidth: .infinity, alignment: .top)
     }
 
     private func openShareURL(for destination: QuietTypeShareDestination) {
@@ -1974,6 +2174,7 @@ struct TesterView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.05), lineWidth: 1))
     }
 
     private var startupPanel: some View {
@@ -2050,14 +2251,14 @@ struct TesterView: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(model.isRecording ? Color.black : Color(nsColor: .windowBackgroundColor))
+                        .fill(model.isRecording ? Color.black : (isDarkAppearance ? Color.white.opacity(0.92) : Color(nsColor: .windowBackgroundColor)))
                         .frame(width: 156, height: 156)
                     Circle()
-                        .stroke(model.isRecording ? Color.red.opacity(0.34) : Color.black.opacity(0.10), lineWidth: 13)
+                        .stroke(model.isRecording ? Color.red.opacity(0.34) : (isDarkAppearance ? Color.white.opacity(0.55) : Color.black.opacity(0.10)), lineWidth: 13)
                         .frame(width: 190, height: 190)
                     Image(systemName: model.isRecording ? "stop.fill" : "mic.fill")
                         .font(.system(size: 56, weight: .semibold))
-                        .foregroundStyle(model.isRecording ? .white : .secondary)
+                        .foregroundStyle(model.isRecording ? .white : (isDarkAppearance ? Color.black.opacity(0.70) : Color.secondary))
                 }
                 .contentShape(Circle())
             }
@@ -2071,11 +2272,8 @@ struct TesterView: View {
             Text(model.primaryPrompt)
                 .font(.system(size: 25, weight: .semibold, design: .rounded))
 
-            ProgressView(value: model.inputLevel)
-                .progressViewStyle(.linear)
-                .tint(.secondary)
+            SegmentedLevelMeter(level: model.inputLevel, isActive: model.isRecording)
                 .frame(width: 285)
-                .opacity(model.isRecording ? 1 : 0.35)
 
             Text(model.helperText)
                 .font(.callout)
@@ -2113,6 +2311,7 @@ struct TesterView: View {
         .padding(18)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(isDarkAppearance ? Color.white.opacity(0.12) : Color.black.opacity(0.08), lineWidth: 1))
     }
 
     private var outputPanel: some View {
@@ -2384,7 +2583,7 @@ private enum QuietTypeSection: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    static let primary: [QuietTypeSection] = [.home, .setup, .dictionary]
+    static let primary: [QuietTypeSection] = [.home, .dictionary]
 
     var title: String {
         switch self {
@@ -2409,6 +2608,42 @@ private enum QuietTypeSection: String, CaseIterable, Identifiable {
     }
 }
 
+private struct QuietTypeHeroMessage {
+    var title: String
+    var subtitle: String
+
+    static let all: [QuietTypeHeroMessage] = [
+        QuietTypeHeroMessage(
+            title: "Speak freely. Transcribe locally.",
+            subtitle: "Nothing leaves your Mac."
+        ),
+        QuietTypeHeroMessage(
+            title: "Your voice stays on your Mac.",
+            subtitle: "Private dictation, local cleanup, no cloud handoff."
+        ),
+        QuietTypeHeroMessage(
+            title: "Dictate without sending it away.",
+            subtitle: "QuietType listens locally and keeps review notes in SAGE."
+        ),
+        QuietTypeHeroMessage(
+            title: "Say it once. Keep it private.",
+            subtitle: "Local speech, local memory, local control."
+        ),
+        QuietTypeHeroMessage(
+            title: "Fast words. Private by design.",
+            subtitle: "Built for Apple Silicon and governed local memory."
+        ),
+        QuietTypeHeroMessage(
+            title: "Voice input for secure work.",
+            subtitle: "Transcribe, polish, and insert without cloud dictation."
+        )
+    ]
+
+    static func random() -> QuietTypeHeroMessage {
+        all.randomElement() ?? all[0]
+    }
+}
+
 private enum QuietTypeAppearanceChoice: String, CaseIterable, Identifiable {
     case system
     case light
@@ -2421,6 +2656,22 @@ private enum QuietTypeAppearanceChoice: String, CaseIterable, Identifiable {
         case .system: "System"
         case .light: "Light"
         case .dark: "Dark"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .system: "Auto"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    var sidebarSymbol: String {
+        switch self {
+        case .system: "circle.lefthalf.filled"
+        case .light: "sun.max.fill"
+        case .dark: "moon.fill"
         }
     }
 
@@ -2445,6 +2696,22 @@ private enum QuietTypeTextSizeChoice: String, CaseIterable, Identifiable {
         case .standard: "Standard"
         case .large: "Large"
         case .larger: "Larger"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .standard: "A"
+        case .large: "A+"
+        case .larger: "A++"
+        }
+    }
+
+    var sidebarGlyphSize: CGFloat {
+        switch self {
+        case .standard: 12
+        case .large: 14
+        case .larger: 16
         }
     }
 
@@ -2576,7 +2843,7 @@ private enum QuietTypeShareDestination {
     case facebook
 
     private var shareURL: String {
-        "https://github.com/l33tdawg/quiettype"
+        "https://l33tdawg.github.io/quiettype/"
     }
 
     private var shareText: String {
@@ -2924,6 +3191,7 @@ private struct SetupStepCard: View {
 
 private struct HelpActionCard: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
+    @State private var isHovering = false
     var icon: String
     var title: String
     var detail: String
@@ -2949,13 +3217,17 @@ private struct HelpActionCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, minHeight: 158, alignment: .topLeading)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(isHovering ? Color(nsColor: .windowBackgroundColor) : Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(isHovering ? 0.16 : 0.06), lineWidth: 1))
+        .animation(.easeOut(duration: 0.14), value: isHovering)
+        .onHover { isHovering = $0 }
     }
 }
 
 private struct HelpInfoCard: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
+    @State private var isHovering = false
     var icon: String
     var title: String
     var detail: String
@@ -2978,13 +3250,17 @@ private struct HelpInfoCard: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, minHeight: 158, alignment: .topLeading)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(isHovering ? Color(nsColor: .windowBackgroundColor) : Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(isHovering ? 0.16 : 0.06), lineWidth: 1))
+        .animation(.easeOut(duration: 0.14), value: isHovering)
+        .onHover { isHovering = $0 }
     }
 }
 
 private struct HelpFAQRow: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
+    @State private var isHovering = false
     var question: String
     var answer: String
 
@@ -3001,8 +3277,11 @@ private struct HelpFAQRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(isHovering ? Color.primary.opacity(0.04) : Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.primary.opacity(isHovering ? 0.12 : 0.05), lineWidth: 1))
+        .animation(.easeOut(duration: 0.14), value: isHovering)
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -3013,18 +3292,41 @@ private struct SidebarItem: View {
     var selected: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             Image(systemName: icon)
-                .frame(width: 18)
+                .font(.system(size: 23 + typeDelta, weight: selected ? .bold : .semibold))
+                .frame(width: 28, height: 28)
             Text(title)
-                .font(.system(size: 17 + typeDelta, weight: selected ? .semibold : .regular))
+                .font(.system(size: 20 + typeDelta, weight: selected ? .bold : .semibold, design: .rounded))
             Spacer()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
         .foregroundStyle(selected ? .primary : .secondary)
         .background(selected ? Color(nsColor: .windowBackgroundColor) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+private struct SidebarPillButton: View {
+    @Environment(\.quietTypeTypeDelta) private var typeDelta
+    var title: String
+    var selected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12 + typeDelta, weight: .semibold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .foregroundStyle(selected ? Color(nsColor: .controlBackgroundColor) : Color(nsColor: .secondaryLabelColor))
+                .background(selected ? Color(nsColor: .labelColor) : Color(nsColor: .windowBackgroundColor).opacity(0.62))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -3151,6 +3453,9 @@ private struct TrainingMeter: View {
                     .foregroundStyle(isRecording || isAnalyzing ? Color.primary : Color.secondary)
             }
 
+            SegmentedLevelMeter(level: level, isActive: isRecording)
+                .frame(width: 104)
+
             Text(isAnalyzing ? "Learning" : (isRecording ? "Recording" : "Ready"))
                 .font(.system(size: 12 + typeDelta, weight: .semibold))
                 .foregroundStyle(isRecording || isAnalyzing ? .primary : .secondary)
@@ -3160,6 +3465,38 @@ private struct TrainingMeter: View {
         }
         .frame(width: 120)
         .padding(.top, 2)
+    }
+}
+
+private struct SegmentedLevelMeter: View {
+    var level: Double
+    var isActive: Bool
+
+    private let segments = 34
+
+    private var clampedLevel: Double {
+        min(max(level, 0), 1)
+    }
+
+    private var activeCount: Int {
+        guard isActive, clampedLevel > 0 else {
+            return 0
+        }
+        return max(1, Int((clampedLevel * Double(segments)).rounded(.up)))
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(0..<segments, id: \.self) { index in
+                Capsule()
+                    .fill(Color.primary.opacity(index < activeCount ? 0.58 : 0.08))
+                    .frame(width: 5, height: 8)
+            }
+        }
+        .opacity(isActive ? 1 : 0.42)
+        .animation(.easeOut(duration: 0.10), value: activeCount)
+        .accessibilityLabel("Input level")
+        .accessibilityValue(activeCount == 0 ? "Silent" : "\(Int(clampedLevel * 100)) percent")
     }
 }
 
@@ -3361,121 +3698,290 @@ struct DictionaryMemoryItem: Identifiable, Equatable {
     var isEditableTranscript: Bool
 }
 
-private struct DictionaryMemoryRow: View {
-    @Environment(\.quietTypeTypeDelta) private var typeDelta
-    var memory: DictionaryMemoryItem
-    var editAction: () -> Void = {}
+private struct TranscriptMemoryParts: Equatable {
+    var rawTranscript: String?
+    var polishedText: String?
+    var appName: String?
+}
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(memory.title)
-                    .font(.body.weight(.medium))
-                    .lineLimit(1)
-                Spacer()
-                if let confidence = memory.confidence {
-                    Text("\(Int(confidence * 100))%")
-                        .font(.system(size: 12 + typeDelta, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                }
-                if memory.isEditableTranscript {
-                    Button("Edit") {
-                        editAction()
-                    }
-                    .buttonStyle(QuietButtonStyle())
-                    .controlSize(.small)
-                }
-            }
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 
-            Text(memory.summary)
-                .font(.system(size: 14 + typeDelta, weight: .regular))
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 8) {
-                Text(memory.kind)
-                Text(memory.source)
-                Text(memory.id.prefix(12))
-            }
-            .font(.caption)
-            .font(.system(size: 12 + typeDelta, weight: .regular))
-            .foregroundStyle(.tertiary)
+    var cleanedTranscriptMemoryValue: String {
+        var value = trimmingCharacters(in: .whitespacesAndNewlines)
+        while value.first == "\"" {
+            value.removeFirst()
+            value = value.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        while value.last == "\"" {
+            value.removeLast()
+            value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return value
     }
 }
 
-private struct TranscriptNoteEditor: View {
-    let memory: DictionaryMemoryItem
-    @ObservedObject var model: MenuBarModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var rawTranscript: String
-    @State private var polishedText: String
+private struct DictionaryMemoryRow: View {
+    @Environment(\.quietTypeTypeDelta) private var typeDelta
+    @State private var isHovering = false
+    @State private var isEditing = false
+    @State private var isSaving = false
+    @State private var isDeleting = false
+    @State private var showingDeleteConfirm = false
+    @State private var draftRawTranscript: String
+    @State private var draftPolishedText: String
+    var memory: DictionaryMemoryItem
+    var saveAction: (String, String) async -> Void
+    var deleteAction: () async -> Void
 
-    init(memory: DictionaryMemoryItem, model: MenuBarModel) {
+    init(memory: DictionaryMemoryItem, saveAction: @escaping (String, String) async -> Void, deleteAction: @escaping () async -> Void) {
         self.memory = memory
-        self.model = model
-        _rawTranscript = State(initialValue: memory.rawTranscript ?? "")
-        _polishedText = State(initialValue: memory.polishedText ?? "")
+        self.saveAction = saveAction
+        self.deleteAction = deleteAction
+        _draftRawTranscript = State(initialValue: memory.rawTranscript ?? "")
+        _draftPolishedText = State(initialValue: memory.polishedText ?? "")
+    }
+
+    private var confidenceText: String {
+        guard let confidence = memory.confidence else {
+            return "Reviewed"
+        }
+        return "\(Int((confidence * 100).rounded()))%"
+    }
+
+    private var primaryText: String {
+        if let polished = memory.polishedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !polished.isEmpty {
+            return polished
+        }
+        return memory.summary
+    }
+
+    private var secondaryText: String {
+        if let raw = memory.rawTranscript?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !raw.isEmpty,
+           raw != primaryText {
+            return "Heard: \(raw)"
+        }
+        return memory.source
+    }
+
+    private var hasChanges: Bool {
+        draftRawTranscript.trimmingCharacters(in: .whitespacesAndNewlines) != (memory.rawTranscript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            || draftPolishedText.trimmingCharacters(in: .whitespacesAndNewlines) != (memory.polishedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text(memory.kind)
+                        .font(.system(size: 11 + typeDelta, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(Color.primary.opacity(0.05))
+                        .clipShape(Capsule())
+                    Text(memory.source)
+                        .font(.system(size: 11 + typeDelta, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+
+                if isEditing {
+                    inlineEditor
+                } else {
+                    Text(primaryText)
+                        .font(.system(size: 15 + typeDelta, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(secondaryText)
+                        .font(.system(size: 13 + typeDelta, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: 16)
+
+            VStack(alignment: .trailing, spacing: 10) {
+                Text(confidenceText)
+                    .font(.system(size: 12 + typeDelta, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                if memory.isEditableTranscript && !isEditing {
+                    Button {
+                        draftRawTranscript = memory.rawTranscript ?? ""
+                        draftPolishedText = memory.polishedText ?? ""
+                        showingDeleteConfirm = false
+                        isEditing = true
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 14 + typeDelta, weight: .semibold))
+                            .frame(width: 30, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .background(Color.primary.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .help("Edit transcript")
+                }
+                if !isEditing {
+                    Button {
+                        showingDeleteConfirm.toggle()
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 13 + typeDelta, weight: .semibold))
+                            .frame(width: 30, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(showingDeleteConfirm ? Color.red : Color.secondary)
+                    .background((showingDeleteConfirm ? Color.red : Color.primary).opacity(showingDeleteConfirm ? 0.10 : 0.05))
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .disabled(isDeleting)
+                    .help("Remove memory")
+                }
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isHovering ? Color.primary.opacity(0.025) : Color(nsColor: .windowBackgroundColor))
+        .overlay(alignment: .topTrailing) {
+            if showingDeleteConfirm {
+                DeleteMemoryConfirmPopover(
+                    isDeleting: isDeleting,
+                    onCancel: {
+                        showingDeleteConfirm = false
+                    },
+                    onDelete: {
+                        Task {
+                            isDeleting = true
+                            await deleteAction()
+                            isDeleting = false
+                            showingDeleteConfirm = false
+                        }
+                    }
+                )
+                .padding(.top, 52)
+                .padding(.trailing, 16)
+                .zIndex(10)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.06))
+                .frame(height: 1)
+                .padding(.leading, 18)
+        }
+        .onHover { isHovering = $0 }
+    }
+
+    private var inlineEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("Review transcript")
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                Text("Fix obvious mistakes here. QuietType learns clear one-word corrections as reusable local lessons.")
-                    .font(.callout)
+                Text("Polished text")
+                    .font(.system(size: 12 + typeDelta, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                TextEditor(text: $draftPolishedText)
+                    .font(.system(size: 14 + typeDelta, weight: .medium))
+                    .frame(minHeight: 72)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            DisclosureGroup {
+                TextEditor(text: $draftRawTranscript)
+                    .font(.system(size: 13 + typeDelta, weight: .regular))
+                    .frame(minHeight: 58)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } label: {
+                Text("Raw transcript")
+                    .font(.system(size: 12 + typeDelta, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Raw transcript")
-                    .font(.headline)
-                TextEditor(text: $rawTranscript)
-                    .font(.body)
-                    .frame(minHeight: 100)
-                    .scrollContentBackground(.hidden)
-                    .padding(10)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Polished text")
-                    .font(.headline)
-                TextEditor(text: $polishedText)
-                    .font(.body)
-                    .frame(minHeight: 120)
-                    .scrollContentBackground(.hidden)
-                    .padding(10)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
+            .disclosureGroupStyle(.automatic)
 
             HStack {
+                Text("Saving replaces this note and deprecates the old memory.")
+                    .font(.system(size: 12 + typeDelta, weight: .medium))
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") {
-                    dismiss()
+                    draftRawTranscript = memory.rawTranscript ?? ""
+                    draftPolishedText = memory.polishedText ?? ""
+                    isEditing = false
                 }
-                .buttonStyle(QuietButtonStyle())
-                Button("Save and learn") {
+                .buttonStyle(QuietButtonStyle(prominence: .ghost))
+                Button(isSaving ? "Saving" : "Save") {
                     Task {
-                        await model.updateTranscriptNote(memoryID: memory.id, rawTranscript: rawTranscript, polishedText: polishedText)
-                        dismiss()
+                        isSaving = true
+                        await saveAction(draftRawTranscript, draftPolishedText)
+                        isSaving = false
+                        isEditing = false
                     }
                 }
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
+                .disabled(!hasChanges || isSaving)
             }
         }
-        .padding(26)
-        .frame(width: 620)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .padding(.top, 2)
+    }
+}
+
+private struct DeleteMemoryConfirmPopover: View {
+    var isDeleting: Bool
+    var onCancel: () -> Void
+    var onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "trash")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.red)
+                    .frame(width: 28, height: 28)
+                    .background(Color.red.opacity(0.10))
+                    .clipShape(Circle())
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Remove memory?")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    Text("QuietType will ask SAGE to forget it and remove it from Review.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(QuietButtonStyle(prominence: .ghost))
+                Button(isDeleting ? "Removing" : "Remove", action: onDelete)
+                    .buttonStyle(QuietButtonStyle(prominence: .primary))
+                    .disabled(isDeleting)
+            }
+        }
+        .padding(14)
+        .frame(width: 286)
+        .background {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.18))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.32), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.18), radius: 22, y: 12)
     }
 }
 
@@ -3483,88 +3989,156 @@ private struct TeachQuietTypeSheet: View {
     @ObservedObject var model: MenuBarModel
     @Environment(\.dismiss) private var dismiss
 
-    private var teachingKindBinding: Binding<MenuBarModel.TeachingKind> {
-        Binding(
-            get: { model.teachingKind },
-            set: { model.setTeachingKind($0) }
-        )
+    private var hasTeachingDetection: Bool {
+        !model.teachingDetectedForms.isEmpty
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Add lesson")
-                    .font(.largeTitle.weight(.semibold))
-                Text(model.teachingKind.explanation)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
+        HStack(alignment: .top, spacing: 0) {
+            VStack(alignment: .center, spacing: 14) {
+                Spacer(minLength: 0)
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.14))
+                        .frame(width: 108, height: 108)
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 46, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
 
-            VStack(alignment: .leading, spacing: 12) {
-                QuietSegmentedControl(
-                    title: "Lesson",
-                    selection: teachingKindBinding,
-                    options: MenuBarModel.TeachingKind.allCases
-                ) { kind in
-                    kind.label
+                Text("Teach pronunciation")
+                    .font(.system(size: 23, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                Text("Say the word three times, then enter the spelling QuietType should write.")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 28)
+            .frame(width: 240)
+            .frame(minHeight: 500)
+            .background(Color.black)
+
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Add correction")
+                        .font(.largeTitle.weight(.semibold))
+                    Text("Record the word, then save the spelling QuietType should use.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack {
+                    Text("\(model.teachingSampleCount)/3 samples")
+                        .font(.system(size: 13, weight: .semibold))
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.primary.opacity(0.08))
+                            Capsule()
+                                .fill(Color.primary.opacity(0.65))
+                                .frame(width: proxy.size.width * CGFloat(Double(model.teachingSampleCount) / 3.0))
+                        }
+                    }
+                    .frame(height: 6)
+                }
+
+                HStack(spacing: 10) {
+                    ForEach(1...3, id: \.self) { sample in
+                        let isCaptured = model.teachingSampleCount >= sample
+                        HStack(spacing: 6) {
+                            Image(systemName: isCaptured ? "checkmark" : "waveform")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Sample \(sample)")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundStyle(isCaptured ? Color(nsColor: .controlBackgroundColor) : .secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(isCaptured ? Color.primary : Color(nsColor: .controlBackgroundColor))
+                        .clipShape(Capsule())
+                    }
+                    Spacer()
+                    Button {
+                        Task {
+                            await model.toggleTeachingSampleRecording()
+                        }
+                    } label: {
+                        Label(model.teachingRecordButtonTitle, systemImage: model.isTeachingRecording ? "stop.circle.fill" : "mic.fill")
+                            .frame(minWidth: 150)
+                    }
+                    .buttonStyle(QuietButtonStyle(prominence: .primary))
+                }
+                Text(model.teachingSampleStatus)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("QuietType heard")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Group {
+                        if hasTeachingDetection {
+                            Text(model.teachingDetectedForms.joined(separator: " / "))
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                        } else {
+                            Text("Record a sample to detect the spoken form.")
+                                .font(.system(size: 13, weight: .medium))
+                                .italic()
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, minHeight: 42, alignment: .center)
+                        }
+                    }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 1))
                 }
                 QuietTextField(
-                    label: model.teachingKind.rawLabel,
-                    placeholder: model.teachingKind.rawPlaceholder,
-                    text: $model.teachRaw
-                )
-                QuietTextField(
-                    label: model.teachingKind.correctedLabel,
-                    placeholder: model.teachingKind.correctedPlaceholder,
+                    label: "Should write",
+                    placeholder: "Exact spelling or phrase",
                     text: $model.teachCorrected
                 )
-                if model.teachingKind != .style {
-                    QuietTextField(
-                        label: "Where this applies",
-                        placeholder: model.teachingKind.contextPlaceholder,
-                        text: $model.teachingContext
-                    )
-                }
-            }
 
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: model.teachingKind.systemImage)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 26, height: 26)
-                Text(model.lessonPreviewText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-            }
-            .padding(14)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
-
-            HStack {
-                Text("Lessons are committed to SAGE governed memory under quiettype-agent.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Cancel") {
-                    dismiss()
-                }
-                .buttonStyle(QuietButtonStyle())
-                Button("Save lesson") {
-                    Task {
-                        await model.saveCorrection()
+                HStack {
+                    Text("Saved lessons apply during local cleanup.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Cancel") {
                         dismiss()
                     }
+                    .buttonStyle(QuietButtonStyle())
+                    Button("Save correction") {
+                        Task {
+                            await model.saveCorrection()
+                            dismiss()
+                        }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(QuietButtonStyle(prominence: .primary))
+                    .disabled(!model.canSaveCorrection)
                 }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(QuietButtonStyle(prominence: .primary))
-                .disabled(!model.canSaveCorrection)
             }
+            .padding(30)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(28)
-        .frame(width: 560)
+        .frame(width: 820)
+        .frame(minHeight: 500)
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .onAppear {
+            model.setTeachingKind(.correction)
+            model.resetTeachingDraft()
+        }
     }
 }
 
@@ -3589,6 +4163,7 @@ private struct ShareButton: View {
 }
 
 private struct MetricTile: View {
+    @Environment(\.colorScheme) private var colorScheme
     var icon: String
     var value: String
     var label: String
@@ -3597,23 +4172,49 @@ private struct MetricTile: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(iconColor)
                     .frame(width: 18)
                 Spacer()
             }
             Text(value)
                 .font(.system(size: 32, weight: .bold, design: .rounded))
+                .foregroundStyle(foregroundColor)
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
             Text(label)
                 .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(secondaryColor)
                 .lineLimit(1)
         }
         .padding(20)
         .frame(minHeight: 140, alignment: .topLeading)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(cardColor)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(borderColor, lineWidth: 1))
+    }
+
+    private var isDark: Bool {
+        colorScheme == .dark
+    }
+
+    private var cardColor: Color {
+        isDark ? Color.white.opacity(0.92) : Color.black
+    }
+
+    private var foregroundColor: Color {
+        isDark ? .black : .white
+    }
+
+    private var secondaryColor: Color {
+        isDark ? Color.black.opacity(0.58) : Color.white.opacity(0.68)
+    }
+
+    private var iconColor: Color {
+        isDark ? Color.black.opacity(0.50) : Color.white.opacity(0.62)
+    }
+
+    private var borderColor: Color {
+        isDark ? Color.white.opacity(0.16) : Color.black.opacity(0.08)
     }
 }
 
@@ -3856,6 +4457,29 @@ private struct StatusPill: View {
     }
 }
 
+private struct SidebarIconToggle<Content: View>: View {
+    var label: String
+    var selected: Bool
+    @ViewBuilder var content: () -> Content
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            content()
+                .foregroundStyle(selected ? Color(nsColor: .controlBackgroundColor) : .secondary)
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .background(selected ? Color.primary : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .help(label)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
 private struct QuietButtonStyle: ButtonStyle {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
 
@@ -3923,10 +4547,12 @@ private struct QuietSegmentedControl<Option: Identifiable & Hashable>: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(title)
-                .font(.system(size: 14 + typeDelta, weight: .regular))
-                .foregroundStyle(.primary)
-                .frame(width: 96, alignment: .leading)
+            if !title.isEmpty {
+                Text(title)
+                    .font(.system(size: 14 + typeDelta, weight: .regular))
+                    .foregroundStyle(.primary)
+                    .frame(width: 96, alignment: .leading)
+            }
 
             HStack(spacing: 2) {
                 ForEach(options) { option in
@@ -4033,6 +4659,7 @@ private enum QuietTypeUpdaterError: LocalizedError {
     case mountFailed
     case appMissingInDMG
     case bundleIdentifierMismatch(expected: String, actual: String)
+    case signingTeamMismatch(expected: String, actual: String)
     case installFailed(String)
     case commandFailed(String, Int32, String)
 
@@ -4058,10 +4685,23 @@ private enum QuietTypeUpdaterError: LocalizedError {
             return "The DMG did not contain QuietType.app."
         case .bundleIdentifierMismatch(let expected, let actual):
             return "The downloaded app has bundle identifier \(actual), expected \(expected). Update cancelled to preserve macOS permissions."
+        case .signingTeamMismatch(let expected, let actual):
+            return "The downloaded app is signed by team \(actual), expected \(expected). Update cancelled."
         case .installFailed(let reason):
             return reason
         case .commandFailed(let command, let code, let output):
             return "\(command) failed with exit code \(code). \(output)"
+        }
+    }
+
+    var shouldOpenReleasesPage: Bool {
+        switch self {
+        case .releaseUnavailable(let status), .downloadUnavailable(let status):
+            return status == 401 || status == 403 || status == 404
+        case .noDMGAsset:
+            return true
+        default:
+            return false
         }
     }
 }
@@ -4069,11 +4709,15 @@ private enum QuietTypeUpdaterError: LocalizedError {
 private struct QuietTypeGitHubRelease: Decodable {
     var tagName: String
     var name: String?
+    var prerelease: Bool?
+    var draft: Bool?
     var assets: [QuietTypeGitHubAsset]
 
     enum CodingKeys: String, CodingKey {
         case tagName = "tag_name"
         case name
+        case prerelease
+        case draft
         case assets
     }
 }
@@ -4207,9 +4851,9 @@ private struct QuietTypeReleaseVersion: Comparable {
     var betaBuild: Int
 
     static func current() -> QuietTypeReleaseVersion {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
         let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
-        return parse("v\(version)-beta.\(build)") ?? QuietTypeReleaseVersion(major: 0, minor: 1, patch: 0, betaBuild: build)
+        return parse("v\(version)-beta.\(build)") ?? QuietTypeReleaseVersion(major: 1, minor: 0, patch: 0, betaBuild: build)
     }
 
     static func parse(_ value: String) -> QuietTypeReleaseVersion? {
@@ -4241,28 +4885,26 @@ private struct QuietTypeReleaseVersion: Comparable {
 }
 
 private final class QuietTypeGitHubUpdater {
-    private let releaseURL = URL(string: "https://api.github.com/repos/l33tdawg/quiettype/releases/latest")!
+    private let releasesURL = URL(string: "https://api.github.com/repos/l33tdawg/quiettype/releases?per_page=20")!
+    private let releasesPageURL = URL(string: "https://github.com/l33tdawg/quiettype/releases/latest")!
+    private let expectedSigningTeamID = "2N7GKZ8D8Z"
     private let fileManager = FileManager.default
 
-    func checkDownloadBackupAndInstall() async throws -> QuietTypeUpdateResult {
-        let release = try await fetchLatestRelease()
-        guard let asset = release.assets.first(where: { asset in
-            asset.name.localizedCaseInsensitiveContains("macOS-arm64.dmg")
-                || asset.name.localizedCaseInsensitiveContains("macos-arm64.dmg")
-        }) else {
-            throw QuietTypeUpdaterError.noDMGAsset
-        }
+    func openReleasesPage() {
+        NSWorkspace.shared.open(releasesPageURL)
+    }
 
+    func checkDownloadBackupAndInstall(progress: @escaping @MainActor (String) -> Void) async throws -> QuietTypeUpdateResult {
+        await progress("Checking GitHub Releases...")
+        let (release, asset, latestVersion) = try await latestReleaseAsset()
         let currentVersion = QuietTypeReleaseVersion.current()
-        let latestVersion = QuietTypeReleaseVersion.parse(release.tagName)
-            ?? QuietTypeReleaseVersion.parse(asset.name)
-            ?? currentVersion
-
         guard latestVersion > currentVersion else {
             return QuietTypeUpdateResult(message: "QuietType is up to date. You are running \(display(currentVersion)).")
         }
 
+        await progress("Found \(display(latestVersion)). Downloading the Apple Silicon DMG...")
         let dmgURL = try await download(asset)
+        await progress("Downloaded \(asset.name) from \(release.tagName). Verifying the installer...")
         let mountedVolume = try mount(dmgURL)
         defer {
             _ = try? run("/usr/bin/hdiutil", arguments: ["detach", mountedVolume.path])
@@ -4274,16 +4916,53 @@ private final class QuietTypeGitHubUpdater {
         }
 
         try verifyBundleIdentity(sourceApp)
-        try backupAndInstall(sourceApp: sourceApp)
-        try verifyInstalledApp()
+        try verifyCandidateApp(sourceApp)
+        await progress("Verified \(display(latestVersion)). Backing up the current app before installing...")
+        let backupURL = try backupAndInstall(sourceApp: sourceApp)
+        do {
+            try verifyInstalledApp()
+        } catch {
+            var restoreDetail = ""
+            if let backupURL {
+                do {
+                    try restoreBackup(from: backupURL)
+                    restoreDetail = " The previous app was restored from backup."
+                } catch {
+                    restoreDetail = " Restore failed; the backup is at \(backupURL.path)."
+                }
+            }
+            throw QuietTypeUpdaterError.installFailed("Update verification failed.\(restoreDetail) \(error.localizedDescription)")
+        }
 
         return QuietTypeUpdateResult(
             message: "Installed \(display(latestVersion)) in /Applications. Quit and reopen QuietType to use the new version."
         )
     }
 
-    private func fetchLatestRelease() async throws -> QuietTypeGitHubRelease {
-        var request = URLRequest(url: releaseURL)
+    private func latestReleaseAsset() async throws -> (QuietTypeGitHubRelease, QuietTypeGitHubAsset, QuietTypeReleaseVersion) {
+        let releases = try await fetchReleases()
+        let candidates: [(QuietTypeGitHubRelease, QuietTypeGitHubAsset, QuietTypeReleaseVersion)] = releases.compactMap { release in
+            guard release.draft != true,
+                  let asset = release.assets.first(where: Self.isMacOSArm64DMG),
+                  let version = QuietTypeReleaseVersion.parse(release.tagName) ?? QuietTypeReleaseVersion.parse(asset.name) else {
+                return nil
+            }
+            return (release, asset, version)
+        }
+
+        guard let best = candidates.max(by: { $0.2 < $1.2 }) else {
+            throw QuietTypeUpdaterError.noDMGAsset
+        }
+        return best
+    }
+
+    private static func isMacOSArm64DMG(_ asset: QuietTypeGitHubAsset) -> Bool {
+        asset.name.localizedCaseInsensitiveContains("macOS-arm64.dmg")
+            || asset.name.localizedCaseInsensitiveContains("macos-arm64.dmg")
+    }
+
+    private func fetchReleases() async throws -> [QuietTypeGitHubRelease] {
+        var request = URLRequest(url: releasesURL)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("QuietType-Updater", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -4291,7 +4970,7 @@ private final class QuietTypeGitHubUpdater {
             throw QuietTypeUpdaterError.releaseUnavailable(http.statusCode)
         }
         do {
-            return try JSONDecoder().decode(QuietTypeGitHubRelease.self, from: data)
+            return try JSONDecoder().decode([QuietTypeGitHubRelease].self, from: data)
         } catch {
             throw QuietTypeUpdaterError.releaseDecodeFailed
         }
@@ -4331,27 +5010,39 @@ private final class QuietTypeGitHubUpdater {
         return URL(fileURLWithPath: mountPath, isDirectory: true)
     }
 
-    private func backupAndInstall(sourceApp: URL) throws {
+    private func backupAndInstall(sourceApp: URL) throws -> URL? {
         let destinationApp = URL(fileURLWithPath: "/Applications/QuietType.app", isDirectory: true)
         let temporaryInstall = URL(fileURLWithPath: "/Applications/QuietType.app.updating", isDirectory: true)
+        var backupURL: URL?
 
         if fileManager.fileExists(atPath: destinationApp.path) {
             let backupDirectory = try applicationSupportDirectory()
                 .appendingPathComponent("Backups", isDirectory: true)
             try fileManager.createDirectory(at: backupDirectory, withIntermediateDirectories: true)
-            let backupURL = backupDirectory.appendingPathComponent("QuietType-\(timestamp()).app", isDirectory: true)
-            try fileManager.copyItem(at: destinationApp, to: backupURL)
+            let appBackupURL = backupDirectory.appendingPathComponent("QuietType-\(timestamp()).app", isDirectory: true)
+            try fileManager.copyItem(at: destinationApp, to: appBackupURL)
+            backupURL = appBackupURL
         }
 
         if fileManager.fileExists(atPath: temporaryInstall.path) {
             try fileManager.removeItem(at: temporaryInstall)
         }
-        try fileManager.copyItem(at: sourceApp, to: temporaryInstall)
-
-        if fileManager.fileExists(atPath: destinationApp.path) {
-            try fileManager.removeItem(at: destinationApp)
+        do {
+            try fileManager.copyItem(at: sourceApp, to: temporaryInstall)
+            if fileManager.fileExists(atPath: destinationApp.path) {
+                try fileManager.removeItem(at: destinationApp)
+            }
+            try fileManager.moveItem(at: temporaryInstall, to: destinationApp)
+            return backupURL
+        } catch {
+            if fileManager.fileExists(atPath: temporaryInstall.path) {
+                try? fileManager.removeItem(at: temporaryInstall)
+            }
+            if let backupURL, !fileManager.fileExists(atPath: destinationApp.path) {
+                try? fileManager.copyItem(at: backupURL, to: destinationApp)
+            }
+            throw QuietTypeUpdaterError.installFailed("Update install failed. \(error.localizedDescription)")
         }
-        try fileManager.moveItem(at: temporaryInstall, to: destinationApp)
     }
 
     private func verifyBundleIdentity(_ appURL: URL) throws {
@@ -4370,6 +5061,37 @@ private final class QuietTypeGitHubUpdater {
 
     private func verifyInstalledApp() throws {
         _ = try run("/usr/sbin/spctl", arguments: ["-a", "-t", "exec", "-vv", "/Applications/QuietType.app"])
+    }
+
+    private func verifyCandidateApp(_ appURL: URL) throws {
+        _ = try run("/usr/bin/codesign", arguments: ["--verify", "--deep", "--strict", "--verbose=2", appURL.path])
+        let signature = try run("/usr/bin/codesign", arguments: ["-dv", "--verbose=4", appURL.path])
+        try verifySigningTeam(in: signature)
+        _ = try run("/usr/sbin/spctl", arguments: ["-a", "-t", "exec", "-vv", appURL.path])
+    }
+
+    private func verifySigningTeam(in codesignOutput: String) throws {
+        let actual = codesignOutput
+            .split(separator: "\n")
+            .first(where: { $0.hasPrefix("TeamIdentifier=") })
+            .map { String($0.dropFirst("TeamIdentifier=".count)) }
+            ?? "missing"
+        guard actual == expectedSigningTeamID else {
+            throw QuietTypeUpdaterError.signingTeamMismatch(expected: expectedSigningTeamID, actual: actual)
+        }
+    }
+
+    private func restoreBackup(from backupURL: URL) throws {
+        let destinationApp = URL(fileURLWithPath: "/Applications/QuietType.app", isDirectory: true)
+        let failedInstall = URL(fileURLWithPath: "/Applications/QuietType.app.failed-\(timestamp())", isDirectory: true)
+        if fileManager.fileExists(atPath: failedInstall.path) {
+            try fileManager.removeItem(at: failedInstall)
+        }
+        if fileManager.fileExists(atPath: destinationApp.path) {
+            try fileManager.moveItem(at: destinationApp, to: failedInstall)
+        }
+        try fileManager.copyItem(at: backupURL, to: destinationApp)
+        try verifyInstalledApp()
     }
 
     private func applicationSupportDirectory() throws -> URL {
@@ -4484,10 +5206,15 @@ final class MenuBarModel: ObservableObject {
     @Published var editorMode = EditorMode.ruleBased
     @Published var ollamaModel = "qwen3:4b"
     @Published var spellingPreference = SpellingPreference.system
-    @Published var teachRaw = "Steven"
-    @Published var teachCorrected = "Stephen"
+    @Published var teachRaw = ""
+    @Published var teachCorrected = ""
     @Published var teachingKind = TeachingKind.correction
-    @Published var teachingContext = "names and spelling"
+    @Published var teachingContext = ""
+    @Published var isTeachingRecording = false
+    @Published var teachingSampleCount = 0
+    @Published var teachingSampleStatus = "Record a sample so QuietType can hear the word."
+    @Published var teachingInputLevel = 0.0
+    @Published var teachingDetectedForms: [String] = []
     @Published var localMemories: [DictationMemory] = []
     @Published var memoryFilter = MemoryFilter.all
     @Published var didSaveTeachingMemory = false
@@ -4523,15 +5250,26 @@ final class MenuBarModel: ObservableObject {
     private var terminationObserver: NSObjectProtocol?
     private var captureService: AVAudioCaptureService?
     private var trainingCaptureService: AVAudioCaptureService?
+    private var teachingCaptureService: AVAudioCaptureService?
     private var recordingStartedAt: Date?
     private var trainingStartedAt: Date?
+    private var teachingStartedAt: Date?
     private var recordedSamples: [Float] = []
     private var trainingSamples: [Float] = []
+    private var teachingSamples: [Float] = []
     private var recordingSampleRate = 16_000
     private var trainingSampleRate = 16_000
+    private var teachingSampleRate = 16_000
     private var peakInputLevel = 0.0
     private var peakTrainingInputLevel = 0.0
+    private var peakInputRMS = 0.0
+    private var peakTrainingInputRMS = 0.0
+    private var peakTeachingInputRMS = 0.0
+    private var inputNoiseFloorRMS = 0.006
+    private var trainingNoiseFloorRMS = 0.006
+    private var teachingNoiseFloorRMS = 0.006
     private var trainingFrameCount = 0
+    private var teachingFrameCount = 0
     private var lastTrainingAudioURL: URL?
     private var chunker = StreamingWavChunker()
     private let chunkDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("quiettype-stream")
@@ -4558,6 +5296,7 @@ final class MenuBarModel: ObservableObject {
     private static let maxDictationDurationSeconds = 300.0
     private static let maxTrainingPairCount = 10
     private static let streamingTranscriptMinimumDuration = 8.0
+    private static let minimumUsableRMS = 0.0015
 
     init() {
         calibrationSavedCount = UserDefaults.standard.integer(forKey: Self.calibrationSavedCountKey)
@@ -4607,7 +5346,7 @@ final class MenuBarModel: ObservableObject {
     }
 
     var appVersionLabel: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
         if build.isEmpty {
             return "v\(version)"
@@ -4690,15 +5429,23 @@ final class MenuBarModel: ObservableObject {
     }
 
     var canSaveCorrection: Bool {
-        !teachRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !teachingDetectedForms.isEmpty
+            && !teachRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !teachCorrected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var teachingRecordButtonTitle: String {
+        if isTeachingRecording {
+            return "Stop"
+        }
+        return "Record sample \(min(teachingSampleCount + 1, 3))"
     }
 
     var lessonPreviewText: String {
         let raw = teachRaw.trimmingCharacters(in: .whitespacesAndNewlines)
         let corrected = teachCorrected.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty, !corrected.isEmpty else {
-            return teachingKind.emptyPreview
+            return teachingSampleCount == 0 ? "Record the word first. QuietType will show what it heard here." : "Enter the spelling QuietType should write."
         }
         switch teachingKind {
         case .correction, .translation:
@@ -4883,8 +5630,13 @@ final class MenuBarModel: ObservableObject {
     }
 
     var transcriptNoteCount: Int {
-        localMemories.filter { $0.type == .transcriptNote }.count
-            + sageMemories.filter { $0.domain == "quiettype.transcripts" }.count
+        let localIDs = localMemories
+            .filter { $0.type == .transcriptNote }
+            .compactMap(\.id)
+        let sageIDs = sageMemories
+            .filter { $0.domain == "quiettype.transcripts" }
+            .map(\.id)
+        return Set(localIDs + sageIDs).count
     }
 
     private var processedWordCount: Int {
@@ -4893,33 +5645,36 @@ final class MenuBarModel: ObservableObject {
 
     var dictionaryMemories: [DictionaryMemoryItem] {
         let localItems = localMemories.map { memory in
-            DictionaryMemoryItem(
+            let isTranscript = memory.type == .transcriptNote
+            return DictionaryMemoryItem(
                 id: memory.id ?? UUID().uuidString,
                 title: memory.payload["corrected"]
                     ?? memory.payload["preferred"]
                     ?? memory.payload["polished_text"]?.prefix(64).description
                     ?? memory.type.rawValue,
                 summary: memorySummary(from: memory),
-                kind: memory.type.rawValue.replacingOccurrences(of: "dictation.", with: "").replacingOccurrences(of: "_", with: " ").capitalized,
+                kind: isTranscript ? "Transcript" : memory.type.rawValue.replacingOccurrences(of: "dictation.", with: "").replacingOccurrences(of: "_", with: " ").capitalized,
                 confidence: memory.confidence,
-                source: memory.source.isEmpty ? "SAGE · QuietType" : memory.source,
+                source: isTranscript ? (memory.payload["app"]?.nilIfBlank ?? "QuietType") : (memory.source.isEmpty ? "QuietType" : memory.source),
                 rawTranscript: memory.payload["raw_transcript"],
                 polishedText: memory.payload["polished_text"],
-                isEditableTranscript: memory.type == .transcriptNote
+                isEditableTranscript: isTranscript
             )
         }
 
         let sageItems = sageMemories.map { memory in
-            DictionaryMemoryItem(
+            let transcript = transcriptMemoryParts(from: memory.content)
+            let isTranscript = memory.domain == "quiettype.transcripts"
+            return DictionaryMemoryItem(
                 id: memory.id,
                 title: memoryTitle(from: memory.content),
                 summary: memory.content.isEmpty ? "Memory content unavailable." : memory.content,
-                kind: memory.domain.replacingOccurrences(of: "quiettype.", with: "").capitalized,
+                kind: isTranscript ? "Transcript" : memory.domain.replacingOccurrences(of: "quiettype.", with: "").capitalized,
                 confidence: memory.confidence,
-                source: memory.submittingAgent == sageAgentID ? "SAGE · QuietType" : "SAGE",
-                rawTranscript: nil,
-                polishedText: nil,
-                isEditableTranscript: false
+                source: isTranscript ? (transcript.appName?.nilIfBlank ?? "QuietType") : (memory.submittingAgent == sageAgentID ? "QuietType" : "SAGE"),
+                rawTranscript: transcript.rawTranscript,
+                polishedText: transcript.polishedText,
+                isEditableTranscript: isTranscript
             )
         }
 
@@ -4927,33 +5682,21 @@ final class MenuBarModel: ObservableObject {
     }
 
     var filteredDictionaryMemories: [DictionaryMemoryItem] {
-        let categoryFiltered: [DictionaryMemoryItem]
-        switch memoryFilter {
-        case .all:
-            categoryFiltered = dictionaryMemories
-        case .vocabulary:
-            categoryFiltered = dictionaryMemories.filter { $0.kind.localizedCaseInsensitiveContains("Vocabulary") }
-        case .corrections:
-            categoryFiltered = dictionaryMemories.filter {
-                $0.kind.localizedCaseInsensitiveContains("Correction")
-                    || $0.summary.localizedCaseInsensitiveContains("prefer")
-            }
-        case .sage:
-            categoryFiltered = dictionaryMemories.filter { $0.source.localizedCaseInsensitiveContains("SAGE") }
-        case .local:
-            categoryFiltered = dictionaryMemories.filter { $0.source.localizedCaseInsensitiveContains("Session") }
+        var seenMemoryIDs = Set<String>()
+        let reviewMemories = dictionaryMemories.filter(\.isEditableTranscript).filter { memory in
+            seenMemoryIDs.insert(memory.id).inserted
         }
 
         let query = sageQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
-            return categoryFiltered
+            return reviewMemories
         }
 
         let terms = query
             .split(whereSeparator: { $0.isWhitespace })
             .map(String.init)
 
-        return categoryFiltered.filter { memory in
+        return reviewMemories.filter { memory in
             let haystack = [
                 memory.title,
                 memory.summary,
@@ -4971,6 +5714,80 @@ final class MenuBarModel: ObservableObject {
     }
 
     private static let defaultMemorySearchQuery = "QuietType dictation translation correction vocabulary spelling style transcript transcription spoken phrase preferred wording"
+
+    private func transcriptMemoryParts(from content: String) -> TranscriptMemoryParts {
+        let raw = labeledQuotedValue(
+            from: content,
+            labels: [
+                "Corrected raw transcript:",
+                "Raw transcript:",
+                "Raw local ASR heard:"
+            ],
+            terminators: [
+                "\". Corrected polished output:",
+                "\". Polished output:",
+                "\". This is",
+                "\". User-reviewed",
+                "\"."
+            ]
+        )
+        let polished = labeledQuotedValue(
+            from: content,
+            labels: [
+                "Corrected polished output:",
+                "Polished output:",
+                "Expected script:"
+            ],
+            terminators: [
+                "\". User-reviewed",
+                "\". This is",
+                "\"."
+            ]
+        )
+        let app = labeledPlainValue(from: content, label: "App:")
+
+        return TranscriptMemoryParts(
+            rawTranscript: raw,
+            polishedText: polished,
+            appName: app
+        )
+    }
+
+    private func labeledQuotedValue(from content: String, labels: [String], terminators: [String]) -> String? {
+        for label in labels {
+            guard let labelRange = content.range(of: label, options: [.caseInsensitive]) else {
+                continue
+            }
+
+            var remainder = String(content[labelRange.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if remainder.first == "\"" {
+                remainder.removeFirst()
+            }
+
+            let endIndex = terminators
+                .compactMap { remainder.range(of: $0)?.lowerBound }
+                .min()
+            let value = endIndex.map { String(remainder[..<$0]) } ?? remainder
+            let cleaned = value.cleanedTranscriptMemoryValue
+            if !cleaned.isEmpty {
+                return cleaned
+            }
+        }
+
+        return nil
+    }
+
+    private func labeledPlainValue(from content: String, label: String) -> String? {
+        guard let labelRange = content.range(of: label, options: [.caseInsensitive]) else {
+            return nil
+        }
+
+        let remainder = String(content[labelRange.upperBound...])
+        let end = remainder.firstIndex(of: ".") ?? remainder.endIndex
+        let cleaned = String(remainder[..<end]).cleanedTranscriptMemoryValue
+        return cleaned.isEmpty ? nil : cleaned
+    }
 
     private func memoryTitle(from content: String) -> String {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5067,12 +5884,31 @@ final class MenuBarModel: ObservableObject {
         if !installation.isInstalled {
             sageDirectClient = nil
             sageAgentStatus = "SAGE required"
+            sageStatus = "SAGE required"
+            updateStartupStep(
+                id: "sage",
+                detail: "SAGE not found. QuietType requires SAGE governed memory.",
+                state: .warning
+            )
+            return
         }
-        sageStatus = installation.isInstalled ? "SAGE detected · registration pending" : "SAGE required"
+
+        if sageAgentStatus == "Registered", sageDirectClient != nil {
+            sageStatus = "SAGE connected · quiettype-agent"
+            sageInstallStatus = ""
+            updateStartupStep(
+                id: "sage",
+                detail: "quiettype-agent registered with local SAGE.",
+                state: .ready
+            )
+            return
+        }
+
+        sageStatus = "SAGE detected · registration pending"
         updateStartupStep(
             id: "sage",
-            detail: installation.isInstalled ? "SAGE app detected. quiettype-agent registration is pending." : "SAGE not found. QuietType requires SAGE governed memory.",
-            state: installation.isInstalled ? .ready : .warning
+            detail: "SAGE app detected. quiettype-agent registration is pending.",
+            state: .ready
         )
     }
 
@@ -5136,8 +5972,13 @@ final class MenuBarModel: ObservableObject {
         defer { isCheckingForUpdates = false }
 
         do {
-            let result = try await updateService.checkDownloadBackupAndInstall()
+            let result = try await updateService.checkDownloadBackupAndInstall { [weak self] message in
+                self?.updateStatus = message
+            }
             updateStatus = result.message
+        } catch let error as QuietTypeUpdaterError where error.shouldOpenReleasesPage {
+            updateStatus = "Update check needs GitHub release access: \(error.localizedDescription) Opening the QuietType releases page."
+            updateService.openReleasesPage()
         } catch {
             updateStatus = "Update check failed: \(error.localizedDescription)"
         }
@@ -5173,8 +6014,16 @@ final class MenuBarModel: ObservableObject {
     }
 
     func recheckSage() async {
+        sageInstallStatus = "Checking local SAGE..."
+        statusMessage = "Checking SAGE memory"
         refreshSageStatus()
         await registerSageAgentIfAvailable()
+        if sageReady {
+            sageInstallStatus = ""
+            if statusMessage.localizedCaseInsensitiveContains("sage") {
+                statusMessage = ""
+            }
+        }
     }
 
     func startAppServices() {
@@ -5213,9 +6062,6 @@ final class MenuBarModel: ObservableObject {
     }
 
     func setHotKeyChoice(_ choice: HotKeyChoice) {
-        guard hotKeyChoice != choice else {
-            return
-        }
         functionKeySystemUse = FunctionKeySystemUse.current
         hotKeyChoice = choice
         hotKeyLabel = choice.label
@@ -5236,18 +6082,28 @@ final class MenuBarModel: ObservableObject {
             return
         }
 
-        let previous = teachingKind
-        let raw = teachRaw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let corrected = teachCorrected.trimmingCharacters(in: .whitespacesAndNewlines)
-        let isStillDefault = raw.isEmpty
-            || (raw == previous.defaultRaw && corrected == previous.defaultCorrected)
-
         teachingKind = kind
-        if isStillDefault {
-            teachRaw = kind.defaultRaw
-            teachCorrected = kind.defaultCorrected
-            teachingContext = kind.defaultContext
+    }
+
+    func resetTeachingDraft() {
+        if isTeachingRecording {
+            teachingCaptureService?.stop()
+            teachingCaptureService = nil
+            isTeachingRecording = false
         }
+        teachRaw = ""
+        teachCorrected = ""
+        teachingContext = ""
+        teachingSampleCount = 0
+        teachingSampleStatus = "Record a sample so QuietType can hear the word."
+        teachingInputLevel = 0
+        teachingDetectedForms = []
+        teachingSamples = []
+        teachingFrameCount = 0
+        peakTeachingInputRMS = 0
+        teachingNoiseFloorRMS = 0.006
+        teachingStartedAt = nil
+        didSaveTeachingMemory = false
     }
 
     func hotKeyDetail(for choice: HotKeyChoice) -> String {
@@ -5380,21 +6236,20 @@ final class MenuBarModel: ObservableObject {
 
         do {
             let identity = try SageSigningIdentity.loadOrCreate()
-            let client = try SageDirectClient(endpoint: installation.localEndpoint, identity: identity)
+            var client = try SageDirectClient(endpoint: installation.localEndpoint, identity: identity)
             candidateClient = client
             sageDirectClient = client
             sageAgentID = identity.agentID
 
             let registration: SageAgentRegistration
-            do {
+            if let existing = try? await client.registeredAgent(agentID: identity.agentID) {
+                registration = existing
+            } else {
                 registration = try await client.registerQuietTypeAgent()
-            } catch {
-                if let existing = try await client.registeredAgent(agentID: identity.agentID) {
-                    registration = existing
-                } else {
-                    throw error
-                }
             }
+            client = try client.usingRegisteredAgentID(registration.agentID)
+            candidateClient = client
+            sageDirectClient = client
 
             markSageRegistered(agentID: registration.agentID)
             await refreshDictionaryMemoriesPreservingRegistration(using: client)
@@ -5404,12 +6259,17 @@ final class MenuBarModel: ObservableObject {
             if sageHealthReachable,
                let candidateClient,
                let identity = try? SageSigningIdentity.loadOrCreate(),
-               let existing = try? await candidateClient.registeredAgent(agentID: identity.agentID) {
-                sageDirectClient = candidateClient
+               let existing = try? await candidateClient.registeredAgent(agentID: identity.agentID),
+               let recoveredClient = try? candidateClient.usingRegisteredAgentID(existing.agentID) {
+                sageDirectClient = recoveredClient
                 markSageRegistered(agentID: existing.agentID)
             } else if isSageVaultLocked(error) {
                 sageAgentStatus = "Unlock SAGE"
                 sageStatus = "SAGE locked · unlock required"
+            } else if sageHealthReachable, let candidateClient {
+                sageDirectClient = candidateClient
+                sageAgentStatus = "Registration needed"
+                sageStatus = "SAGE running · registration needed"
             } else if isSageNotRunning(error) {
                 if let candidateClient, sageHealthReachable {
                     sageDirectClient = candidateClient
@@ -5436,6 +6296,11 @@ final class MenuBarModel: ObservableObject {
         sageAgentID = agentID
         sageAgentStatus = "Registered"
         sageStatus = "SAGE connected · quiettype-agent"
+        sageInstallStatus = ""
+        if statusMessage.localizedCaseInsensitiveContains("sage")
+            || statusMessage.localizedCaseInsensitiveContains("unlock") {
+            statusMessage = ""
+        }
         lastError = nil
         updateStartupStep(
             id: "sage",
@@ -5446,10 +6311,7 @@ final class MenuBarModel: ObservableObject {
 
     private func refreshDictionaryMemoriesPreservingRegistration(using client: SageDirectClient) async {
         do {
-            sageMemories = try await client.searchMemories(query: Self.defaultMemorySearchQuery, limit: 16)
-            if sageMemories.isEmpty {
-                sageMemories = try await client.listMemories(limit: 16)
-            }
+            sageMemories = try await loadSageMemories(using: client, limit: 16)
             if lastError?.hasPrefix("SAGE memory") == true || lastError?.hasPrefix("SAGE setup") == true {
                 lastError = nil
             }
@@ -5462,6 +6324,20 @@ final class MenuBarModel: ObservableObject {
             sageAgentStatus = "Registered"
             sageStatus = "SAGE connected · quiettype-agent"
         }
+    }
+
+    private func loadSageMemories(using client: SageDirectClient, limit: Int) async throws -> [SageMemoryRecord] {
+        do {
+            let searched = try await client.searchMemories(query: Self.defaultMemorySearchQuery, limit: limit)
+            if !searched.isEmpty {
+                return searched
+            }
+        } catch {
+            guard SageDirectClientError.isTextSearchUnavailable(error) else {
+                throw error
+            }
+        }
+        return try await client.listMemories(limit: limit)
     }
 
     private func sageRegistrationFailureDetail(_ error: Error, healthy: Bool = false) -> String {
@@ -5480,17 +6356,54 @@ final class MenuBarModel: ObservableObject {
     private func isSageVaultLocked(_ error: Error) -> Bool {
         if case SageDirectClientError.requestFailed(let status, let body) = error {
             let lowered = body.lowercased()
-            return status == 401
-                || status == 423
-                || lowered.contains("locked")
-                || lowered.contains("unlock")
-                || lowered.contains("vault")
-                || lowered.contains("encrypted")
+            if status == 423 {
+                return true
+            }
+            if status == 401 {
+                return lowered.contains("vault locked")
+                    || lowered.contains("vault is locked")
+                    || lowered.contains("encrypted vault locked")
+                    || lowered.contains("encrypted vault is locked")
+                    || lowered.contains("unlock required")
+                    || lowered.contains("requires unlock")
+                    || lowered.contains("authentication required")
+                    || lowered.contains("unauthorized")
+            }
+            return lowered.contains("vault locked")
+                || lowered.contains("vault is locked")
+                || lowered.contains("encrypted vault locked")
+                || lowered.contains("encrypted vault is locked")
+                || lowered.contains("unlock required")
+                || lowered.contains("requires unlock")
         }
         return false
     }
 
     private func handleSageMemoryRefreshFailure(_ error: Error) {
+        if SageDirectClientError.isTextSearchUnavailable(error), sageAgentStatus == "Registered", sageDirectClient != nil {
+            sageStatus = "SAGE connected · semantic search mode"
+            if lastError?.hasPrefix("SAGE memory") == true {
+                lastError = nil
+            }
+            updateStartupStep(
+                id: "sage",
+                detail: "quiettype-agent is registered. SAGE is in semantic-only memory mode, so text search is skipped.",
+                state: .ready
+            )
+            return
+        }
+
+        if sageAgentStatus == "Registered", sageDirectClient != nil {
+            lastError = "SAGE memory refresh failed: \(error.localizedDescription)"
+            sageStatus = "SAGE connected · memory refresh failed"
+            updateStartupStep(
+                id: "sage",
+                detail: "quiettype-agent is registered. SAGE memory refresh will retry when you click Refresh.",
+                state: .ready
+            )
+            return
+        }
+
         if isSageVaultLocked(error) {
             sageDirectClient = nil
             sageAgentStatus = "Unlock SAGE"
@@ -5608,10 +6521,7 @@ final class MenuBarModel: ObservableObject {
         }
 
         do {
-            sageMemories = try await sageDirectClient.searchMemories(query: Self.defaultMemorySearchQuery, limit: 16)
-            if sageMemories.isEmpty {
-                sageMemories = try await sageDirectClient.listMemories(limit: 16)
-            }
+            sageMemories = try await loadSageMemories(using: sageDirectClient, limit: 16)
             if lastError?.hasPrefix("SAGE memory") == true {
                 lastError = nil
             }
@@ -5838,6 +6748,8 @@ final class MenuBarModel: ObservableObject {
         partialChunkCount = 0
         inputLevel = 0
         peakInputLevel = 0
+        peakInputRMS = 0
+        inputNoiseFloorRMS = 0.006
         recordingDuration = 0
         recordedSamples = []
         recordingSampleRate = 16_000
@@ -5894,6 +6806,8 @@ final class MenuBarModel: ObservableObject {
         recordingStartedAt = nil
         inputLevel = 0
         peakInputLevel = 0
+        peakInputRMS = 0
+        inputNoiseFloorRMS = 0.006
         try? FileManager.default.removeItem(at: chunkDirectory)
         statusMessage = "Dictation cancelled"
         lastError = nil
@@ -5931,8 +6845,7 @@ final class MenuBarModel: ObservableObject {
             return false
         }
 
-        await prepareNativeSpeechServerIfAvailable()
-        guard nativeSpeechServerReady else {
+        guard await ensureNativeSpeechServerReadyForTranscription() else {
             statusMessage = "Native speech warming"
             lastError = "QuietType is waiting for the Apple Silicon speech engine before dictation starts."
             return false
@@ -5979,7 +6892,7 @@ final class MenuBarModel: ObservableObject {
             overlayController.hide()
             return
         }
-        if peakInputLevel < 0.003 {
+        if peakInputRMS < Self.minimumUsableRMS {
             output = "QuietType could open the microphone, but the input signal was too low to transcribe."
             statusMessage = "No usable microphone signal"
             lastError = "Check the selected input device in macOS Sound settings, then try again."
@@ -6027,7 +6940,9 @@ final class MenuBarModel: ObservableObject {
         let rms = sqrt(frame.samples.reduce(0.0) { partial, sample in
             partial + Double(sample * sample)
         } / Double(max(frame.samples.count, 1)))
-        inputLevel = min(1.0, rms * 24)
+        peakInputRMS = max(peakInputRMS, rms)
+        inputNoiseFloorRMS = Self.updatedNoiseFloor(currentFloor: inputNoiseFloorRMS, rms: rms)
+        inputLevel = Self.displayLevel(rms: rms, noiseFloor: inputNoiseFloorRMS, previous: inputLevel)
         peakInputLevel = max(peakInputLevel, inputLevel)
 
         do {
@@ -6056,6 +6971,30 @@ final class MenuBarModel: ObservableObject {
 
     private var listeningOverlayDetail: String {
         "Listening · \(String(format: "%.1f", recordingDuration))s · Esc cancels"
+    }
+
+    private static func updatedNoiseFloor(currentFloor: Double, rms: Double) -> Double {
+        let clampedRMS = min(max(rms, 0.0004), 0.08)
+        if clampedRMS < currentFloor * 1.45 {
+            return min(0.04, (currentFloor * 0.94) + (clampedRMS * 0.06))
+        }
+        return currentFloor
+    }
+
+    private static func displayLevel(rms: Double, noiseFloor: Double, previous: Double) -> Double {
+        let gate = max(0.0045, noiseFloor * 1.9)
+        guard rms > gate else {
+            let decayed = previous * 0.42
+            return decayed < 0.035 ? 0 : decayed
+        }
+
+        let ceiling = max(gate + 0.03, noiseFloor * 9.0)
+        let normalized = min(max((rms - gate) / (ceiling - gate), 0), 1)
+        let shaped = sqrt(normalized)
+        let smoothed = shaped > previous
+            ? (previous * 0.45) + (shaped * 0.55)
+            : (previous * 0.68) + (shaped * 0.32)
+        return smoothed < 0.035 ? 0 : min(smoothed, 1)
     }
 
     private func showListeningOverlay() {
@@ -6097,8 +7036,7 @@ final class MenuBarModel: ObservableObject {
     private func transcribeAndProcess(_ audioURL: URL, streamingSession: StreamingAudioTranscriptionSession? = nil) async {
         do {
             isRunning = true
-            await prepareNativeSpeechServerIfAvailable()
-            guard nativeSpeechServerReady else {
+            guard await ensureNativeSpeechServerReadyForTranscription() else {
                 throw AudioTranscriberError.allBackendsFailed([
                     "Native WhisperKit is unavailable. QuietType is waiting for the Apple Silicon speech engine."
                 ])
@@ -6120,7 +7058,7 @@ final class MenuBarModel: ObservableObject {
                 if let streamResult, !streamResult.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     statusMessage = "Resolving full audio"
                 }
-                rawTranscript = try await makeAudioTranscriber().transcribe(audioFile: audioURL, options: activeTranscriptionOptions)
+                rawTranscript = try await transcribeFullAudio(audioURL)
             }
             guard !isLikelyNoiseTranscript(rawTranscript) else {
                 throw AudioTranscriberError.noiseOnlyTranscript(rawTranscript)
@@ -6134,14 +7072,29 @@ final class MenuBarModel: ObservableObject {
             if isLikelyNoiseOnlyFailure(error) {
                 output = "QuietType captured audio, but could not isolate speech from the background audio."
                 statusMessage = "No clear speech detected"
+                lastError = nil
             } else if isEmptyTranscriptFailure(error) {
                 output = "QuietType captured audio, but native speech returned no transcript."
                 statusMessage = "No transcript returned"
+                lastError = nil
             } else {
                 output = "Captured local audio at:\n\(audioURL.path)"
                 statusMessage = speechEngineReady ? "Transcription failed" : "Speech engine unavailable"
+                lastError = String(describing: error)
             }
-            lastError = String(describing: error)
+        }
+    }
+
+    private func transcribeFullAudio(_ audioURL: URL) async throws -> String {
+        let transcriber = makeAudioTranscriber()
+        do {
+            return try await transcriber.transcribe(audioFile: audioURL, options: activeTranscriptionOptions)
+        } catch {
+            guard isEmptyTranscriptFailure(error), activeTranscriptionOptions != .none else {
+                throw error
+            }
+            statusMessage = "Retrying native speech"
+            return try await transcriber.transcribe(audioFile: audioURL, options: .none)
         }
     }
 
@@ -6246,12 +7199,74 @@ final class MenuBarModel: ObservableObject {
     }
 
     private func prepareNativeSpeechServerIfAvailable() async {
-        if nativeSpeechServerReady {
+        if nativeSpeechServerReady,
+           await whisperKitSupervisor?.isServerHealthy() == true {
             return
         }
 
+        nativeSpeechServerReady = false
         refreshSpeechEngineStatus()
         startNativeSpeechWarmup()
+    }
+
+    private func ensureNativeSpeechServerReadyForTranscription() async -> Bool {
+        if nativeSpeechServerReady,
+           await whisperKitSupervisor?.isServerHealthy() == true {
+            return true
+        }
+
+        nativeSpeechServerReady = false
+        refreshSpeechEngineStatus()
+
+        guard let executableURL = WhisperKitServerBundleLocator.bundledExecutable(),
+              FileManager.default.isExecutableFile(atPath: executableURL.path) else {
+            updateStartupStep(
+                id: "nativeSpeech",
+                detail: "Native engine is not bundled in this build.",
+                state: .failed
+            )
+            speechEngineStatus = "Native speech unavailable"
+            lastError = "QuietType requires the bundled Apple Silicon speech engine."
+            return false
+        }
+
+        if whisperKitSupervisor == nil {
+            whisperKitSupervisor = WhisperKitServerSupervisor(executableURL: executableURL)
+        }
+
+        statusMessage = "Starting native speech"
+        speechEngineStatus = "Native speech starting"
+        updateStartupStep(
+            id: "nativeSpeech",
+            detail: "Starting the Apple Silicon speech engine.",
+            state: .running
+        )
+
+        do {
+            try await whisperKitSupervisor?.ensureRunning(stopOnTimeout: false)
+            nativeSpeechServerReady = true
+            speechEngineReady = true
+            speechEngineStatus = "Native speech ready"
+            statusMessage = "Native speech ready"
+            updateStartupStep(
+                id: "nativeSpeech",
+                detail: "Apple Silicon transcription server is warm.",
+                state: .ready
+            )
+            return true
+        } catch {
+            nativeSpeechServerReady = false
+            speechEngineReady = false
+            let detail = String(describing: error)
+            speechEngineStatus = "Native speech starting"
+            lastError = detail
+            updateStartupStep(
+                id: "nativeSpeech",
+                detail: "Native speech is not ready yet. QuietType will wait for the Apple Silicon engine.",
+                state: .failed
+            )
+            return false
+        }
     }
 
     private func processTranscript(_ rawTranscript: String) async {
@@ -6292,7 +7307,7 @@ final class MenuBarModel: ObservableObject {
             statusMessage = didInsert ? "Inserted or ready to copy" : "Ready to copy"
             await saveTranscriptNote(rawTranscript: rawTranscript, polishedText: result.text, inserted: didInsert, latencyMS: result.timing.keyReleaseToInsertMS)
             overlayController.show(state: .inserted, detail: "Ready to copy", transcript: result.text)
-            overlayController.hide(after: 18.0)
+            overlayController.hide(after: 3.0)
         } catch {
             output = "Transcript: \(rawTranscript)"
             lastError = String(describing: error)
@@ -6362,17 +7377,38 @@ final class MenuBarModel: ObservableObject {
                 throw QuietTypeSageRequirementError.notConnected
             }
 
-            if let index = localMemories.firstIndex(where: { $0.id == memoryID }) {
-                localMemories[index].payload["raw_transcript"] = raw
-                localMemories[index].payload["polished_text"] = polished
-                localMemories[index].payload["reviewed_at"] = ISO8601DateFormatter().string(from: Date())
-                localMemories[index].payload["reviewed_by_user"] = "true"
-            }
+            let reviewedAt = ISO8601DateFormatter().string(from: Date())
+            let existingLocalMemory = localMemories.first(where: { $0.id == memoryID })
 
             let content = """
-            QuietType reviewed transcript note. SAGE note: \(memoryID). Corrected raw transcript: "\(raw)". Corrected polished output: "\(polished)". User-reviewed notes may create compact correction lessons only when the change is obvious and conservative.
+            QuietType reviewed transcript note. Supersedes SAGE note: \(memoryID). Corrected raw transcript: "\(raw)". Corrected polished output: "\(polished)". User-reviewed notes may create compact correction lessons only when the change is obvious and conservative.
             """
             let submission = try await sageDirectClient.submitTranscriptNote(content: content, confidence: 0.9)
+            _ = try await sageDirectClient.deprecateMemory(
+                id: memoryID,
+                reason: "Superseded by corrected QuietType transcript note \(submission.memoryID)."
+            )
+
+            localMemories.removeAll { $0.id == memoryID }
+            sageMemories.removeAll { $0.id == memoryID }
+
+            let correctedMemory = DictationMemory(
+                id: submission.memoryID,
+                type: .transcriptNote,
+                payload: [
+                    "raw_transcript": raw,
+                    "polished_text": polished,
+                    "reviewed_at": reviewedAt,
+                    "reviewed_by_user": "true",
+                    "supersedes": memoryID,
+                    "app": existingLocalMemory?.payload["app"] ?? selectedProfile.appName,
+                    "style": existingLocalMemory?.payload["style"] ?? selectedProfile.appProfile.rawValue
+                ],
+                contexts: existingLocalMemory?.contexts ?? [selectedProfile.appName, selectedProfile.appProfile.rawValue, "dictation_review"],
+                source: "QuietType",
+                confidence: 0.9
+            )
+            localMemories.insert(correctedMemory, at: 0)
             sageMemories.insert(
                 SageMemoryRecord(
                     id: submission.memoryID,
@@ -6386,14 +7422,34 @@ final class MenuBarModel: ObservableObject {
                 at: 0
             )
 
-            if let lesson = await saveDerivedCorrectionLesson(fromRaw: raw, polished: polished, memoryID: memoryID) {
-                statusMessage = "Review saved and learned \(lesson.corrected)"
+            if let lesson = await saveDerivedCorrectionLesson(fromRaw: raw, polished: polished, memoryID: submission.memoryID) {
+                statusMessage = "Review saved, learned \(lesson.corrected), and deprecated the old note"
             } else {
-                statusMessage = "Transcript review saved"
+                statusMessage = "Transcript review saved and old note deprecated"
             }
             lastError = nil
         } catch {
             lastError = "Transcript review failed: \(error.localizedDescription)"
+        }
+    }
+
+    func deleteReviewMemory(memoryID: String) async {
+        do {
+            guard let sageDirectClient else {
+                throw QuietTypeSageRequirementError.notConnected
+            }
+
+            _ = try await sageDirectClient.deprecateMemory(
+                id: memoryID,
+                reason: "Removed by user from QuietType Review."
+            )
+
+            localMemories.removeAll { $0.id == memoryID }
+            sageMemories.removeAll { $0.id == memoryID }
+            statusMessage = "Memory removed"
+            lastError = nil
+        } catch {
+            lastError = "Memory removal failed: \(error.localizedDescription)"
         }
     }
 
@@ -6480,6 +7536,123 @@ final class MenuBarModel: ObservableObject {
             || value.dropFirst().contains { $0.isUppercase }
     }
 
+    func toggleTeachingSampleRecording() async {
+        if isTeachingRecording {
+            await stopTeachingSampleRecording()
+        } else {
+            await startTeachingSampleRecording()
+        }
+    }
+
+    private func startTeachingSampleRecording() async {
+        guard !isRecording, !isTrainingRecording else {
+            lastError = "Stop the current recording before teaching a correction."
+            return
+        }
+
+        guard await ensureSageReadyForDictation() else {
+            return
+        }
+
+        if microphonePermission != .granted {
+            microphonePermission = await permissionService.requestMicrophone()
+            await refreshPermissions(promptForAccessibility: false, verifyMicrophoneAccess: true)
+        }
+
+        teachingSamples = []
+        teachingSampleRate = 16_000
+        teachingFrameCount = 0
+        teachingInputLevel = 0
+        peakTeachingInputRMS = 0
+        teachingNoiseFloorRMS = 0.006
+        teachingStartedAt = Date()
+
+        let service = AVAudioCaptureService { [weak self] frame in
+            await self?.recordTeachingSample(frame)
+        }
+
+        do {
+            try service.start()
+            teachingCaptureService = service
+            microphoneAccessVerified = true
+            microphonePermission = .granted
+            updatePermissionsStartupStep()
+            isTeachingRecording = true
+            teachingSampleStatus = "Listening for sample \(min(teachingSampleCount + 1, 3))..."
+            lastError = nil
+        } catch {
+            teachingCaptureService = nil
+            teachingStartedAt = nil
+            isTeachingRecording = false
+            microphoneAccessVerified = false
+            microphonePermission = .denied
+            updatePermissionsStartupStep()
+            teachingSampleStatus = "Microphone permission needed"
+            lastError = "Could not start correction microphone: \(error.localizedDescription)"
+        }
+    }
+
+    private func stopTeachingSampleRecording() async {
+        teachingCaptureService?.stop()
+        teachingCaptureService = nil
+        isTeachingRecording = false
+
+        guard teachingFrameCount > 0 else {
+            teachingSampleStatus = "No sample captured"
+            lastError = "QuietType could not detect microphone audio for this sample."
+            return
+        }
+        guard peakTeachingInputRMS >= Self.minimumUsableRMS else {
+            teachingSampleStatus = "No usable sample"
+            lastError = "QuietType could open the microphone, but the input signal was too low."
+            return
+        }
+
+        do {
+            let directory = trainingDirectory().appendingPathComponent("Corrections", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let sampleNumber = min(teachingSampleCount + 1, 3)
+            let audioURL = directory.appendingPathComponent("\(Int(Date().timeIntervalSince1970))-correction-\(sampleNumber).wav")
+            try WavFileWriter.writeMonoPCM16(samples: teachingSamples, sampleRate: teachingSampleRate, to: audioURL)
+            let detected = try await makeAudioTranscriber()
+                .transcribe(audioFile: audioURL, options: currentTranscriptionOptions())
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !detected.isEmpty else {
+                throw AudioTranscriberError.emptyTranscript
+            }
+
+            if !teachingDetectedForms.contains(where: { $0.caseInsensitiveCompare(detected) == .orderedSame }) {
+                teachingDetectedForms.append(detected)
+            }
+            teachRaw = teachingDetectedForms.first ?? detected
+            teachingSampleCount = min(3, teachingSampleCount + 1)
+            teachingSampleStatus = teachingSampleCount >= 3 ? "Three samples captured. Enter the spelling to save." : "Sample \(teachingSampleCount) captured. Record another for better coverage."
+            lastError = nil
+        } catch {
+            teachingSampleStatus = "Could not transcribe sample"
+            lastError = "Correction sample failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func recordTeachingSample(_ frame: AudioFrame) async {
+        teachingFrameCount += 1
+        teachingSampleRate = frame.sampleRate
+        teachingSamples.append(contentsOf: frame.samples)
+
+        let rms = sqrt(frame.samples.reduce(0.0) { partial, sample in
+            partial + Double(sample * sample)
+        } / Double(max(frame.samples.count, 1)))
+        peakTeachingInputRMS = max(peakTeachingInputRMS, rms)
+        teachingNoiseFloorRMS = Self.updatedNoiseFloor(currentFloor: teachingNoiseFloorRMS, rms: rms)
+        teachingInputLevel = Self.displayLevel(rms: rms, noiseFloor: teachingNoiseFloorRMS, previous: teachingInputLevel)
+
+        if let teachingStartedAt,
+           Date().timeIntervalSince(teachingStartedAt) >= 6.0,
+           isTeachingRecording {
+            await stopTeachingSampleRecording()
+        }
+    }
+
     func saveCorrection() async {
         guard canSaveCorrection else {
             return
@@ -6492,13 +7665,14 @@ final class MenuBarModel: ObservableObject {
             let raw = teachRaw.trimmingCharacters(in: .whitespacesAndNewlines)
             let corrected = teachCorrected.trimmingCharacters(in: .whitespacesAndNewlines)
             let context = teachingContext.trimmingCharacters(in: .whitespacesAndNewlines)
-            let content = "QuietType \(teachingKind.label.lowercased()): when spoken text is \"\(raw)\", prefer \"\(corrected)\". Context: \(context.isEmpty ? selectedProfile.appName : context). Apply this during local dictation cleanup without adding unsupported content."
+            let spokenForms = teachingDetectedForms.isEmpty ? raw : teachingDetectedForms.joined(separator: ", ")
+            let content = "QuietType \(teachingKind.label.lowercased()): when spoken text sounds like \(spokenForms), prefer \"\(corrected)\". Apply this during local dictation cleanup without adding unsupported content."
             let submission = try await sageDirectClient.submitTranslationMemory(content: content)
             let memory = DictationMemory(
                 id: submission.memoryID,
                 type: teachingKind.memoryType,
-                payload: teachingPayload(raw: raw, corrected: corrected, context: context),
-                contexts: [selectedProfile.appName, selectedProfile.appProfile.rawValue, context].filter { !$0.isEmpty },
+                payload: teachingPayload(raw: raw, corrected: corrected, context: context, spokenForms: spokenForms),
+                contexts: [selectedProfile.appName, selectedProfile.appProfile.rawValue, "pronunciation_training"],
                 source: "SAGE · quiettype-agent",
                 confidence: 0.95
             )
@@ -6523,14 +7697,14 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
-    private func teachingPayload(raw: String, corrected: String, context: String) -> [String: String] {
+    private func teachingPayload(raw: String, corrected: String, context: String, spokenForms: String) -> [String: String] {
         switch teachingKind {
         case .vocabulary:
             return [
                 "term": corrected,
                 "preferred": corrected,
                 "preferred_spelling": corrected,
-                "spoken_forms": raw,
+                "spoken_forms": spokenForms,
                 "kind": teachingKind.rawValue,
                 "context": context
             ]
@@ -6540,14 +7714,16 @@ final class MenuBarModel: ObservableObject {
                 "raw": raw,
                 "corrected": corrected,
                 "kind": teachingKind.rawValue,
-                "context": context
+                "context": context,
+                "spoken_forms": spokenForms
             ]
         case .correction, .translation:
             return [
                 "raw": raw,
                 "corrected": corrected,
                 "kind": teachingKind.rawValue,
-                "context": context
+                "context": context,
+                "spoken_forms": spokenForms
             ]
         }
     }
@@ -6557,6 +7733,8 @@ final class MenuBarModel: ObservableObject {
         trainingDuration = 0
         trainingInputLevel = 0
         peakTrainingInputLevel = 0
+        peakTrainingInputRMS = 0
+        trainingNoiseFloorRMS = 0.006
         trainingTranscriptDraft = ""
         lastTrainingAudioURL = nil
         statusMessage = "Loaded \(currentCalibrationSet.title)"
@@ -6590,6 +7768,9 @@ final class MenuBarModel: ObservableObject {
         trainingFrameCount = 0
         trainingDuration = 0
         trainingInputLevel = 0
+        peakTrainingInputLevel = 0
+        peakTrainingInputRMS = 0
+        trainingNoiseFloorRMS = 0.006
         trainingTranscriptDraft = ""
         lastTrainingAudioURL = nil
         trainingStartedAt = Date()
@@ -6629,7 +7810,7 @@ final class MenuBarModel: ObservableObject {
             lastError = "QuietType could not detect microphone audio for training."
             return
         }
-        guard peakTrainingInputLevel >= 0.003 else {
+        guard peakTrainingInputRMS >= Self.minimumUsableRMS else {
             statusMessage = "No usable training signal"
             lastError = "QuietType could open the microphone, but the input signal was too low for training."
             return
@@ -6669,7 +7850,9 @@ final class MenuBarModel: ObservableObject {
         let rms = sqrt(frame.samples.reduce(0.0) { partial, sample in
             partial + Double(sample * sample)
         } / Double(max(frame.samples.count, 1)))
-        trainingInputLevel = min(1.0, rms * 24)
+        peakTrainingInputRMS = max(peakTrainingInputRMS, rms)
+        trainingNoiseFloorRMS = Self.updatedNoiseFloor(currentFloor: trainingNoiseFloorRMS, rms: rms)
+        trainingInputLevel = Self.displayLevel(rms: rms, noiseFloor: trainingNoiseFloorRMS, previous: trainingInputLevel)
         peakTrainingInputLevel = max(peakTrainingInputLevel, trainingInputLevel)
 
         if trainingDuration >= Self.maxDictationDurationSeconds && isTrainingRecording {

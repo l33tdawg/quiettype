@@ -55,6 +55,9 @@ public enum ProfileMemoryCompiler {
             return
         }
         appendConfusion(heard: heard, corrected: corrected, contexts: memory.contexts, confidence: memory.confidence, to: &profile)
+        for spokenForm in splitForms(memory.payload["spoken_forms"] ?? memory.payload["spoken_forms_json"]) {
+            appendConfusion(heard: spokenForm, corrected: corrected, contexts: memory.contexts, confidence: memory.confidence, to: &profile)
+        }
     }
 
     private static func appendTrainingCorrections(from memory: DictationMemory, to profile: inout DictationProfile) {

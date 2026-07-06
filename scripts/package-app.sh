@@ -5,8 +5,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$ROOT/dist/QuietType.app"
 ARM_RELEASE_BIN="$ROOT/.build/arm64-apple-macosx/release/LocalTypeMac"
 ARM_BIN="$ROOT/.build/arm64-apple-macosx/debug/LocalTypeMac"
-X86_RELEASE_BIN="$ROOT/.build/x86_64-apple-macosx/release/LocalTypeMac"
-X86_BIN="$ROOT/.build/x86_64-apple-macosx/debug/LocalTypeMac"
 SERVER_BIN="$ROOT/vendor/argmax-oss-swift/.build/arm64-apple-macosx/release/argmax-cli"
 WHISPER_CPP_BIN="$ROOT/vendor/whisper.cpp/build-cpu/bin/whisper-cli"
 DEFAULT_WHISPERKIT_MODEL="$HOME/Documents/huggingface/models/argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930_626MB"
@@ -71,10 +69,10 @@ if [[ -x "$ARM_RELEASE_BIN" ]]; then
   BIN="$ARM_RELEASE_BIN"
 elif [[ -x "$ARM_BIN" ]]; then
   BIN="$ARM_BIN"
-elif [[ -x "$X86_RELEASE_BIN" ]]; then
-  BIN="$X86_RELEASE_BIN"
 else
-  BIN="$X86_BIN"
+  echo "Missing arm64 built binary: $ARM_RELEASE_BIN" >&2
+  echo "Run: swift build --arch arm64 --product LocalTypeMac" >&2
+  exit 1
 fi
 
 if [[ ! -x "$BIN" ]]; then

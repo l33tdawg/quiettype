@@ -122,10 +122,30 @@ final class WhisperCommandASRBackendTests: XCTestCase {
         )
     }
 
+    func testPreservesSingingMarkerWithDetectedWords() {
+        let stdout = """
+        [00:00:00.000 --> 00:00:01.000] *singing*
+        [00:00:01.000 --> 00:00:02.000] I want it all
+        """
+
+        XCTAssertEqual(
+            WhisperCommandASRBackend.parseTranscript(stdout: stdout),
+            "[singing] I want it all"
+        )
+    }
+
+    func testPreservesSingingOnlyTranscript() {
+        XCTAssertEqual(
+            WhisperCommandASRBackend.parseTranscript(stdout: "*singing*"),
+            "[singing]"
+        )
+    }
+
     func testDetectsNoiseOnlyTranscript() {
         XCTAssertTrue(WhisperCommandASRBackend.isNoiseOnlyTranscript("music"))
         XCTAssertTrue(WhisperCommandASRBackend.isNoiseOnlyTranscript("[Music]"))
         XCTAssertTrue(WhisperCommandASRBackend.isNoiseOnlyTranscript("♪♪♪"))
+        XCTAssertFalse(WhisperCommandASRBackend.isNoiseOnlyTranscript("[singing]"))
         XCTAssertFalse(WhisperCommandASRBackend.isNoiseOnlyTranscript("music is too loud here"))
     }
 

@@ -7,6 +7,8 @@ private struct ListCandidate {
 }
 
 public struct RuleBasedSemanticEditor: SemanticEditor {
+    private static let paragraphBreakToken = "<<<QUIETTYPE_PARAGRAPH_BREAK>>>"
+
     public init() {}
 
     public func edit(_ request: EditorRequest) async throws -> EditorResult {
@@ -16,10 +18,9 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             .joined(separator: " ")
 
         var text = combined
-            .replacingOccurrences(of: #"\b(um|uh|like)\b"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"\b(um|uh)\b"#, with: "", options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(of: #"\b(the)\s+\1\b"#, with: "$1", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        text = normalizeWhitespacePreservingParagraphs(text)
 
         text = resolveSimpleCorrections(text)
         text = format(text, for: request.appContext.profile)
@@ -79,14 +80,317 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         }
 
         var formatted = normalizeInlineNumbers(in: text)
-        formatted = formatted.replacingOccurrences(of: " and ", with: " and ")
-        formatted = formatted.prefix(1).uppercased() + formatted.dropFirst()
-
-        if !formatted.hasSuffix(".") && !formatted.hasSuffix("?") && !formatted.hasSuffix("!") {
-            formatted += "."
-        }
+        formatted = formatProse(formatted, for: profile)
 
         return formatted
+    }
+
+    private func formatProse(_ text: String, for profile: AppProfile) -> String {
+        let punctuated = applySpokenPunctuation(to: text)
+        let explicitParagraphs = splitExplicitParagraphs(punctuated)
+        if explicitParagraphs.count > 1 {
+            if profile == .email {
+                return explicitParagraphs
+                    .map { formatParagraph($0, profile: profile) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n\n")
+            }
+            return explicitParagraphs
+                .flatMap { formatInferredParagraphs($0, profile: profile) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+        }
+
+        let existingParagraphs = splitExistingParagraphs(punctuated)
+        if existingParagraphs.count > 1 {
+            return existingParagraphs
+                .flatMap { formatInferredParagraphs($0, profile: profile) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+        }
+
+        return formatInferredParagraphs(punctuated, profile: profile)
+            .joined(separator: "\n\n")
+    }
+
+    private func formatInferredParagraphs(_ text: String, profile: AppProfile) -> [String] {
+        let inferred = inferSentences(in: text, profile: profile)
+        let sentences = splitSentences(in: inferred).map(formatSentence).filter { !$0.isEmpty }
+        guard !sentences.isEmpty else {
+            return [formatSentence(text)]
+        }
+
+        return groupSentencesIntoParagraphs(sentences, profile: profile)
+            .map { $0.joined(separator: " ") }
+    }
+
+    private func applySpokenPunctuation(to text: String) -> String {
+        var result = " \(text) "
+        let replacements = [
+            (#"\s+(?:new paragraph|next paragraph)\s+"#, " \(Self.paragraphBreakToken) "),
+            (#"\s+period\s+"#, ". "),
+            (#"\s+full stop\s+"#, ". "),
+            (#"\s+question mark\s+"#, "? "),
+            (#"\s+exclamation mark\s+"#, "! "),
+            (#"\s+exclamation point\s+"#, "! "),
+            (#"\s+colon\s+"#, ": "),
+            (#"\s+semicolon\s+"#, "; "),
+            (#"\s+comma\s+"#, ", ")
+        ]
+
+        for (pattern, replacement) in replacements {
+            result = result.replacingOccurrences(of: pattern, with: replacement, options: [.regularExpression, .caseInsensitive])
+        }
+
+        return normalizeWhitespacePreservingParagraphs(result)
+    }
+
+    private func splitExplicitParagraphs(_ text: String) -> [String] {
+        text.components(separatedBy: Self.paragraphBreakToken)
+            .map(normalizeWhitespace)
+            .filter { !$0.isEmpty }
+    }
+
+    private func splitExistingParagraphs(_ text: String) -> [String] {
+        text.components(separatedBy: "\n\n")
+            .map(normalizeWhitespace)
+            .filter { !$0.isEmpty }
+    }
+
+    private func formatParagraph(_ text: String, profile: AppProfile) -> String {
+        if profile == .email {
+            if let greeting = formatEmailGreetingOnly(text) {
+                return greeting
+            }
+            if let split = splitEmailGreeting(formatSentence(text)) {
+                return [split.greeting, split.body].joined(separator: "\n\n")
+            }
+        }
+
+        let sentences = splitSentences(in: inferSentences(in: text, profile: profile))
+            .map(formatSentence)
+            .filter { !$0.isEmpty }
+        if sentences.isEmpty {
+            return formatSentence(text)
+        }
+        return sentences.joined(separator: " ")
+    }
+
+    private func formatEmailGreetingOnly(_ text: String) -> String? {
+        let normalized = normalizeWhitespace(text)
+            .trimmingCharacters(in: CharacterSet(charactersIn: " ."))
+        guard let regex = try? NSRegularExpression(pattern: #"^(hi|hello|hey)\s+([^,]+),?$"#, options: [.caseInsensitive]) else {
+            return nil
+        }
+        let range = NSRange(normalized.startIndex..<normalized.endIndex, in: normalized)
+        guard let match = regex.firstMatch(in: normalized, range: range),
+              let salutationRange = Range(match.range(at: 1), in: normalized),
+              let nameRange = Range(match.range(at: 2), in: normalized) else {
+            return nil
+        }
+        let salutation = String(normalized[salutationRange])
+        let name = normalizeWhitespace(String(normalized[nameRange]))
+        return "\(salutation.prefix(1).uppercased() + salutation.dropFirst().lowercased()) \(name),"
+    }
+
+    private func inferSentences(in text: String, profile: AppProfile) -> String {
+        var result = normalizeWhitespacePreservingParagraphs(text)
+        guard !result.contains(Self.paragraphBreakToken), result.count >= 120 || profile == .email else {
+            return result
+        }
+
+        let breakPattern = #"(?i)(?<![.!?])\s+(the main issue is|the key problem is|the next step is|separately|finally|please|i will|we should|for the [a-z ]{3,40} section|on the [a-z ]{3,40} side)\b"#
+        result = result.replacingOccurrences(of: breakPattern, with: ". $1", options: [.regularExpression])
+        return normalizeWhitespacePreservingParagraphs(result)
+    }
+
+    private func splitSentences(in text: String) -> [String] {
+        let normalized = normalizeWhitespace(text)
+        guard !normalized.isEmpty else {
+            return []
+        }
+
+        var sentences: [String] = []
+        var current = ""
+        var index = normalized.startIndex
+        while index < normalized.endIndex {
+            let character = normalized[index]
+            current.append(character)
+
+            if (character == "." || character == "?" || character == "!"),
+               shouldSplitSentence(at: index, in: normalized) {
+                sentences.append(current)
+                current = ""
+            }
+            index = normalized.index(after: index)
+        }
+        if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sentences.append(current)
+        }
+        return sentences
+    }
+
+    private func shouldSplitSentence(at index: String.Index, in text: String) -> Bool {
+        let character = text[index]
+        guard character == "." else {
+            return true
+        }
+
+        if isDecimalPeriod(at: index, in: text) || isProtectedAbbreviationPeriod(at: index, in: text) {
+            return false
+        }
+        return true
+    }
+
+    private func isDecimalPeriod(at index: String.Index, in text: String) -> Bool {
+        guard index > text.startIndex else {
+            return false
+        }
+        let previous = text[text.index(before: index)]
+        let nextIndex = text.index(after: index)
+        guard nextIndex < text.endIndex else {
+            return false
+        }
+        return previous.isNumber && text[nextIndex].isNumber
+    }
+
+    private func isProtectedAbbreviationPeriod(at index: String.Index, in text: String) -> Bool {
+        let token = tokenBeforePeriod(at: index, in: text).lowercased()
+        if ["dr", "mr", "mrs", "ms", "prof", "sr", "jr", "st", "vs", "etc"].contains(token) {
+            return true
+        }
+        if token.count == 1 {
+            return true
+        }
+        let prefix = String(text[..<text.index(after: index)]).lowercased()
+        return prefix.hasSuffix("a.m.") || prefix.hasSuffix("p.m.")
+    }
+
+    private func tokenBeforePeriod(at index: String.Index, in text: String) -> String {
+        var start = index
+        while start > text.startIndex {
+            let previous = text.index(before: start)
+            let character = text[previous]
+            guard character.isLetter || character == "." else {
+                break
+            }
+            start = previous
+        }
+        return String(text[start..<index])
+    }
+
+    private func formatSentence(_ text: String) -> String {
+        var sentence = normalizeWhitespace(text)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !sentence.isEmpty else {
+            return ""
+        }
+
+        sentence = sentence.prefix(1).uppercased() + sentence.dropFirst()
+        if !sentence.hasSuffix(".") && !sentence.hasSuffix("?") && !sentence.hasSuffix("!") {
+            sentence += "."
+        }
+        return sentence
+    }
+
+    private func groupSentencesIntoParagraphs(_ sentences: [String], profile: AppProfile) -> [[String]] {
+        guard sentences.count > 1 else {
+            return [sentences]
+        }
+
+        if profile == .email {
+            return groupEmailSentences(sentences)
+        }
+
+        let totalLength = sentences.joined(separator: " ").count
+        let hasCueParagraph = sentences.dropFirst().contains(where: shouldStartNewParagraph)
+        guard totalLength >= 220 || sentences.count >= 4 || hasCueParagraph else {
+            return [sentences]
+        }
+
+        var paragraphs: [[String]] = []
+        var current: [String] = []
+        for sentence in sentences {
+            if shouldStartNewParagraph(with: sentence), !current.isEmpty {
+                paragraphs.append(current)
+                current = [sentence]
+            } else if current.count >= 2 {
+                paragraphs.append(current)
+                current = [sentence]
+            } else {
+                current.append(sentence)
+            }
+        }
+        if !current.isEmpty {
+            paragraphs.append(current)
+        }
+        return paragraphs
+    }
+
+    private func groupEmailSentences(_ sentences: [String]) -> [[String]] {
+        var remaining = sentences
+        var paragraphs: [[String]] = []
+
+        if let first = remaining.first,
+           let split = splitEmailGreeting(first) {
+            paragraphs.append([split.greeting])
+            remaining[0] = split.body
+        }
+
+        var body: [String] = []
+        for sentence in remaining {
+            if isEmailSignoff(sentence) {
+                if !body.isEmpty {
+                    paragraphs.append(body)
+                    body.removeAll()
+                }
+                paragraphs.append([sentence])
+            } else {
+                body.append(sentence)
+            }
+        }
+        if !body.isEmpty {
+            paragraphs.append(body)
+        }
+
+        return paragraphs.isEmpty ? [sentences] : paragraphs
+    }
+
+    private func splitEmailGreeting(_ sentence: String) -> (greeting: String, body: String)? {
+        guard let regex = try? NSRegularExpression(pattern: #"^(Hi|Hello|Hey)\s+([^,]+),\s+(.+)$"#, options: [.caseInsensitive]) else {
+            return nil
+        }
+        let range = NSRange(sentence.startIndex..<sentence.endIndex, in: sentence)
+        guard let match = regex.firstMatch(in: sentence, range: range),
+              let salutationRange = Range(match.range(at: 1), in: sentence),
+              let nameRange = Range(match.range(at: 2), in: sentence),
+              let bodyRange = Range(match.range(at: 3), in: sentence) else {
+            return nil
+        }
+
+        let salutation = String(sentence[salutationRange])
+        let name = normalizeWhitespace(String(sentence[nameRange]))
+        let greeting = "\(salutation.prefix(1).uppercased() + salutation.dropFirst().lowercased()) \(name),"
+        return (greeting, formatSentence(String(sentence[bodyRange])))
+    }
+
+    private func isEmailSignoff(_ sentence: String) -> Bool {
+        let lower = sentence.lowercased()
+        return lower.hasPrefix("best,")
+            || lower.hasPrefix("thanks,")
+            || lower.hasPrefix("thank you,")
+            || lower.hasPrefix("regards,")
+    }
+
+    private func shouldStartNewParagraph(with sentence: String) -> Bool {
+        let lower = sentence.lowercased()
+        return lower.hasPrefix("the main issue")
+            || lower.hasPrefix("the key problem")
+            || lower.hasPrefix("the next step")
+            || lower.hasPrefix("separately")
+            || lower.hasPrefix("finally")
+            || lower.hasPrefix("for the ")
+            || lower.hasPrefix("on the ")
     }
 
     private func listCandidate(from text: String, profile: AppProfile) -> ListCandidate? {
@@ -102,11 +406,23 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             "to do list",
             "task list",
             "numbered list",
+            "bullet list",
+            "bulleted list",
+            "bullet point",
+            "bullet points",
             "make a list",
             "create a list",
             "list of",
             "grocery order"
         ].contains { lower.contains($0) }
+        let hasBulletMarkers = lower.contains("bullet point")
+            || lower.contains("bullet points")
+            || bareBulletMarkerCount(in: text) >= 2
+        let hasBulletListIntent = lower.contains("bullet list")
+            || lower.contains("bulleted list")
+            || lower.contains("bullet point")
+            || lower.contains("bullet points")
+            || hasBulletMarkers
 
         let hasGroceryContext = containsGroceryTerm(in: lower)
         let hasShoppingIntent = lower.contains("going shopping")
@@ -126,6 +442,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         let hasDigitQuantitySequence = digitQuantityMarkerCount(in: text) >= 2
         let hasStructuredQuantityIntent = hasDigitQuantitySequence
             && (hasExplicitListIntent || hasGroceryContext || lower.contains("menu"))
+        let hasNumberedMarkerIntent = lower.contains("number one") && lower.contains("number two")
 
         let hasNotesItemIntent = profile == .notes
             && (
@@ -139,7 +456,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
                     || lower.hasPrefix("we need ")
             )
 
-        guard hasExplicitListIntent || hasShoppingIntent || hasMessyGroceryIntent || hasNotesItemIntent || hasStructuredQuantityIntent else {
+        guard hasExplicitListIntent || hasShoppingIntent || hasMessyGroceryIntent || hasNotesItemIntent || hasStructuredQuantityIntent || hasNumberedMarkerIntent || hasBulletListIntent else {
             return nil
         }
 
@@ -149,9 +466,9 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             from: embedded.itemsText ?? normalizeGroceryDictationText(text, isGroceryContext: hasMessyGroceryIntent || hasShoppingIntent || hasExplicitListIntent),
             numbered: numbered
         )
-        let items = splitListItems(from: body, numbered: numbered)
+        let items = splitListItems(from: body, numbered: numbered, splitSpaceSeparated: !hasBulletMarkers)
 
-        let minimumItems = hasExplicitListIntent || hasShoppingIntent || hasMessyGroceryIntent || hasStructuredQuantityIntent ? 2 : 3
+        let minimumItems = hasExplicitListIntent || hasShoppingIntent || hasMessyGroceryIntent || hasStructuredQuantityIntent || hasNumberedMarkerIntent || hasBulletListIntent ? 2 : 3
         guard items.count >= minimumItems else {
             return nil
         }
@@ -269,7 +586,8 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         let patterns = [
             #"\bfor the (?:shopping|grocery|todo|to do|task) list\b"#,
             #"\b(?:shopping|grocery|todo|to do|task) list(?: is| with| of)?\b"#,
-            #"\b(?:make|create|write)(?: me)? a (?:numbered )?(?:shopping |grocery |todo |to do |task )?list(?: of| with)?\b"#,
+            #"\b(?:bullet|bulleted) list(?: is| with| of)?\b"#,
+            #"\b(?:make|create|write)(?: me)? a (?:numbered |bullet |bulleted )?(?:shopping |grocery |todo |to do |task )?list(?: of| with)?\b"#,
             #"\blist of\b"#,
             #"\bwe(?: are|'re)? going shopping(?: and)?(?: we)?(?: need| need to get| need to buy| should get| have to get)?\b"#,
             #"^\s*(?:we )?(?:need to buy|need to get|should get|have to get|pick up|buy|get|add|we need|order)\b"#
@@ -292,10 +610,16 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         return regex?.numberOfMatches(in: text, range: range) ?? 0
     }
 
-    private func splitListItems(from text: String, numbered: Bool) -> [String] {
+    private func bareBulletMarkerCount(in text: String) -> Int {
+        let regex = try? NSRegularExpression(pattern: #"\bbullet\b"#, options: [.caseInsensitive])
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex?.numberOfMatches(in: text, range: range) ?? 0
+    }
+
+    private func splitListItems(from text: String, numbered: Bool, splitSpaceSeparated: Bool = true) -> [String] {
         var value = text
             .replacingOccurrences(of: #"\bactually no\s+([^,.;]+?)\s+(?=\w)"#, with: " | remove $1 | ", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"\b(?:comma|then|plus|new line|newline|next line)\b"#, with: " | ", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"\b(?:comma|then|plus|new line|newline|next line|bullet point|bullet)\b"#, with: " | ", options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(of: #"[,\n;.!?]+"#, with: " | ", options: .regularExpression)
 
         if numbered {
@@ -308,7 +632,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             .split(separator: "|")
             .map(String.init)
 
-        if !numbered {
+        if !numbered && splitSpaceSeparated {
             rawItems = rawItems.flatMap(splitSpaceSeparatedItemsIfNeeded)
         }
 
@@ -553,11 +877,21 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             #"\bnumber three\b"#,
             #"\bnumber four\b"#,
             #"\bnumber five\b"#,
+            #"\bnumber six\b"#,
+            #"\bnumber seven\b"#,
+            #"\bnumber eight\b"#,
+            #"\bnumber nine\b"#,
+            #"\bnumber ten\b"#,
             #"\bfirst\b"#,
             #"\bsecond\b"#,
             #"\bthird\b"#,
             #"\bfourth\b"#,
-            #"\bfifth\b"#
+            #"\bfifth\b"#,
+            #"\bsixth\b"#,
+            #"\bseventh\b"#,
+            #"\beighth\b"#,
+            #"\bninth\b"#,
+            #"\btenth\b"#
         ]
 
         for marker in markers {
@@ -605,6 +939,16 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         text
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizeWhitespacePreservingParagraphs(_ text: String) -> String {
+        var result = text
+            .replacingOccurrences(of: #"\n\s*\n+"#, with: " \(Self.paragraphBreakToken) ", options: .regularExpression)
+        result = result
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: " \(Self.paragraphBreakToken) ", with: Self.paragraphBreakToken)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return result
     }
 
     private func applySpellingPreference(_ text: String, _ preference: SpellingPreference) -> String {

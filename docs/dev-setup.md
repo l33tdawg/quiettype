@@ -6,8 +6,7 @@ This repository is a Swift Package for QuietType, a local-first macOS dictation 
 
 - macOS 13 or newer.
 - Xcode Command Line Tools with Swift 5.9 or newer.
-- Apple Silicon is the intended development target.
-- Optional: Rosetta when working from a mixed-architecture or x86_64 shell.
+- Apple Silicon. QuietType supports M1 Macs and newer.
 - Optional: Ollama listening on loopback only.
 - Required for app-level dictation flows: SAGE installed at `/Applications/SAGE` or bundled at `QuietType.app/Contents/Resources/SAGE.app`.
 
@@ -22,29 +21,18 @@ env \
   swift build
 ```
 
-## Intended Apple Silicon Test Command
+## Test Command
 
-From a native Apple Silicon shell, run tests without forcing an architecture:
+Run tests as arm64:
 
 ```bash
 env \
   SWIFTPM_HOME=/Users/l33tdawg/nodejs-projects/typeless-secure/.swiftpm-home \
   CLANG_MODULE_CACHE_PATH=/Users/l33tdawg/nodejs-projects/typeless-secure/.clang-module-cache \
-  swift test --disable-swift-testing
+  arch -arm64 swift test --arch arm64 --disable-swift-testing
 ```
 
 The test suite is XCTest-based. `--disable-swift-testing` keeps the run on XCTest and avoids Swift Testing discovery behavior that is not needed for this package.
-
-## Rosetta or Mixed-Architecture Test Command
-
-In this environment, a mixed Apple Silicon/Rosetta setup can build one architecture and try to load tests under another. Use the known-good x86_64 command when the shell or SwiftPM process is running under Rosetta:
-
-```bash
-env \
-  SWIFTPM_HOME=/Users/l33tdawg/nodejs-projects/typeless-secure/.swiftpm-home \
-  CLANG_MODULE_CACHE_PATH=/Users/l33tdawg/nodejs-projects/typeless-secure/.clang-module-cache \
-  swift test --arch x86_64 --disable-swift-testing
-```
 
 ## CLI Smoke Test
 
@@ -57,15 +45,6 @@ env \
   swift run localtype "the sage benchmark needs to rerun the comet b f t latency numbers"
 ```
 
-For a Rosetta or mixed-architecture shell, pin the run to x86_64:
-
-```bash
-env \
-  SWIFTPM_HOME=/Users/l33tdawg/nodejs-projects/typeless-secure/.swiftpm-home \
-  CLANG_MODULE_CACHE_PATH=/Users/l33tdawg/nodejs-projects/typeless-secure/.clang-module-cache \
-  swift run --arch x86_64 localtype "the sage benchmark needs to rerun the comet b f t latency numbers"
-```
-
 Expected output is a polished version of the input, preserving domain vocabulary such as `SAGE` and `CometBFT`.
 
 ## App Bundle
@@ -76,7 +55,7 @@ Build and package the visible macOS app:
 env \
   SWIFTPM_HOME=/Users/l33tdawg/nodejs-projects/typeless-secure/.swiftpm-home \
   CLANG_MODULE_CACHE_PATH=/Users/l33tdawg/nodejs-projects/typeless-secure/.clang-module-cache \
-  swift build --arch x86_64 --product LocalTypeMac
+  swift build --arch arm64 --product LocalTypeMac
 
 bash scripts/package-app.sh
 open dist/QuietType.app

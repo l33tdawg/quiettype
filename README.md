@@ -10,7 +10,7 @@ dictation.
 
 > Speak freely. Transcribe locally. Nothing leaves your Mac.
 
-![QuietType app onboarding screen](docs/screenshots/quiettype-onboarding.png)
+![QuietType home dashboard](docs/screenshots/quiettype-home.png)
 
 ## Why
 
@@ -87,7 +87,13 @@ The setup flow asks users to read short scripts. QuietType uses those local
 samples to improve cadence, vocabulary and spelling hints. Samples stay on the
 user's machine.
 
-![QuietType guided setup screenshot](docs/screenshots/quiettype-guide-focus.png)
+![QuietType transcript review](docs/screenshots/quiettype-review.png)
+
+![QuietType settings](docs/screenshots/quiettype-settings.png)
+
+![QuietType about and sharing](docs/screenshots/quiettype-about.png)
+
+![QuietType dark mode dashboard](docs/screenshots/quiettype-home-dark.png)
 
 ### Mac-native workflow
 

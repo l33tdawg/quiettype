@@ -15,6 +15,7 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="theme-color" content="#f6f6f3">
   <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <script data-goatcounter="https://quiettype.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
   <style>
     :root {
       --paper: #f6f6f3;
@@ -504,17 +505,22 @@
 
     .screens {
       display: grid;
-      grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 18px;
       align-items: start;
     }
 
     .screenshot-card {
+      grid-column: span 2;
       padding: 12px;
       border: 1px solid var(--line);
       border-radius: 10px;
       background: var(--panel);
       box-shadow: 0 18px 52px rgba(0, 0, 0, 0.08);
+    }
+
+    .screenshot-card.wide {
+      grid-column: span 3;
     }
 
     .screenshot-card img {
@@ -579,6 +585,28 @@
       font-weight: 600;
     }
 
+    .download-metrics {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .download-metrics img {
+      display: block;
+      height: 26px;
+    }
+
+    .download-metrics a {
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 760;
+      text-decoration: underline;
+      text-decoration-thickness: 1px;
+      text-underline-offset: 4px;
+    }
+
     footer {
       padding: 28px 0 36px;
       border-top: 1px solid var(--line);
@@ -605,6 +633,11 @@
       .screens,
       .release {
         grid-template-columns: 1fr;
+      }
+
+      .screenshot-card,
+      .screenshot-card.wide {
+        grid-column: auto;
       }
 
       .grid,
@@ -695,7 +728,7 @@
           <canvas class="signal" id="signalCanvas" aria-hidden="true"></canvas>
           <div class="app-frame">
             <div class="frame-bar"><span class="traffic"></span><span class="traffic"></span><span class="traffic"></span></div>
-            <img src="./screenshots/quiettype-onboarding.png" alt="QuietType macOS app showing private setup and dictation controls">
+            <img src="./screenshots/quiettype-home.png" alt="QuietType macOS app showing the Home dictation dashboard">
           </div>
           <div class="terminal-strip" aria-label="Example agent instruction">
             <span id="typedPrompt">Ask Codex to review the auth flow, preserve the Ed25519 terminology, add tests, and store the correction in SAGE.</span><span class="cursor"></span>
@@ -825,13 +858,25 @@
           <p class="section-lede">The app keeps the operational details visible without making the user manage backend machinery. Setup, SAGE memory review and privacy controls stay close to the dictation workflow.</p>
         </div>
         <div class="screens">
-          <figure class="screenshot-card reveal">
-            <img src="./screenshots/quiettype-onboarding.png" alt="QuietType home screen with setup guidance and local activity">
-            <figcaption class="caption">Home, setup progress and local activity.</figcaption>
+          <figure class="screenshot-card wide reveal">
+            <img src="./screenshots/quiettype-home.png" alt="QuietType Home screen with dictation controls and review signals">
+            <figcaption class="caption">Home dashboard in light mode.</figcaption>
+          </figure>
+          <figure class="screenshot-card wide reveal">
+            <img src="./screenshots/quiettype-home-dark.png" alt="QuietType Home screen in dark mode with high-contrast status cards">
+            <figcaption class="caption">Home dashboard in dark mode.</figcaption>
           </figure>
           <figure class="screenshot-card reveal">
-            <img src="./screenshots/quiettype-guide-focus.png" alt="QuietType guided onboarding overlay">
-            <figcaption class="caption">Guided onboarding for first-time setup.</figcaption>
+            <img src="./screenshots/quiettype-review.png" alt="QuietType Review screen showing transcript correction history">
+            <figcaption class="caption">Transcript review and corrections.</figcaption>
+          </figure>
+          <figure class="screenshot-card reveal">
+            <img src="./screenshots/quiettype-settings.png" alt="QuietType Settings screen showing dictation controls, readiness, SAGE memory and version">
+            <figcaption class="caption">Settings, readiness and updates.</figcaption>
+          </figure>
+          <figure class="screenshot-card reveal">
+            <img src="./screenshots/quiettype-about.png" alt="QuietType About screen with sharing links">
+            <figcaption class="caption">About and sharing.</figcaption>
           </figure>
         </div>
       </div>
@@ -842,6 +887,10 @@
         <div>
           <h2>Private beta now. Public at 1.0 beta.</h2>
           <p>The repo stays private while the last beta releases harden setup, permissions, memory review and packaging. The GitHub Pages site is already structured for the public launch at <strong>l33tdawg.github.io/quiettype</strong>.</p>
+          <div class="download-metrics" aria-label="GitHub release download metrics">
+            <img src="https://img.shields.io/github/downloads/l33tdawg/quiettype/total?style=flat-square&label=GitHub%20downloads&color=111111" alt="Total GitHub release downloads">
+            <a href="https://github.com/l33tdawg/quiettype/releases">View releases</a>
+          </div>
         </div>
         <div class="release-card">
           <strong>Current beta focus</strong>

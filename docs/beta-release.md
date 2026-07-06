@@ -13,6 +13,9 @@ QUIETTYPE_CODESIGN_IDENTITY="Developer ID Application: Dhillon Kannabhiran (2N7G
 
 This runs tests, builds the arm64 release binary, packages `dist/QuietType.app`, signs the app and bundled helpers, creates a DMG, verifies it, and writes a SHA-256 checksum next to it.
 
+Run this script on Apple Silicon or an arm64 macOS CI runner. It invokes Swift
+under `arch -arm64` so tests and the app binary match the arm64-only beta DMG.
+
 By default the private beta package also bundles the local WhisperKit/Core ML ASR model from:
 
 ```text
@@ -62,8 +65,8 @@ bundled because QuietType requires SAGE governed local memory.
 Expected output:
 
 ```text
-dist/QuietType-0.1.0-beta.1-macOS-arm64.dmg
-dist/QuietType-0.1.0-beta.1-macOS-arm64.dmg.sha256
+dist/QuietType-1.0.0-beta.1-macOS-arm64.dmg
+dist/QuietType-1.0.0-beta.1-macOS-arm64.dmg.sha256
 ```
 
 ## 2. Notarization
@@ -98,8 +101,8 @@ QUIETTYPE_NOTARIZE=1 bash scripts/beta-release.sh
 The repository is private, so a GitHub release is private to people with repo access.
 
 ```bash
-VERSION="v0.1.0-beta.1"
-DMG="dist/QuietType-0.1.0-beta.1-macOS-arm64.dmg"
+VERSION="v1.0.0-beta.1"
+DMG="dist/QuietType-1.0.0-beta.1-macOS-arm64.dmg"
 
 git tag "$VERSION"
 git push origin "$VERSION"
@@ -107,7 +110,7 @@ git push origin "$VERSION"
 gh release create "$VERSION" "$DMG" "$DMG.sha256" \
   --repo l33tdawg/quiettype \
   --prerelease \
-  --title "QuietType 0.1.0 beta 1" \
+  --title "QuietType 1.0.0 beta 1" \
   --notes "Private beta for macOS Apple Silicon. Local dictation, local memory, no cloud processing."
 ```
 
@@ -128,6 +131,17 @@ The intended public URL is:
 https://l33tdawg.github.io/quiettype/
 ```
 
+The Pages site includes cookie-free GoatCounter analytics:
+
+```html
+<script data-goatcounter="https://quiettype.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
+```
+
+Create the GoatCounter site code `quiettype` before public launch. This tracks
+page engagement on GitHub Pages only; the macOS app does not call home. Release
+download counts remain on GitHub Releases and are surfaced on the landing page
+with the GitHub downloads badge.
+
 GitHub rejected Pages enablement while the repository is private on the current
 plan. The `/docs` site is ready; enable Pages when the repo becomes public for
 the 1.0 beta launch, or upgrade to a plan that supports private Pages.
@@ -136,7 +150,7 @@ the 1.0 beta launch, or upgrade to a plan that supports private Pages.
 
 The workflow at `.github/workflows/beta-release.yml` builds, signs, notarizes,
 staples and uploads a private beta DMG on pushes to `main`. When the push is a
-tag like `v0.1.0-beta.7`, it also creates a GitHub prerelease.
+tag like `v1.0.0-beta.1`, it also creates a GitHub prerelease.
 
 Required repository secrets:
 
