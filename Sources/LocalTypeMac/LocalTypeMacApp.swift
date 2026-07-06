@@ -900,8 +900,9 @@ struct TesterView: View {
         case .access:
             selectedSection = .help
         case .training:
-            selectedSection = .setup
-            selectedSetupTab = .training
+            model.discardCalibrationRecording()
+            firstRunAssistantComplete = true
+            selectedSection = .home
         case .experience:
             model.copyOutput()
         }
@@ -7790,6 +7791,25 @@ final class MenuBarModel: ObservableObject {
         trainingTranscriptDraft = ""
         lastTrainingAudioURL = nil
         statusMessage = "Loaded \(currentCalibrationSet.title)"
+    }
+
+    func discardCalibrationRecording() {
+        trainingCaptureService?.stop()
+        trainingCaptureService = nil
+        trainingStartedAt = nil
+        isTrainingRecording = false
+        trainingSamples = []
+        trainingSampleRate = 16_000
+        trainingFrameCount = 0
+        trainingDuration = 0
+        trainingInputLevel = 0
+        peakTrainingInputLevel = 0
+        peakTrainingInputRMS = 0
+        trainingNoiseFloorRMS = 0.006
+        trainingTranscriptDraft = ""
+        lastTrainingAudioURL = nil
+        statusMessage = "Voice training skipped"
+        lastError = nil
     }
 
     func toggleCalibrationRecording() async {
