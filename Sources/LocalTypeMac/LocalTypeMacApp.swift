@@ -331,9 +331,10 @@ struct TesterView: View {
     @State private var showingTeachSheet = false
     @State private var showingRecognizedTerms = false
     @State private var guideStep: QuietTypeGuideStep?
-    @State private var launchHeroMessage = QuietTypeHeroMessage.random()
-    @State private var showLaunchHero = true
+    @State private var launchHeroMessageIndex = QuietTypeHeroMessage.randomIndex()
+    @State private var launchHeroTextVisible = true
     private let permissionTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    private let heroMessageTimer = Timer.publish(every: 90, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Group {
@@ -376,7 +377,6 @@ struct TesterView: View {
             if model.setupComplete && firstRunAssistantComplete && !hasSeenGuide {
                 guideStep = .welcome
             }
-            scheduleLaunchHeroDismissal()
         }
         .onChange(of: model.setupComplete) { isComplete in
             if isComplete {
@@ -388,6 +388,9 @@ struct TesterView: View {
                 model.refreshSystemMetrics()
                 await model.refreshPermissions()
             }
+        }
+        .onReceive(heroMessageTimer) { _ in
+            rotateLaunchHeroMessage()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task {
@@ -404,13 +407,21 @@ struct TesterView: View {
         }
     }
 
-    private func scheduleLaunchHeroDismissal() {
-        guard showLaunchHero else {
+    private var launchHeroMessage: QuietTypeHeroMessage {
+        QuietTypeHeroMessage.message(at: launchHeroMessageIndex)
+    }
+
+    private func rotateLaunchHeroMessage() {
+        guard QuietTypeHeroMessage.all.count > 1 else {
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
-            withAnimation(.easeInOut(duration: 0.65)) {
-                showLaunchHero = false
+        withAnimation(.easeInOut(duration: 0.42)) {
+            launchHeroTextVisible = false
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.46) {
+            launchHeroMessageIndex = QuietTypeHeroMessage.nextIndex(after: launchHeroMessageIndex)
+            withAnimation(.easeInOut(duration: 0.48)) {
+                launchHeroTextVisible = true
             }
         }
     }
@@ -900,8 +911,6 @@ struct TesterView: View {
         nativePage {
             VStack(alignment: .leading, spacing: 20) {
                 header
-                    .opacity(showLaunchHero ? 1 : 0)
-                    .accessibilityHidden(!showLaunchHero)
                 if !model.setupComplete {
                     setupNudgePanel
                 }
@@ -1551,10 +1560,15 @@ struct TesterView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(launchHeroMessage.title)
                     .font(.system(size: 40, weight: .bold))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.82)
                 Text(launchHeroMessage.subtitle)
                     .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(.secondary)
             }
+            .id(launchHeroMessage.id)
+            .opacity(launchHeroTextVisible ? 1 : 0)
+            .animation(.easeInOut(duration: 0.48), value: launchHeroTextVisible)
             Spacer()
             VStack(alignment: .trailing, spacing: 8) {
                 HStack(spacing: 6) {
@@ -2608,7 +2622,8 @@ private enum QuietTypeSection: String, CaseIterable, Identifiable {
     }
 }
 
-private struct QuietTypeHeroMessage {
+private struct QuietTypeHeroMessage: Identifiable {
+    var id: String { title }
     var title: String
     var subtitle: String
 
@@ -2636,11 +2651,48 @@ private struct QuietTypeHeroMessage {
         QuietTypeHeroMessage(
             title: "Voice input for secure work.",
             subtitle: "Transcribe, polish, and insert without cloud dictation."
+        ),
+        QuietTypeHeroMessage(
+            title: "Think out loud. Keep it local.",
+            subtitle: "Long agent prompts become clean text on your Mac."
+        ),
+        QuietTypeHeroMessage(
+            title: "More context. Less typing.",
+            subtitle: "Give Codex and Claude the full brief without uploading speech."
+        ),
+        QuietTypeHeroMessage(
+            title: "Your prompt, not their server.",
+            subtitle: "Local transcription for source paths, bugs, names, and plans."
+        ),
+        QuietTypeHeroMessage(
+            title: "Talk like a person. Paste like a pro.",
+            subtitle: "QuietType turns messy speech into usable instructions."
+        ),
+        QuietTypeHeroMessage(
+            title: "Private words for real work.",
+            subtitle: "Built for terminals, editors, agents, notes, and Slack."
         )
     ]
 
-    static func random() -> QuietTypeHeroMessage {
-        all.randomElement() ?? all[0]
+    static func message(at index: Int) -> QuietTypeHeroMessage {
+        guard !all.isEmpty else {
+            return QuietTypeHeroMessage(title: "Speak freely. Transcribe locally.", subtitle: "Nothing leaves your Mac.")
+        }
+        return all[index % all.count]
+    }
+
+    static func randomIndex() -> Int {
+        guard !all.isEmpty else {
+            return 0
+        }
+        return Int.random(in: 0..<all.count)
+    }
+
+    static func nextIndex(after index: Int) -> Int {
+        guard !all.isEmpty else {
+            return 0
+        }
+        return (index + 1) % all.count
     }
 }
 
