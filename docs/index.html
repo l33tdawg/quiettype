@@ -14,7 +14,7 @@
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="theme-color" content="#f6f6f3">
-  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="icon" href="./icon.svg?v=1.0.0-beta.1" type="image/svg+xml">
   <script data-goatcounter="https://quiettype.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
   <style>
     :root {
@@ -43,6 +43,7 @@
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, sans-serif;
       letter-spacing: 0;
       scroll-behavior: smooth;
+      scroll-padding-top: 86px;
     }
 
     body {
@@ -154,8 +155,8 @@
 
     .hero-grid {
       display: grid;
-      grid-template-columns: minmax(0, 0.92fr) minmax(420px, 1.08fr);
-      gap: 58px;
+      grid-template-columns: minmax(0, 1.05fr) minmax(390px, 0.95fr);
+      gap: 50px;
       align-items: center;
     }
 
@@ -678,7 +679,7 @@
   <header class="nav">
     <div class="shell nav-inner">
       <a class="brand" href="https://l33tdawg.github.io/quiettype/" aria-label="QuietType home">
-        <img src="./icon.svg" alt="">
+        <img src="./icon.svg?v=1.0.0-beta.1" alt="">
         <span>QuietType</span>
       </a>
       <nav class="nav-links" aria-label="Primary">
@@ -686,7 +687,7 @@
         <a href="#privacy">Privacy</a>
         <a href="#sage">SAGE</a>
         <a href="#screenshots">Screenshots</a>
-        <a class="button" href="https://github.com/l33tdawg/quiettype/releases">Private beta</a>
+        <a class="button" href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-beta.1/QuietType-1.0.0-beta.1-macOS-arm64.dmg">Download</a>
       </nav>
     </div>
   </header>
@@ -695,13 +696,13 @@
     <section class="hero">
       <div class="shell hero-grid">
         <div class="reveal">
-          <div class="eyebrow">Native private beta for macOS Apple Silicon</div>
+          <div class="eyebrow">Native beta for macOS Apple Silicon</div>
           <h1>Talk to your coding agents faster.</h1>
           <p class="subhead">QuietType turns natural speech into precise instructions for Codex, Claude Code, ChatGPT, Cursor, terminals, editors and docs using local ML on your Mac. No cloud processing. SAGE-governed memory for corrections, vocabulary and review notes.</p>
           <div class="hero-actions">
-            <a class="button primary" href="https://github.com/l33tdawg/quiettype/releases">
+            <a class="button primary" href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-beta.1/QuietType-1.0.0-beta.1-macOS-arm64.dmg">
               <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-              Download private beta
+              Download for Mac
             </a>
             <a class="button ghost" href="#privacy">
               <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></svg>
@@ -710,7 +711,7 @@
           </div>
           <div class="launch-note">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h16"/><path d="M12 4v16"/></svg>
-            Repo is private during beta. Public launch is planned for the 1.0 beta milestone.
+            Public beta is live. Apple Silicon Mac required.
           </div>
         </div>
 
@@ -871,8 +872,8 @@
     <section class="section">
       <div class="shell release reveal">
         <div>
-          <h2>Private beta now. Public at 1.0 beta.</h2>
-          <p>The repo stays private while the last beta releases harden setup, permissions, memory review and packaging. The GitHub Pages site is already structured for the public launch at <strong>l33tdawg.github.io/quiettype</strong>.</p>
+          <h2>Public beta now available.</h2>
+          <p>QuietType 1.0.0 beta 1 is signed, notarized and ready for Apple Silicon Macs. Download the DMG from GitHub, drag QuietType into Applications and start local dictation.</p>
           <div class="download-metrics" aria-label="GitHub release download metrics">
             <img src="https://img.shields.io/github/downloads/l33tdawg/quiettype/total?style=flat-square&label=GitHub%20downloads&color=111111" alt="Total GitHub release downloads">
             <a href="https://github.com/l33tdawg/quiettype/releases">View releases</a>

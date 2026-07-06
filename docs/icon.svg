@@ -1,13 +1,39 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="QuietType">
-  <rect width="1024" height="1024" rx="224" fill="#F7F7F5"/>
-  <g transform="translate(512 512)">
-    <circle cx="0" cy="0" r="330" fill="#1F1F1F"/>
-    <circle cx="126" cy="-52" r="300" fill="#F7F7F5"/>
-    <rect x="-54" y="-170" width="108" height="244" rx="54" fill="#1F1F1F"/>
-    <path d="M-146 4c0 81 65 146 146 146S146 85 146 4" fill="none" stroke="#1F1F1F" stroke-width="42" stroke-linecap="round"/>
-    <path d="M0 150v104" fill="none" stroke="#1F1F1F" stroke-width="42" stroke-linecap="round"/>
-    <path d="M-82 254h164" fill="none" stroke="#1F1F1F" stroke-width="42" stroke-linecap="round"/>
-    <path d="M210-196v392" fill="none" stroke="#1F1F1F" stroke-width="36" stroke-linecap="round"/>
-    <path d="M162-196h96M162 196h96" fill="none" stroke="#1F1F1F" stroke-width="36" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">QuietType app icon</title>
+  <desc id="desc">A rounded QuietType app icon with a speech bubble Q mark and vertical audio waveform.</desc>
+
+  <defs>
+    <linearGradient id="tile" x1="180" y1="120" x2="820" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F1F0ED"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="320" y1="250" x2="730" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#334047"/>
+      <stop offset="1" stop-color="#111415"/>
+    </linearGradient>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#000000" flood-opacity="0.20"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="228" fill="url(#tile)"/>
+  <rect x="1" y="1" width="1022" height="1022" rx="227" fill="none" stroke="#DCDAD5" stroke-opacity="0.55" stroke-width="2"/>
+
+  <g filter="url(#soft-shadow)">
+    <path
+      d="M512 239c-154 0-280 111-280 248s126 248 280 248c42 0 82-8 118-23l102 54c23 12 49-13 37-37l-50-99c46-43 73-92 73-143 0-137-126-248-280-248Z"
+      fill="url(#ink)"/>
+    <ellipse cx="512" cy="487" rx="203" ry="177" fill="#F7F7F5"/>
+  </g>
+
+  <g fill="url(#ink)">
+    <rect x="336" y="451" width="25" height="72" rx="12.5"/>
+    <rect x="383" y="411" width="25" height="152" rx="12.5"/>
+    <rect x="430" y="375" width="25" height="224" rx="12.5"/>
+    <rect x="477" y="425" width="25" height="124" rx="12.5"/>
+    <rect x="524" y="356" width="25" height="262" rx="12.5"/>
+    <rect x="571" y="405" width="25" height="164" rx="12.5"/>
+    <rect x="618" y="444" width="25" height="86" rx="12.5"/>
+    <rect x="665" y="472" width="25" height="30" rx="12.5"/>
   </g>
 </svg>

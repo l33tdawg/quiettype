@@ -13,7 +13,7 @@ dictation.
 ![QuietType home dashboard](docs/screenshots/quiettype-home.png)
 
 <p align="center">
-  <a href="https://github.com/l33tdawg/QuietType/releases/download/v1.0.0-beta.1/QuietType-1.0.0-beta.1-macOS-arm64.dmg">
+  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-beta.1/QuietType-1.0.0-beta.1-macOS-arm64.dmg">
     <img alt="Download QuietType 1.0.0 beta 1 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.0%20beta%201-black?style=for-the-badge&logo=apple">
   </a>
 </p>
@@ -83,7 +83,7 @@ governed, inspectable and designed for local-first agent workflows.
 
 Learn more at the [SAGE public page](https://l33tdawg.github.io/sage/).
 
-Private beta builds are designed to bundle SAGE GUI so first-run setup can
+Beta builds are designed to bundle SAGE GUI so first-run setup can
 start the local SAGE node without asking users to hunt for a separate download.
 Release builds can pin a known-good SAGE GUI release to avoid version drift.
 
@@ -131,9 +131,8 @@ local-only unless the user explicitly changes a future SAGE network policy.
 
 ## Status
 
-QuietType is in private beta for macOS Apple Silicon. The repository will remain
-private until the 1.0 beta milestone, after a few more hardening releases around
-setup, permissions, memory review, packaging and accuracy.
+QuietType is in public beta for macOS Apple Silicon. The current public beta
+ships as a signed and notarized Apple Silicon DMG through GitHub Releases.
 
 Landing page target:
 
@@ -141,10 +140,9 @@ Landing page target:
 https://l33tdawg.github.io/quiettype/
 ```
 
-The GitHub Pages site is ready in `docs/` and should be enabled when the repo
-goes public for the 1.0 beta launch.
+The GitHub Pages site lives in `docs/`.
 
-Private releases:
+Public releases:
 
 ```text
 https://github.com/l33tdawg/quiettype/releases
