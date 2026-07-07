@@ -158,8 +158,8 @@
 
     .hero-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1.05fr) minmax(390px, 0.95fr);
-      gap: 50px;
+      grid-template-columns: minmax(0, 0.98fr) minmax(420px, 1.02fr);
+      gap: 68px;
       align-items: center;
     }
 
@@ -182,10 +182,10 @@
     }
 
     h1 {
-      max-width: 860px;
+      max-width: 760px;
       margin: 0;
-      font-size: clamp(58px, 8vw, 116px);
-      line-height: 0.89;
+      font-size: clamp(56px, 7.2vw, 104px);
+      line-height: 0.91;
       letter-spacing: 0;
       font-weight: 820;
     }
@@ -227,6 +227,7 @@
       min-height: 580px;
       display: grid;
       place-items: center;
+      justify-self: end;
     }
 
     .signal {
@@ -239,7 +240,7 @@
 
     .app-frame {
       position: relative;
-      width: min(720px, 100%);
+      width: min(760px, 108%);
       border: 1px solid rgba(0, 0, 0, 0.16);
       border-radius: 10px;
       background: var(--panel);
@@ -668,6 +669,11 @@
 
       .hero-visual {
         min-height: auto;
+        justify-self: stretch;
+      }
+
+      .app-frame {
+        width: min(720px, 100%);
       }
 
       .terminal-strip {
