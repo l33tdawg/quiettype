@@ -483,6 +483,8 @@ struct TesterView: View {
     @State private var selectedSetupTab: QuietTypeSetupTab = .overview
     @State private var showingTeachSheet = false
     @State private var showingRecognizedTerms = false
+    @State private var pendingReviewDeleteMemory: DictionaryMemoryItem?
+    @State private var isDeletingReviewMemory = false
     @State private var guideStep: QuietTypeGuideStep?
     @State private var launchHeroMessageIndex = QuietTypeHeroMessage.randomIndex()
     @State private var launchHeroTextVisible = true
@@ -1673,18 +1675,51 @@ struct TesterView: View {
                     subtitle: model.sageReady ? "QuietType will show transcript reviews and corrections here after dictation." : "QuietType needs SAGE BFT-governed memory before transcript review can run."
                 )
             } else {
-                VStack(spacing: 0) {
-                    ForEach(model.filteredDictionaryMemories) { memory in
-                        DictionaryMemoryRow(memory: memory, saveAction: { rawTranscript, polishedText in
-                            await model.updateTranscriptNote(memoryID: memory.id, rawTranscript: rawTranscript, polishedText: polishedText)
-                        }, deleteAction: {
-                            await model.deleteReviewMemory(memoryID: memory.id)
-                        })
+                ZStack(alignment: .center) {
+                    VStack(spacing: 0) {
+                        ForEach(model.filteredDictionaryMemories) { memory in
+                            DictionaryMemoryRow(memory: memory, saveAction: { rawTranscript, polishedText in
+                                await model.updateTranscriptNote(memoryID: memory.id, rawTranscript: rawTranscript, polishedText: polishedText)
+                            }, deleteAction: {
+                                pendingReviewDeleteMemory = memory
+                            })
+                        }
+                    }
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+
+                    if let deleteMemory = pendingReviewDeleteMemory {
+                        Color.black.opacity(0.06)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .onTapGesture {
+                                guard !isDeletingReviewMemory else {
+                                    return
+                                }
+                                self.pendingReviewDeleteMemory = nil
+                            }
+                            .zIndex(20)
+
+                        DeleteMemoryConfirmPopover(
+                            title: "Remove this memory?",
+                            isDeleting: isDeletingReviewMemory,
+                            message: "QuietType will ask SAGE to forget this \(deleteMemory.kind.lowercased()) memory and remove it from Review.",
+                            onCancel: {
+                                pendingReviewDeleteMemory = nil
+                            },
+                            onDelete: {
+                                Task {
+                                    isDeletingReviewMemory = true
+                                    await model.deleteReviewMemory(memoryID: deleteMemory.id)
+                                    isDeletingReviewMemory = false
+                                    self.pendingReviewDeleteMemory = nil
+                                }
+                            }
+                        )
+                        .padding(24)
+                        .zIndex(30)
                     }
                 }
-                .background(Color(nsColor: .windowBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
             }
         }
         .padding(16)
@@ -5850,8 +5885,6 @@ private struct DictionaryMemoryRow: View {
     @State private var isHovering = false
     @State private var isEditing = false
     @State private var isSaving = false
-    @State private var isDeleting = false
-    @State private var showingDeleteConfirm = false
     @State private var draftRawTranscript: String
     @State private var draftPolishedText: String
     var memory: DictionaryMemoryItem
@@ -5939,7 +5972,6 @@ private struct DictionaryMemoryRow: View {
                     Button {
                         draftRawTranscript = memory.rawTranscript ?? ""
                         draftPolishedText = memory.polishedText ?? ""
-                        showingDeleteConfirm = false
                         isEditing = true
                     } label: {
                         Image(systemName: "square.and.pencil")
@@ -5953,17 +5985,18 @@ private struct DictionaryMemoryRow: View {
                 }
                 if !isEditing {
                     Button {
-                        showingDeleteConfirm.toggle()
+                        Task {
+                            await deleteAction()
+                        }
                     } label: {
                         Image(systemName: "trash")
                             .font(.system(size: 13 + typeDelta, weight: .semibold))
                             .frame(width: 30, height: 28)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(showingDeleteConfirm ? Color.red : Color.secondary)
-                    .background((showingDeleteConfirm ? Color.red : Color.primary).opacity(showingDeleteConfirm ? 0.10 : 0.05))
+                    .foregroundStyle(Color.secondary)
+                    .background(Color.primary.opacity(0.05))
                     .clipShape(RoundedRectangle(cornerRadius: 7))
-                    .disabled(isDeleting)
                     .help("Remove memory")
                 }
             }
@@ -5972,27 +6005,6 @@ private struct DictionaryMemoryRow: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(isHovering ? Color.primary.opacity(0.025) : Color(nsColor: .windowBackgroundColor))
-        .overlay(alignment: .topTrailing) {
-            if showingDeleteConfirm {
-                DeleteMemoryConfirmPopover(
-                    isDeleting: isDeleting,
-                    onCancel: {
-                        showingDeleteConfirm = false
-                    },
-                    onDelete: {
-                        Task {
-                            isDeleting = true
-                            await deleteAction()
-                            isDeleting = false
-                            showingDeleteConfirm = false
-                        }
-                    }
-                )
-                .padding(.top, 52)
-                .padding(.trailing, 16)
-                .zIndex(10)
-            }
-        }
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(Color.primary.opacity(0.06))
@@ -6068,44 +6080,64 @@ private struct DeleteMemoryConfirmPopover: View {
     var onDelete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 14) {
                 Image(systemName: "trash")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Color.red)
-                    .frame(width: 28, height: 28)
-                    .background(Color.red.opacity(0.10))
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 42, height: 42)
+                    .background(Color.red.opacity(0.92))
                     .clipShape(Circle())
-                VStack(alignment: .leading, spacing: 3) {
+                    .shadow(color: Color.red.opacity(0.18), radius: 10, y: 5)
+
+                VStack(alignment: .leading, spacing: 6) {
                     Text(title)
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .font(.system(size: 19, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.primary)
                     Text(message)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    Text("This does not delete unrelated dictation history.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.tertiary)
                 }
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Spacer()
                 Button("Cancel", action: onCancel)
                     .buttonStyle(QuietButtonStyle(prominence: .ghost))
-                Button(isDeleting ? "Removing" : confirmTitle, action: onDelete)
-                    .buttonStyle(QuietButtonStyle(prominence: .primary))
                     .disabled(isDeleting)
+                Button(action: onDelete) {
+                    HStack(spacing: 8) {
+                        if isDeleting {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(.white)
+                        }
+                        Text(isDeleting ? "Removing" : confirmTitle)
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .frame(height: 38)
+                    .background(Color.red.opacity(isDeleting ? 0.68 : 0.95))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .disabled(isDeleting)
             }
         }
-        .padding(14)
-        .frame(width: 330)
+        .padding(18)
+        .frame(width: 390)
         .background {
-            RoundedRectangle(cornerRadius: 14)
-                .fill(.ultraThinMaterial)
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.18))
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(nsColor: .windowBackgroundColor))
         }
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.32), lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.18), radius: 22, y: 12)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.primary.opacity(0.10), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.22), radius: 26, y: 14)
     }
 }
 
