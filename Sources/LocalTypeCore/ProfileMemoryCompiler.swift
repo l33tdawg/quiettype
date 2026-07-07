@@ -14,7 +14,7 @@ public enum ProfileMemoryCompiler {
                 appendCorrection(from: memory, to: &enriched)
             case .styleProfile, .formattingPreference:
                 applyCadenceHints(from: memory, to: &enriched)
-            case .transcriptNote:
+            case .transcriptNote, .voiceNote:
                 continue
             }
         }

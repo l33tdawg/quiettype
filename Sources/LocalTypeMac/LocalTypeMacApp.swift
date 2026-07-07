@@ -1,7 +1,10 @@
 import LocalTypeCore
 import AppKit
+import AVFoundation
+import CryptoKit
 import Darwin
 import Foundation
+import Security
 import SwiftUI
 @preconcurrency import UserNotifications
 
@@ -446,6 +449,13 @@ struct TesterView: View {
                 }
             }
         }
+        .overlay {
+            if model.isUpdateOverlayVisible {
+                UpdateInstallOverlay(model: model)
+                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                    .zIndex(20)
+            }
+        }
         .background(Color(nsColor: .windowBackgroundColor))
         .preferredColorScheme(appearanceChoice.colorScheme)
         .environment(\.quietTypeTypeDelta, textSizeChoice.pointDelta)
@@ -674,6 +684,8 @@ struct TesterView: View {
                 switch selectedSection {
                 case .home:
                     homePage
+                case .voiceNotes:
+                    voiceNotesPage
                 case .history:
                     dictionaryPage
                 case .setup:
@@ -1282,6 +1294,150 @@ struct TesterView: View {
         }
     }
 
+    private var voiceNotesPage: some View {
+        nativePage {
+            VStack(alignment: .leading, spacing: 20) {
+                pageHeader(
+                    title: "Voice Notes",
+                    subtitle: "Record, transcribe, and keep long-term notes on this Mac."
+                )
+
+                if model.voiceNotes.isEmpty {
+                    VoiceNotesIntroPanel(model: model)
+                        .frame(maxWidth: 980)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                } else {
+                    voiceNotesWorkspace
+                        .frame(maxHeight: .infinity)
+                }
+            }
+            .padding(34)
+        }
+        .onAppear {
+            Task {
+                await model.refreshVoiceNotes()
+            }
+        }
+    }
+
+    private var voiceNotesWorkspace: some View {
+        HStack(alignment: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(model.filteredVoiceNotes.count) notes")
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        Text(model.saveVoiceNotesToSage ? "New transcripts copy to SAGE" : "Encrypted on this Mac")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    if model.isVoiceNoteTranscribing {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+
+                HStack(spacing: 9) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                    TextField("Search notes", text: $model.voiceNoteQuery)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.07), lineWidth: 1))
+
+                ScrollView {
+                    LazyVStack(spacing: 7) {
+                        ForEach(model.filteredVoiceNotes) { note in
+                            VoiceNoteListRow(
+                                note: note,
+                                isSelected: model.selectedVoiceNoteID == note.id
+                            ) {
+                                model.selectedVoiceNoteID = note.id
+                            }
+                        }
+                    }
+                    .padding(.bottom, 4)
+                }
+            }
+            .frame(width: 310)
+            .padding(16)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.58))
+
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(width: 1)
+
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center) {
+                    VoiceNoteRecorderStatus(model: model)
+                    Spacer()
+                    Button {
+                        Task {
+                            await model.toggleVoiceNoteRecording()
+                        }
+                    } label: {
+                        Label(
+                            model.isVoiceNoteRecording ? "Stop" : "Record note",
+                            systemImage: model.isVoiceNoteRecording ? "stop.fill" : "mic.fill"
+                        )
+                    }
+                    .buttonStyle(QuietButtonStyle(prominence: .primary))
+                    .disabled(model.isVoiceNoteTranscribing || model.isRecording || model.isTrainingRecording || model.isTeachingRecording)
+                }
+
+                if let note = model.selectedVoiceNote {
+                    VoiceNoteDetailPanel(
+                        note: note,
+                        isPlaying: model.playingVoiceNoteID == note.id && model.isVoiceNotePlaying,
+                        playbackProgress: model.playingVoiceNoteID == note.id ? model.voiceNotePlaybackProgress : 0,
+                        playbackDuration: model.playingVoiceNoteID == note.id ? model.voiceNotePlaybackDuration : note.durationSeconds,
+                        playbackVolume: model.voiceNotePlaybackVolume,
+                        savesToSageByDefault: model.saveVoiceNotesToSage,
+                        saveAction: { title, rawTranscript, polishedText in
+                            await model.updateVoiceNote(id: note.id, title: title, rawTranscript: rawTranscript, polishedText: polishedText)
+                        },
+                        deleteAction: {
+                            await model.deleteVoiceNote(id: note.id)
+                        },
+                        sendToSageAction: {
+                            await model.sendVoiceNoteToSage(id: note.id)
+                        },
+                        playAction: {
+                            await model.playVoiceNoteAudio(id: note.id)
+                        },
+                        stopAction: {
+                            model.stopCurrentVoiceNoteAudio()
+                        },
+                        volumeAction: { volume in
+                            model.setVoiceNotePlaybackVolume(volume)
+                        }
+                    )
+                    .id(note.id)
+                } else {
+                    EmptyStatePanel(
+                        icon: "waveform.badge.mic",
+                        title: "Select a voice note",
+                        subtitle: "Choose a saved local note to edit its transcript or send a copy to SAGE."
+                    )
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+    }
+
     private var dictionaryStats: some View {
         HStack(spacing: 12) {
             MemoryStatPill(title: "Sessions today", value: "\(model.sessionsToday)")
@@ -1862,11 +2018,13 @@ struct TesterView: View {
                     .tint(.primary)
                     .quickTooltip("When on, QuietType inserts the cleaned-up version of your dictation. When off, it leaves the result in QuietType so you can copy or review it first.")
 
-                    Toggle("Save review notes to SAGE", isOn: .constant(true))
+                    Toggle("Save voice notes to SAGE", isOn: Binding(
+                        get: { model.saveVoiceNotesToSage },
+                        set: { model.setSaveVoiceNotesToSage($0) }
+                    ))
                     .toggleStyle(.checkbox)
                     .tint(.primary)
-                    .disabled(true)
-                    .quickTooltip("Required for QuietType learning. Review notes and corrections are saved to local SAGE memory so future dictation can improve.")
+                    .quickTooltip("When on, new encrypted local voice notes also send a transcript copy to SAGE. Audio remains encrypted on this Mac.")
 
                     Toggle("Filter profanity", isOn: Binding(
                         get: { model.profanityFilterEnabled },
@@ -2734,6 +2892,7 @@ private struct GuidedOnboardingOverlay: View {
 
 private enum QuietTypeSection: String, CaseIterable, Identifiable {
     case home
+    case voiceNotes
     case history
     case setup
     case dictionary
@@ -2742,11 +2901,12 @@ private enum QuietTypeSection: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    static let primary: [QuietTypeSection] = [.home, .dictionary]
+    static let primary: [QuietTypeSection] = [.home, .voiceNotes, .dictionary]
 
     var title: String {
         switch self {
         case .home: "Home"
+        case .voiceNotes: "Voice Notes"
         case .history: "History"
         case .setup: "Setup"
         case .dictionary: "Review"
@@ -2758,6 +2918,7 @@ private enum QuietTypeSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .home: "house.fill"
+        case .voiceNotes: "waveform.badge.mic"
         case .history: "clock.arrow.circlepath"
         case .setup: "waveform.and.mic"
         case .dictionary: "brain.head.profile"
@@ -3896,6 +4057,42 @@ struct DictionaryMemoryItem: Identifiable, Equatable {
     var isEditableTranscript: Bool
 }
 
+struct VoiceNoteItem: Identifiable, Equatable {
+    var id: String
+    var title: String
+    var rawTranscript: String
+    var polishedText: String
+    var audioPath: String?
+    var durationSeconds: Double
+    var createdAt: Date?
+    var sentToSage: Bool
+    var sageMemoryID: String?
+    var sentToSageAt: String?
+
+    var displayDate: String {
+        guard let createdAt else {
+            return "Local note"
+        }
+        return createdAt.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    var durationLabel: String {
+        guard durationSeconds > 0 else {
+            return "Encrypted audio"
+        }
+        let minutes = Int(durationSeconds) / 60
+        let seconds = Int(durationSeconds) % 60
+        return minutes > 0 ? "\(minutes)m \(seconds)s" : "\(seconds)s"
+    }
+
+    var wordCountLabel: String {
+        let count = polishedText
+            .split { $0.isWhitespace || $0.isNewline }
+            .count
+        return "\(count) words"
+    }
+}
+
 private struct TranscriptMemoryParts: Equatable {
     var rawTranscript: String?
     var polishedText: String?
@@ -3924,6 +4121,102 @@ private struct AudioWordOffset: Codable, Equatable {
     var endSeconds: Double
     var wordIndex: Int
     var source: String
+}
+
+private actor EncryptedVoiceNoteAudioStore {
+    private static let encryptedFilePrefix = Data("QTVA1".utf8)
+    private static let keychainService = "QuietType.VoiceNotes"
+    private static let keychainAccount = "quiettype-voice-notes-aes-gcm-key"
+
+    private let directory: URL
+
+    init(directory: URL) {
+        self.directory = directory
+    }
+
+    func saveWAVData(_ data: Data, date: Date = Date()) throws -> URL {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sealed = try AES.GCM.seal(data, using: Self.audioKey())
+        guard let combined = sealed.combined else {
+            throw MemoryStoreError.encryptionFailed
+        }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let filename = "voice-note-\(formatter.string(from: date))-\(UUID().uuidString.prefix(8)).qtvoice"
+        let url = directory.appendingPathComponent(filename)
+        try (Self.encryptedFilePrefix + combined).write(to: url, options: [.atomic])
+        return url
+    }
+
+    func decryptAudio(at url: URL) throws -> Data {
+        let data = try Data(contentsOf: url)
+        guard data.starts(with: Self.encryptedFilePrefix) else {
+            throw MemoryStoreError.encryptionFailed
+        }
+        let encryptedPayload = data.dropFirst(Self.encryptedFilePrefix.count)
+        let sealed = try AES.GCM.SealedBox(combined: Data(encryptedPayload))
+        return try AES.GCM.open(sealed, using: Self.audioKey())
+    }
+
+    private static func audioKey() throws -> SymmetricKey {
+        if let data = try keychainKeyData() {
+            return SymmetricKey(data: data)
+        }
+        let data = Data((0..<32).map { _ in UInt8.random(in: UInt8.min...UInt8.max) })
+        try saveKeyDataToKeychain(data)
+        return SymmetricKey(data: data)
+    }
+
+    private static func keychainKeyData() throws -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound {
+            return nil
+        }
+        guard status == errSecSuccess, let data = item as? Data, data.count == 32 else {
+            throw MemoryStoreError.encryptionFailed
+        }
+        return data
+    }
+
+    private static func saveKeyDataToKeychain(_ data: Data) throws {
+        guard data.count == 32 else {
+            throw MemoryStoreError.encryptionFailed
+        }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount
+        ]
+        let attributes: [String: Any] = [kSecValueData as String: data]
+
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+        guard updateStatus == errSecItemNotFound else {
+            throw MemoryStoreError.encryptionFailed
+        }
+
+        var item = query
+        item[kSecValueData as String] = data
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let addStatus = SecItemAdd(item as CFDictionary, nil)
+        guard addStatus == errSecSuccess || addStatus == errSecDuplicateItem else {
+            throw MemoryStoreError.encryptionFailed
+        }
+    }
 }
 
 @MainActor
@@ -4173,6 +4466,865 @@ private extension View {
     }
 }
 
+private struct VoiceNotesIntroPanel: View {
+    @ObservedObject var model: MenuBarModel
+    @Environment(\.quietTypeTypeDelta) private var typeDelta
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 30) {
+            VoiceNoteSignalGlyph(level: model.voiceNoteInputLevel, isActive: model.isVoiceNoteRecording)
+                .frame(height: 112)
+                .frame(maxWidth: .infinity)
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Voice Notes")
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                Text("Record private thoughts, diary entries, rough plans, and long-form ideas. Audio and transcript edits stay encrypted on this Mac. When SAGE copy is on, QuietType sends only the transcript as governed memory.")
+                    .font(.system(size: 16 + typeDelta, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 18) {
+                VoiceNoteFeatureRow(icon: "lock.shield", title: "Encrypted locally", detail: "Audio is saved as an encrypted blob. Transcript edits live in QuietType's encrypted local memory store.")
+                VoiceNoteFeatureRow(icon: "pencil.and.scribble", title: "Editable transcript", detail: "Correct the raw transcript and polished note whenever you revisit it.")
+                VoiceNoteFeatureRow(icon: "brain.head.profile", title: "SAGE transcript copy", detail: "New notes copy their transcript to SAGE by default. The audio file remains encrypted on this Mac.")
+            }
+
+            HStack {
+                VoiceNoteRecorderStatus(model: model)
+                Spacer()
+                Button {
+                    Task {
+                        await model.toggleVoiceNoteRecording()
+                    }
+                } label: {
+                    Label(
+                        model.isVoiceNoteRecording ? "Stop" : "Record first note",
+                        systemImage: model.isVoiceNoteRecording ? "stop.circle" : "mic.circle"
+                    )
+                }
+                .buttonStyle(QuietButtonStyle(prominence: .primary))
+                .disabled(model.isVoiceNoteTranscribing || model.isRecording || model.isTrainingRecording || model.isTeachingRecording)
+            }
+            .padding(.top, 8)
+        }
+        .padding(.horizontal, 42)
+        .padding(.vertical, 36)
+        .frame(minHeight: 620, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.04), radius: 28, x: 0, y: 14)
+    }
+}
+
+private struct VoiceNoteFeatureRow: View {
+    var icon: String
+    var title: String
+    var detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 36, height: 36)
+                .background(Color.primary.opacity(0.055))
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+private struct VoiceNoteRecorderStatus: View {
+    @ObservedObject var model: MenuBarModel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VoiceNoteLevelMeter(level: model.voiceNoteInputLevel, isActive: model.isVoiceNoteRecording)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.voiceNoteStatusTitle)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                Text(model.voiceNoteStatusDetail)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.07), lineWidth: 1))
+    }
+}
+
+private struct VoiceNoteSignalGlyph: View {
+    var level: Double
+    var isActive: Bool
+    private let bars = 34
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 3) {
+            ForEach(0..<bars, id: \.self) { index in
+                Capsule()
+                    .fill(Color.primary.opacity(opacity(for: index)))
+                    .frame(width: 4, height: height(for: index))
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 82)
+        .background {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        }
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.07), lineWidth: 1))
+        .animation(.easeOut(duration: 0.16), value: level)
+        .animation(.easeOut(duration: 0.16), value: isActive)
+    }
+
+    private func height(for index: Int) -> CGFloat {
+        let center = Double(bars - 1) / 2.0
+        let distance = abs(Double(index) - center) / center
+        let base = 10 + (1.0 - distance) * 32
+        let ripple = sin(Double(index) * 0.82) * 8
+        let activeBoost = isActive ? min(max(level, 0), 1) * 26 : 0
+        return CGFloat(max(10, base + ripple + activeBoost * (1.0 - distance * 0.35)))
+    }
+
+    private func opacity(for index: Int) -> Double {
+        let center = Double(bars - 1) / 2.0
+        let distance = abs(Double(index) - center) / center
+        return isActive ? 0.32 + (1.0 - distance) * 0.52 : 0.12 + (1.0 - distance) * 0.18
+    }
+}
+
+private struct VoiceNoteLevelMeter: View {
+    var level: Double
+    var isActive: Bool
+    private let bars = 7
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 3) {
+            ForEach(0..<bars, id: \.self) { index in
+                Capsule()
+                    .fill(Color.primary.opacity(opacity(for: index)))
+                    .frame(width: 4, height: height(for: index))
+            }
+        }
+        .frame(width: 48, height: 34)
+        .animation(.easeOut(duration: 0.12), value: level)
+        .animation(.easeOut(duration: 0.12), value: isActive)
+    }
+
+    private func height(for index: Int) -> CGFloat {
+        let normalizedLevel = min(max(level, 0), 1)
+        let wave = sin(Double(index) * 0.95) * 4
+        let boost = isActive ? normalizedLevel * 18 : 0
+        return CGFloat(max(6, 9 + index * 2 + Int(wave) + Int(boost)))
+    }
+
+    private func opacity(for index: Int) -> Double {
+        guard isActive else {
+            return 0.20
+        }
+        let threshold = Int((min(max(level, 0), 1) * Double(bars)).rounded(.up))
+        return index < threshold ? 0.82 : 0.16
+    }
+}
+
+private struct VoiceNoteListRow: View {
+    @Environment(\.quietTypeTypeDelta) private var typeDelta
+    var note: VoiceNoteItem
+    var isSelected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 7) {
+                    Text(note.title)
+                        .font(.system(size: 14 + typeDelta, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer()
+                    if note.sentToSage {
+                        Image(systemName: "checkmark.seal")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text(note.polishedText.isEmpty ? note.rawTranscript : note.polishedText)
+                    .font(.system(size: 12 + typeDelta, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
+                    VoiceNoteTinyPill(text: note.durationLabel, icon: "waveform")
+                    VoiceNoteTinyPill(text: note.wordCountLabel, icon: "text.word.spacing")
+                }
+                Text(note.displayDate)
+                    .font(.system(size: 10 + typeDelta, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(isSelected ? Color.primary.opacity(0.09) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(alignment: .leading) {
+                if isSelected {
+                    Capsule()
+                        .fill(Color.primary)
+                        .frame(width: 3)
+                        .padding(.vertical, 10)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct VoiceNoteTinyPill: View {
+    var text: String
+    var icon: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+            Text(text)
+                .lineLimit(1)
+        }
+        .font(.system(size: 10, weight: .semibold, design: .rounded))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.72))
+        .clipShape(Capsule())
+    }
+}
+
+private struct VoiceNotePlayerControl: View {
+    var isPlaying: Bool
+    var progress: Double
+    var duration: Double
+    var volume: Double
+    var isEnabled: Bool
+    var playAction: () -> Void
+    var stopAction: () -> Void
+    var volumeAction: (Double) -> Void
+
+    private var elapsed: Double {
+        duration * min(max(progress, 0), 1)
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Button(action: playAction) {
+                    Label("Play", systemImage: "play.fill")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Color(nsColor: .windowBackgroundColor))
+                        .frame(width: 38, height: 38)
+                        .background(Color.primary)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!isEnabled)
+                .opacity(isEnabled ? 1 : 0.42)
+                .help("Play from the beginning")
+
+                Button(action: stopAction) {
+                    Label("Stop", systemImage: "stop.fill")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 34, height: 34)
+                        .background(Color.primary.opacity(0.075))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!isEnabled || (!isPlaying && progress <= 0))
+                .opacity(isEnabled ? 1 : 0.42)
+                .help("Stop playback")
+
+                VStack(spacing: 8) {
+                    VoiceNotePlaybackWaveform(progress: progress, isPlaying: isPlaying, isEnabled: isEnabled)
+                        .frame(height: 28)
+                    HStack {
+                        Text(formatTime(elapsed))
+                        Spacer()
+                        Text(formatTime(duration))
+                    }
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                }
+            }
+
+            HStack(spacing: 9) {
+                Image(systemName: volume <= 0.02 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+                Slider(
+                    value: Binding(
+                        get: { min(max(volume, 0), 1) },
+                        set: { volumeAction($0) }
+                    ),
+                    in: 0...1
+                )
+                .controlSize(.small)
+                Text("\(Int((min(max(volume, 0), 1) * 100).rounded()))%")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .frame(width: 38, alignment: .trailing)
+            }
+            .opacity(isEnabled ? 1 : 0.45)
+            .disabled(!isEnabled)
+
+            if !isEnabled {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                    Text("Audio file is unavailable")
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.07), lineWidth: 1))
+    }
+
+    private func formatTime(_ value: Double) -> String {
+        guard value.isFinite, value > 0 else {
+            return "0:00"
+        }
+        let total = Int(value.rounded(.down))
+        return "\(total / 60):\(String(format: "%02d", total % 60))"
+    }
+}
+
+private struct VoiceNotePlaybackWaveform: View {
+    var progress: Double
+    var isPlaying: Bool
+    var isEnabled: Bool
+    private let bars = 56
+
+    var body: some View {
+        GeometryReader { proxy in
+            HStack(alignment: .center, spacing: 2) {
+                ForEach(0..<bars, id: \.self) { index in
+                    Capsule()
+                        .fill(fill(for: index))
+                        .frame(width: max(2, (proxy.size.width - CGFloat(bars - 1) * 2) / CGFloat(bars)), height: height(for: index))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .animation(.easeOut(duration: 0.12), value: progress)
+        .animation(.easeOut(duration: 0.12), value: isPlaying)
+    }
+
+    private func height(for index: Int) -> CGFloat {
+        let base = 9 + abs(sin(Double(index) * 0.58)) * 18
+        let pulse = isPlaying ? abs(sin(Double(index) * 0.37 + progress * 12.0)) * 5 : 0
+        return CGFloat(base + pulse)
+    }
+
+    private func fill(for index: Int) -> Color {
+        guard isEnabled else {
+            return Color.primary.opacity(0.12)
+        }
+        let played = Double(index) / Double(max(bars - 1, 1)) <= min(max(progress, 0), 1)
+        return Color.primary.opacity(played ? 0.78 : 0.18)
+    }
+}
+
+private struct VoiceNoteDetailPanel: View {
+    @Environment(\.quietTypeTypeDelta) private var typeDelta
+    @State private var draftTitle: String
+    @State private var draftRawTranscript: String
+    @State private var draftPolishedText: String
+    @State private var isSaving = false
+    @State private var isDeleting = false
+    @State private var isSendingToSage = false
+    @State private var showingDeleteConfirm = false
+    var note: VoiceNoteItem
+    var isPlaying: Bool
+    var playbackProgress: Double
+    var playbackDuration: Double
+    var playbackVolume: Double
+    var savesToSageByDefault: Bool
+    var saveAction: (String, String, String) async -> Void
+    var deleteAction: () async -> Void
+    var sendToSageAction: () async -> Void
+    var playAction: () async -> Void
+    var stopAction: () -> Void
+    var volumeAction: (Double) -> Void
+
+    init(
+        note: VoiceNoteItem,
+        isPlaying: Bool,
+        playbackProgress: Double,
+        playbackDuration: Double,
+        playbackVolume: Double,
+        savesToSageByDefault: Bool,
+        saveAction: @escaping (String, String, String) async -> Void,
+        deleteAction: @escaping () async -> Void,
+        sendToSageAction: @escaping () async -> Void,
+        playAction: @escaping () async -> Void,
+        stopAction: @escaping () -> Void,
+        volumeAction: @escaping (Double) -> Void
+    ) {
+        self.note = note
+        self.isPlaying = isPlaying
+        self.playbackProgress = playbackProgress
+        self.playbackDuration = playbackDuration
+        self.playbackVolume = playbackVolume
+        self.savesToSageByDefault = savesToSageByDefault
+        self.saveAction = saveAction
+        self.deleteAction = deleteAction
+        self.sendToSageAction = sendToSageAction
+        self.playAction = playAction
+        self.stopAction = stopAction
+        self.volumeAction = volumeAction
+        _draftTitle = State(initialValue: note.title)
+        _draftRawTranscript = State(initialValue: note.rawTranscript)
+        _draftPolishedText = State(initialValue: note.polishedText)
+    }
+
+    private var hasChanges: Bool {
+        draftTitle.trimmingCharacters(in: .whitespacesAndNewlines) != note.title
+            || draftRawTranscript.trimmingCharacters(in: .whitespacesAndNewlines) != note.rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            || draftPolishedText.trimmingCharacters(in: .whitespacesAndNewlines) != note.polishedText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var shouldShowManualSageSend: Bool {
+        !savesToSageByDefault && !note.sentToSage
+    }
+
+    private var deleteIncludesSageMemory: Bool {
+        savesToSageByDefault || note.sentToSage || note.sageMemoryID != nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 9) {
+                    TextField("Title", text: $draftTitle)
+                        .font(.system(size: 24 + typeDelta, weight: .bold, design: .rounded))
+                        .textFieldStyle(.plain)
+                    HStack(spacing: 7) {
+                        VoiceNoteMetadataPill(text: note.durationLabel, icon: "lock.shield")
+                        VoiceNoteMetadataPill(text: note.displayDate, icon: "calendar")
+                        VoiceNoteMetadataPill(text: note.wordCountLabel, icon: "text.word.spacing")
+                    }
+                }
+                Spacer()
+                Button {
+                    showingDeleteConfirm.toggle()
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(showingDeleteConfirm ? Color.red : Color.secondary)
+                .background((showingDeleteConfirm ? Color.red : Color.primary).opacity(showingDeleteConfirm ? 0.11 : 0.055))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .disabled(isDeleting)
+                .help("Delete voice note")
+            }
+
+            VoiceNotePlayerControl(
+                isPlaying: isPlaying,
+                progress: playbackProgress,
+                duration: playbackDuration,
+                volume: playbackVolume,
+                isEnabled: note.audioPath != nil
+            ) {
+                Task {
+                    await playAction()
+                }
+            } stopAction: {
+                stopAction()
+            } volumeAction: { volume in
+                volumeAction(volume)
+            }
+
+            VoiceNoteTranscriptEditor(
+                title: "Polished note",
+                text: $draftPolishedText,
+                minHeight: 230,
+                fontSize: 15 + typeDelta
+            )
+
+            DisclosureGroup {
+                VoiceNoteTranscriptEditor(
+                    title: "Captured transcript",
+                    text: $draftRawTranscript,
+                    minHeight: 112,
+                    fontSize: 13 + typeDelta,
+                    showsHeader: false
+                )
+                .padding(.top, 6)
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "quote.bubble")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Raw transcript")
+                        .font(.system(size: 12 + typeDelta, weight: .semibold))
+                }
+                .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Label(
+                    note.sentToSage ? "Saved to SAGE memory" : (savesToSageByDefault ? "Will save to SAGE after recording" : "Local encrypted note"),
+                    systemImage: note.sentToSage ? "checkmark.seal" : "lock"
+                )
+                    .font(.system(size: 12 + typeDelta, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if shouldShowManualSageSend {
+                    Button {
+                        Task {
+                            isSendingToSage = true
+                            await sendToSageAction()
+                            isSendingToSage = false
+                        }
+                    } label: {
+                        Label(isSendingToSage ? "Sending" : "Send to SAGE", systemImage: "brain.head.profile")
+                    }
+                    .buttonStyle(QuietButtonStyle())
+                    .disabled(isSendingToSage)
+                }
+                Button {
+                    Task {
+                        isSaving = true
+                        await saveAction(draftTitle, draftRawTranscript, draftPolishedText)
+                        isSaving = false
+                    }
+                } label: {
+                    Label(isSaving ? "Saving" : "Save", systemImage: "checkmark")
+                }
+                .buttonStyle(QuietButtonStyle(prominence: .primary))
+                .disabled(!hasChanges || isSaving)
+            }
+            .padding(.top, 2)
+
+            if savesToSageByDefault || note.sentToSage {
+                VoiceNoteSageDetailsPanel(
+                    note: note,
+                    savesToSageByDefault: savesToSageByDefault,
+                    isSendingToSage: isSendingToSage,
+                    sendAction: {
+                        Task {
+                            isSendingToSage = true
+                            await sendToSageAction()
+                            isSendingToSage = false
+                        }
+                    }
+                )
+            }
+        }
+        .padding(2)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay(alignment: .topTrailing) {
+            if showingDeleteConfirm {
+                DeleteMemoryConfirmPopover(
+                    title: deleteIncludesSageMemory ? "Remove note and memory?" : "Remove note?",
+                    isDeleting: isDeleting,
+                    message: deleteIncludesSageMemory
+                        ? "QuietType will remove the local transcript and encrypted audio, then ask SAGE to forget the linked memory if one exists."
+                        : "QuietType will remove the local transcript and encrypted audio.",
+                    confirmTitle: deleteIncludesSageMemory ? "Remove note and memory" : "Remove note",
+                    onCancel: {
+                        showingDeleteConfirm = false
+                    },
+                    onDelete: {
+                        Task {
+                            isDeleting = true
+                            await deleteAction()
+                            isDeleting = false
+                            showingDeleteConfirm = false
+                        }
+                    }
+                )
+                .padding(.top, 54)
+                .padding(.trailing, 16)
+                .zIndex(10)
+            }
+        }
+    }
+}
+
+private struct VoiceNoteMetadataPill: View {
+    @Environment(\.quietTypeTypeDelta) private var typeDelta
+    var text: String
+    var icon: String
+
+    var body: some View {
+        Label(text, systemImage: icon)
+            .font(.system(size: 11 + typeDelta, weight: .semibold, design: .rounded))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(Capsule())
+    }
+}
+
+private struct VoiceNoteSageDetailsPanel: View {
+    @Environment(\.quietTypeTypeDelta) private var typeDelta
+    var note: VoiceNoteItem
+    var savesToSageByDefault: Bool
+    var isSendingToSage: Bool
+    var sendAction: () -> Void
+
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 8) {
+                VoiceNoteSageDetailRow(
+                    label: "Status",
+                    value: note.sentToSage ? "Transcript copied to SAGE" : (savesToSageByDefault ? "Next saved voice note will copy to SAGE" : "SAGE copy is off")
+                )
+                VoiceNoteSageDetailRow(label: "Local audio", value: "Encrypted on this Mac")
+                VoiceNoteSageDetailRow(label: "Local transcript", value: "Editable in Voice Notes")
+                if let sageMemoryID = note.sageMemoryID {
+                    VoiceNoteSageDetailRow(label: "SAGE memory", value: sageMemoryID)
+                }
+                if let sentToSageAt = note.sentToSageAt {
+                    VoiceNoteSageDetailRow(label: "Sent", value: sentToSageAt)
+                }
+                if !savesToSageByDefault && !note.sentToSage {
+                    Button {
+                        sendAction()
+                    } label: {
+                        Label(isSendingToSage ? "Sending" : "Send this transcript now", systemImage: "brain.head.profile")
+                    }
+                    .buttonStyle(QuietButtonStyle())
+                    .disabled(isSendingToSage)
+                    .padding(.top, 2)
+                }
+            }
+            .padding(.top, 8)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: note.sentToSage ? "link.badge.plus" : "link")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("SAGE memory details")
+                    .font(.system(size: 12 + typeDelta, weight: .semibold))
+            }
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.primary.opacity(0.07), lineWidth: 1))
+    }
+}
+
+private struct VoiceNoteSageDetailRow: View {
+    var label: String
+    var value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(.tertiary)
+                .frame(width: 94, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+private struct VoiceNoteTranscriptEditor: View {
+    var title: String
+    @Binding var text: String
+    var minHeight: CGFloat
+    var fontSize: CGFloat
+    var showsHeader = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if showsHeader {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            TextEditor(text: $text)
+                .font(.system(size: fontSize, weight: .regular))
+                .frame(minHeight: minHeight)
+                .scrollContentBackground(.hidden)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        }
+    }
+}
+
+private struct UpdateInstallOverlay: View {
+    @ObservedObject var model: MenuBarModel
+    @Environment(\.quietTypeTypeDelta) private var typeDelta
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.18)
+                .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top, spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .fill(iconBackground)
+                        Image(systemName: iconName)
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(iconForeground)
+                    }
+                    .frame(width: 46, height: 46)
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(model.updateOverlayTitle)
+                            .font(.system(size: 22 + typeDelta, weight: .bold, design: .rounded))
+                        Text(model.updateOverlayDetail)
+                            .font(.system(size: 13 + typeDelta, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(model.updateProgressMessages.enumerated()), id: \.offset) { index, message in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Image(systemName: stepIcon(for: index))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(stepForeground(for: index))
+                                .frame(width: 16)
+                            Text(message)
+                                .font(.system(size: 13 + typeDelta, weight: .medium))
+                                .foregroundStyle(index == model.updateProgressMessages.count - 1 ? .primary : .secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                HStack {
+                    if model.isCheckingForUpdates && !model.updateInstallCompleted && !model.updateInstallFailed {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Keep QuietType open while the signed update is verified and installed.")
+                            .font(.system(size: 12 + typeDelta, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    } else if model.updateInstallRequiresRestart {
+                        Text("The current app will quit and reopen the updated copy from Applications.")
+                            .font(.system(size: 12 + typeDelta, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    if model.updateInstallRequiresRestart {
+                        Button {
+                            model.restartInstalledApp()
+                        } label: {
+                            Label("Restart QuietType", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(QuietButtonStyle(prominence: .primary))
+                    } else if !model.isCheckingForUpdates {
+                        Button("Close") {
+                            model.dismissUpdateOverlay()
+                        }
+                        .buttonStyle(QuietButtonStyle())
+                    }
+                }
+            }
+            .padding(22)
+            .frame(width: 520)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.32), lineWidth: 1))
+            .shadow(color: Color.black.opacity(0.22), radius: 30, y: 18)
+        }
+        .animation(.easeInOut(duration: 0.18), value: model.updateProgressMessages)
+        .animation(.easeInOut(duration: 0.18), value: model.updateInstallCompleted)
+        .animation(.easeInOut(duration: 0.18), value: model.updateInstallFailed)
+    }
+
+    private var iconName: String {
+        if model.updateInstallFailed {
+            return "exclamationmark.triangle.fill"
+        }
+        if model.updateInstallCompleted {
+            return model.updateInstallRequiresRestart ? "checkmark.circle.fill" : "info.circle.fill"
+        }
+        return "arrow.down.circle.fill"
+    }
+
+    private var iconBackground: Color {
+        if model.updateInstallFailed {
+            return Color.red.opacity(0.12)
+        }
+        if model.updateInstallCompleted {
+            return Color.green.opacity(0.14)
+        }
+        return Color.primary.opacity(0.08)
+    }
+
+    private var iconForeground: Color {
+        if model.updateInstallFailed {
+            return .red
+        }
+        return .primary
+    }
+
+    private func stepIcon(for index: Int) -> String {
+        guard index == model.updateProgressMessages.count - 1,
+              model.isCheckingForUpdates,
+              !model.updateInstallCompleted,
+              !model.updateInstallFailed else {
+            return "checkmark.circle"
+        }
+        return "arrow.triangle.2.circlepath"
+    }
+
+    private func stepForeground(for index: Int) -> Color {
+        if model.updateInstallFailed, index == model.updateProgressMessages.count - 1 {
+            return .red
+        }
+        return index == model.updateProgressMessages.count - 1 ? .primary : .secondary
+    }
+}
+
 private struct DictionaryMemoryRow: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
     @State private var isHovering = false
@@ -4388,7 +5540,10 @@ private struct DictionaryMemoryRow: View {
 }
 
 private struct DeleteMemoryConfirmPopover: View {
+    var title: String = "Remove memory?"
     var isDeleting: Bool
+    var message: String = "QuietType will ask SAGE to forget it and remove it from Review."
+    var confirmTitle: String = "Remove"
     var onCancel: () -> Void
     var onDelete: () -> Void
 
@@ -4402,9 +5557,9 @@ private struct DeleteMemoryConfirmPopover: View {
                     .background(Color.red.opacity(0.10))
                     .clipShape(Circle())
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Remove memory?")
+                    Text(title)
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    Text("QuietType will ask SAGE to forget it and remove it from Review.")
+                    Text(message)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -4415,13 +5570,13 @@ private struct DeleteMemoryConfirmPopover: View {
                 Spacer()
                 Button("Cancel", action: onCancel)
                     .buttonStyle(QuietButtonStyle(prominence: .ghost))
-                Button(isDeleting ? "Removing" : "Remove", action: onDelete)
+                Button(isDeleting ? "Removing" : confirmTitle, action: onDelete)
                     .buttonStyle(QuietButtonStyle(prominence: .primary))
                     .disabled(isDeleting)
             }
         }
         .padding(14)
-        .frame(width: 286)
+        .frame(width: 330)
         .background {
             RoundedRectangle(cornerRadius: 14)
                 .fill(.ultraThinMaterial)
@@ -5098,6 +6253,7 @@ private struct RecognizedTermsDrawer: View {
 
 private struct QuietTypeUpdateResult {
     var message: String
+    var requiresRestart: Bool
 }
 
 struct QuietTypeUpdateAvailability: Codable, Equatable {
@@ -5365,7 +6521,10 @@ private final class QuietTypeGitHubUpdater {
         let (release, asset, latestVersion) = try await latestReleaseAsset()
         let currentVersion = QuietTypeReleaseVersion.current()
         guard latestVersion > currentVersion else {
-            return QuietTypeUpdateResult(message: "QuietType is up to date. You are running \(display(currentVersion)).")
+            return QuietTypeUpdateResult(
+                message: "QuietType is up to date. You are running \(display(currentVersion)).",
+                requiresRestart: false
+            )
         }
 
         await progress("Found \(display(latestVersion)). Downloading the Apple Silicon DMG...")
@@ -5401,7 +6560,8 @@ private final class QuietTypeGitHubUpdater {
         }
 
         return QuietTypeUpdateResult(
-            message: "Installed \(display(latestVersion)) in /Applications. Quit and reopen QuietType to use the new version."
+            message: "Installed \(display(latestVersion)) in /Applications. Restart QuietType to use the new version.",
+            requiresRestart: true
         )
     }
 
@@ -5687,6 +6847,18 @@ final class MenuBarModel: ObservableObject {
     @Published var localMemories: [DictationMemory] = []
     @Published var memoryFilter = MemoryFilter.all
     @Published var didSaveTeachingMemory = false
+    @Published var voiceNoteQuery = ""
+    @Published var selectedVoiceNoteID: String?
+    @Published var isVoiceNoteRecording = false
+    @Published var isVoiceNoteTranscribing = false
+    @Published var voiceNoteDuration = 0.0
+    @Published var voiceNoteInputLevel = 0.0
+    @Published var saveVoiceNotesToSage = false
+    @Published var playingVoiceNoteID: String?
+    @Published var isVoiceNotePlaying = false
+    @Published var voiceNotePlaybackProgress = 0.0
+    @Published var voiceNotePlaybackDuration = 0.0
+    @Published var voiceNotePlaybackVolume = 0.82
     @Published var calibrationSetIndex = 0
     @Published var calibrationSavedCount = 0
     @Published var isTrainingRecording = false
@@ -5705,6 +6877,13 @@ final class MenuBarModel: ObservableObject {
     @Published var isCheckingForUpdates = false
     @Published var updateStatus = ""
     @Published var availableUpdate: QuietTypeUpdateAvailability?
+    @Published var isUpdateOverlayVisible = false
+    @Published var updateOverlayTitle = "Updating QuietType"
+    @Published var updateOverlayDetail = "Preparing the signed update."
+    @Published var updateProgressMessages: [String] = []
+    @Published var updateInstallCompleted = false
+    @Published var updateInstallFailed = false
+    @Published var updateInstallRequiresRestart = false
     @Published var isInstallingSage = false
     @Published var sageInstallStatus = ""
 
@@ -5715,6 +6894,7 @@ final class MenuBarModel: ObservableObject {
     private var sageDirectClient: SageDirectClient?
     private var sageServeProcess: Process?
     private var whisperKitSupervisor: WhisperKitServerSupervisor?
+    private var nativeInferencePrewarmed = false
     private var didStartAppServices = false
     private var nativeSpeechStartupTask: Task<Void, Never>?
     private var updateCheckTask: Task<Void, Never>?
@@ -5722,26 +6902,37 @@ final class MenuBarModel: ObservableObject {
     private var captureService: AVAudioCaptureService?
     private var trainingCaptureService: AVAudioCaptureService?
     private var teachingCaptureService: AVAudioCaptureService?
+    private var voiceNoteCaptureService: AVAudioCaptureService?
     private var recordingStartedAt: Date?
     private var trainingStartedAt: Date?
     private var teachingStartedAt: Date?
+    private var voiceNoteStartedAt: Date?
     private var recordedSamples: [Float] = []
     private var trainingSamples: [Float] = []
     private var teachingSamples: [Float] = []
+    private var voiceNoteSamples: [Float] = []
     private var recordingSampleRate = 16_000
     private var trainingSampleRate = 16_000
     private var teachingSampleRate = 16_000
+    private var voiceNoteSampleRate = 16_000
     private var peakInputLevel = 0.0
     private var peakTrainingInputLevel = 0.0
     private var peakInputRMS = 0.0
     private var peakTrainingInputRMS = 0.0
     private var peakTeachingInputRMS = 0.0
+    private var peakVoiceNoteInputRMS = 0.0
     private var inputNoiseFloorRMS = 0.006
     private var trainingNoiseFloorRMS = 0.006
     private var teachingNoiseFloorRMS = 0.006
+    private var voiceNoteNoiseFloorRMS = 0.006
     private var trainingFrameCount = 0
     private var teachingFrameCount = 0
+    private var voiceNoteFrameCount = 0
     private var lastTrainingAudioURL: URL?
+    private var voiceNoteAudioPlayer: AVAudioPlayer?
+    private var voiceNotePlaybackTimer: Timer?
+    private var voiceNotePlaybackTempURL: URL?
+    private lazy var voiceNoteAudioStore = EncryptedVoiceNoteAudioStore(directory: voiceNoteAudioDirectory)
     private var chunker = StreamingWavChunker()
     private let chunkDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("quiettype-stream")
     private var streamingTranscriptionSession: StreamingAudioTranscriptionSession?
@@ -5767,6 +6958,7 @@ final class MenuBarModel: ObservableObject {
     private static let totalTranslatedWordCountKey = "quiettype.totalTranslatedWordCount"
     private static let lastWordsPerMinuteKey = "quiettype.lastWordsPerMinute"
     private static let historyReviewEnabledKey = "quiettype.historyReviewEnabled"
+    private static let saveVoiceNotesToSageKey = "quiettype.saveVoiceNotesToSage"
     private static let lastBackgroundUpdateCheckKey = "quiettype.lastBackgroundUpdateCheck"
     private static let availableUpdateKey = "quiettype.availableUpdate"
     private static let notifiedUpdateTagKey = "quiettype.notifiedUpdateTag"
@@ -5787,6 +6979,12 @@ final class MenuBarModel: ObservableObject {
         availableUpdate = Self.loadAvailableUpdate()
         historyReviewEnabled = true
         UserDefaults.standard.set(true, forKey: Self.historyReviewEnabledKey)
+        if UserDefaults.standard.object(forKey: Self.saveVoiceNotesToSageKey) == nil {
+            saveVoiceNotesToSage = true
+            UserDefaults.standard.set(true, forKey: Self.saveVoiceNotesToSageKey)
+        } else {
+            saveVoiceNotesToSage = UserDefaults.standard.bool(forKey: Self.saveVoiceNotesToSageKey)
+        }
         if let storedSpelling = UserDefaults.standard.string(forKey: Self.spellingPreferenceKey),
            let preference = SpellingPreference(rawValue: storedSpelling) {
             spellingPreference = preference
@@ -6169,6 +7367,69 @@ final class MenuBarModel: ObservableObject {
             .appendingPathComponent("Library/Application Support/QuietType/ReviewAudio", isDirectory: true)
     }
 
+    private var voiceNoteAudioDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/QuietType/VoiceNotes", isDirectory: true)
+    }
+
+    var voiceNotes: [VoiceNoteItem] {
+        localMemories
+            .filter { $0.type == .voiceNote }
+            .map(voiceNoteItem)
+            .sorted { lhs, rhs in
+                (lhs.createdAt ?? .distantPast) > (rhs.createdAt ?? .distantPast)
+            }
+    }
+
+    var filteredVoiceNotes: [VoiceNoteItem] {
+        let query = voiceNoteQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            return voiceNotes
+        }
+
+        let terms = query.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        return voiceNotes.filter { note in
+            let haystack = [
+                note.title,
+                note.rawTranscript,
+                note.polishedText,
+                note.displayDate
+            ].joined(separator: " ")
+            return terms.allSatisfy { term in
+                haystack.localizedCaseInsensitiveContains(term)
+            }
+        }
+    }
+
+    var selectedVoiceNote: VoiceNoteItem? {
+        let notes = filteredVoiceNotes
+        if let selectedVoiceNoteID,
+           let selected = notes.first(where: { $0.id == selectedVoiceNoteID }) {
+            return selected
+        }
+        return notes.first
+    }
+
+    var voiceNoteStatusTitle: String {
+        if isVoiceNoteRecording {
+            return "Recording locally"
+        }
+        if isVoiceNoteTranscribing {
+            return "Transcribing"
+        }
+        return saveVoiceNotesToSage ? "SAGE copy on" : "Local only"
+    }
+
+    var voiceNoteStatusDetail: String {
+        if isVoiceNoteRecording {
+            return "\(String(format: "%.1f", voiceNoteDuration))s captured"
+        }
+        if isVoiceNoteTranscribing {
+            return "Encrypting audio and saving transcript"
+        }
+        return saveVoiceNotesToSage ? "Audio stays on this Mac" : "New notes stay on this Mac"
+    }
+
     var dictionaryMemories: [DictionaryMemoryItem] {
         let localItems = localMemories.map { memory in
             let isTranscript = memory.type == .transcriptNote
@@ -6375,7 +7636,41 @@ final class MenuBarModel: ObservableObject {
             let raw = memory.payload["raw_transcript"] ?? ""
             let polished = memory.payload["polished_text"] ?? ""
             return "Raw: \"\(raw)\". Polished: \"\(polished)\"."
+        case .voiceNote:
+            return memory.payload["polished_text"] ?? memory.payload["raw_transcript"] ?? "Encrypted local voice note."
         }
+    }
+
+    private func voiceNoteItem(from memory: DictationMemory) -> VoiceNoteItem {
+        let raw = memory.payload["raw_transcript"] ?? ""
+        let polished = memory.payload["polished_text"] ?? raw
+        let createdAt = memory.payload["created_at"]
+            .flatMap { ISO8601DateFormatter().date(from: $0) }
+        let title = memory.payload["title"]?.nilIfBlank
+            ?? Self.defaultVoiceNoteTitle(from: polished.nilIfBlank ?? raw, createdAt: createdAt)
+        return VoiceNoteItem(
+            id: memory.id ?? UUID().uuidString,
+            title: title,
+            rawTranscript: raw,
+            polishedText: polished,
+            audioPath: memory.payload["audio_path"]?.nilIfBlank,
+            durationSeconds: Double(memory.payload["duration_seconds"] ?? "") ?? 0,
+            createdAt: createdAt,
+            sentToSage: memory.payload["sent_to_sage"] == "true",
+            sageMemoryID: memory.payload["sage_memory_id"]?.nilIfBlank,
+            sentToSageAt: memory.payload["sent_to_sage_at"]?.nilIfBlank
+        )
+    }
+
+    private static func defaultVoiceNoteTitle(from text: String, createdAt: Date?) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return String(trimmed.prefix(48))
+        }
+        if let createdAt {
+            return "Voice note \(createdAt.formatted(date: .abbreviated, time: .shortened))"
+        }
+        return "Voice note"
     }
 
     private func wordCount(_ text: String) -> Int {
@@ -6616,23 +7911,86 @@ final class MenuBarModel: ObservableObject {
             return
         }
 
+        beginUpdateOverlay()
         isCheckingForUpdates = true
-        updateStatus = "Checking GitHub Releases..."
-        defer { isCheckingForUpdates = false }
+        recordUpdateProgress("Preparing QuietType for update.")
+        await suspendAppForUpdateInstall()
+        recordUpdateProgress("Checking GitHub Releases.")
+        defer {
+            isCheckingForUpdates = false
+        }
 
         do {
             let result = try await updateService.checkDownloadBackupAndInstall { [weak self] message in
-                self?.updateStatus = message
+                self?.recordUpdateProgress(message)
             }
             updateStatus = result.message
-            availableUpdate = nil
-            Self.saveAvailableUpdate(nil)
+            updateOverlayDetail = result.message
+            updateInstallCompleted = true
+            updateInstallRequiresRestart = result.requiresRestart
+            updateOverlayTitle = result.requiresRestart ? "Update installed" : "No update found"
+            recordUpdateProgress(result.message)
+            if result.requiresRestart {
+                availableUpdate = nil
+                Self.saveAvailableUpdate(nil)
+            } else {
+                resumeAppServicesAfterUpdateIfNeeded()
+            }
         } catch let error as QuietTypeUpdaterError where error.shouldOpenReleasesPage {
             updateStatus = "Update check needs GitHub release access: \(error.localizedDescription) Opening the QuietType releases page."
+            updateOverlayTitle = "Update needs release access"
+            updateOverlayDetail = error.localizedDescription
+            updateInstallFailed = true
+            recordUpdateProgress(updateStatus)
+            resumeAppServicesAfterUpdateIfNeeded()
             updateService.openReleasesPage()
         } catch {
             updateStatus = "Update check failed: \(error.localizedDescription)"
+            updateOverlayTitle = "Update failed"
+            updateOverlayDetail = error.localizedDescription
+            updateInstallFailed = true
+            recordUpdateProgress(updateStatus)
+            resumeAppServicesAfterUpdateIfNeeded()
         }
+    }
+
+    private func beginUpdateOverlay() {
+        isUpdateOverlayVisible = true
+        updateOverlayTitle = "Updating QuietType"
+        updateOverlayDetail = "Downloading and verifying the signed update."
+        updateProgressMessages = []
+        updateInstallCompleted = false
+        updateInstallFailed = false
+        updateInstallRequiresRestart = false
+        updateStatus = ""
+    }
+
+    private func recordUpdateProgress(_ message: String) {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return
+        }
+        updateStatus = trimmed
+        updateOverlayDetail = trimmed
+        if updateProgressMessages.last != trimmed {
+            updateProgressMessages.append(trimmed)
+        }
+    }
+
+    func dismissUpdateOverlay() {
+        guard !isCheckingForUpdates else {
+            return
+        }
+        isUpdateOverlayVisible = false
+    }
+
+    func restartInstalledApp() {
+        let script = "sleep 0.6; open -a '/Applications/QuietType.app'"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", script]
+        try? process.run()
+        NSApplication.shared.terminate(nil)
     }
 
     func installSage() async {
@@ -6687,6 +8045,7 @@ final class MenuBarModel: ObservableObject {
         Task {
             refreshSystemMetrics()
             refreshSageStatus()
+            await refreshLocalMemories()
             await registerSageAgentIfAvailable()
             await refreshPermissions(promptForAccessibility: false)
             refreshSpeechEngineStatus()
@@ -6698,7 +8057,68 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
+    private func suspendAppForUpdateInstall() async {
+        if isRecording {
+            await cancelRecording()
+        }
+        if isVoiceNoteRecording {
+            voiceNoteCaptureService?.stop()
+            voiceNoteCaptureService = nil
+            isVoiceNoteRecording = false
+            voiceNoteSamples = []
+            voiceNoteFrameCount = 0
+            voiceNoteDuration = 0
+            voiceNoteInputLevel = 0
+            voiceNoteStartedAt = nil
+        }
+        if isTrainingRecording {
+            trainingCaptureService?.stop()
+            trainingCaptureService = nil
+            isTrainingRecording = false
+            trainingSamples = []
+            trainingDuration = 0
+            trainingInputLevel = 0
+            trainingStartedAt = nil
+        }
+        if isTeachingRecording {
+            resetTeachingDraft()
+        }
+
+        stopVoiceNotePlayback()
+        hotKeyController?.unregister()
+        hotKeyController = nil
+        functionKeyMonitor?.unregister()
+        functionKeyMonitor = nil
+        typingReminderMonitor?.unregister()
+        typingReminderMonitor = nil
+        unregisterCancelKeyMonitor()
+        overlayController.hide()
+        nativeSpeechStartupTask?.cancel()
+        nativeSpeechStartupTask = nil
+        updateCheckTask?.cancel()
+        updateCheckTask = nil
+        whisperKitSupervisor?.stop()
+        whisperKitSupervisor = nil
+        nativeSpeechServerReady = false
+        nativeInferencePrewarmed = false
+        refreshSpeechEngineStatus()
+    }
+
+    private func resumeAppServicesAfterUpdateIfNeeded() {
+        guard !updateInstallRequiresRestart else {
+            return
+        }
+        registerGlobalHotKey()
+        registerCancelKeyMonitor()
+        registerTypingReminderMonitor()
+        startNativeSpeechWarmup()
+        startBackgroundUpdateChecks()
+    }
+
     func shutdownAppServices() {
+        voiceNoteCaptureService?.stop()
+        voiceNoteCaptureService = nil
+        stopVoiceNotePlayback()
         trainingCaptureService?.stop()
         trainingCaptureService = nil
         hotKeyController?.unregister()
@@ -6716,6 +8136,7 @@ final class MenuBarModel: ObservableObject {
         whisperKitSupervisor?.stop()
         whisperKitSupervisor = nil
         nativeSpeechServerReady = false
+        nativeInferencePrewarmed = false
     }
 
     func setHotKeyChoice(_ choice: HotKeyChoice) {
@@ -7247,7 +8668,23 @@ final class MenuBarModel: ObservableObject {
     }
 
     func refreshLocalMemories() async {
-        localMemories = []
+        do {
+            localMemories = try await memoryStore.search(
+                MemorySearchQuery(
+                    text: "",
+                    types: [.vocabulary, .correction, .styleProfile, .formattingPreference, .transcriptNote, .voiceNote],
+                    limit: 500,
+                    localOnly: true
+                )
+            )
+            ensureSelectedVoiceNote()
+        } catch {
+            lastError = "Local memory refresh failed: \(error.localizedDescription)"
+        }
+    }
+
+    func refreshVoiceNotes() async {
+        await refreshLocalMemories()
     }
 
     func refreshDictionaryMemories() async {
@@ -7326,11 +8763,12 @@ final class MenuBarModel: ObservableObject {
 
         do {
             if await whisperKitSupervisor?.isServerHealthy() == true {
+                let didPrewarm = await warmNativeSpeechInferenceIfNeeded()
                 nativeSpeechServerReady = true
                 isBooting = false
                 updateStartupStep(
                     id: "nativeSpeech",
-                    detail: "Apple Silicon transcription server is already warm.",
+                    detail: didPrewarm ? "Apple Silicon transcription server is ready for first dictation." : "Apple Silicon transcription server is reachable. First dictation may finish warming it.",
                     state: .ready
                 )
                 statusMessage = "Native speech ready"
@@ -7344,10 +8782,11 @@ final class MenuBarModel: ObservableObject {
             let startedAt = Date()
             while !Task.isCancelled {
                 if await whisperKitSupervisor?.isServerHealthy() == true {
+                    let didPrewarm = await warmNativeSpeechInferenceIfNeeded()
                     nativeSpeechServerReady = true
                     updateStartupStep(
                         id: "nativeSpeech",
-                        detail: "Apple Silicon transcription server is warm.",
+                        detail: didPrewarm ? "Apple Silicon transcription server is ready for first dictation." : "Apple Silicon transcription server is reachable. First dictation may finish warming it.",
                         state: .ready
                     )
                     statusMessage = "Native speech ready"
@@ -7381,6 +8820,51 @@ final class MenuBarModel: ObservableObject {
 
         refreshSpeechEngineStatus()
         isBooting = false
+    }
+
+    @discardableResult
+    private func warmNativeSpeechInferenceIfNeeded() async -> Bool {
+        guard !nativeInferencePrewarmed else {
+            return true
+        }
+        guard await whisperKitSupervisor?.isServerHealthy() == true else {
+            return false
+        }
+
+        statusMessage = "Preparing native speech"
+        updateStartupStep(
+            id: "nativeSpeech",
+            detail: "Preparing the first local transcription.",
+            state: .running
+        )
+
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("quiettype-native-warmup-\(UUID().uuidString).wav")
+        let sampleRate = 16_000
+        let samples = (0..<sampleRate).map { index -> Float in
+            let seconds = Double(index) / Double(sampleRate)
+            let taper = min(seconds / 0.08, (1.0 - seconds) / 0.08, 1.0)
+            let phase = seconds * 2.0 * Double.pi * 440.0
+            return Float(sin(phase) * max(taper, 0.0) * 0.025)
+        }
+
+        do {
+            try WavFileWriter.writeMonoPCM16(samples: samples, sampleRate: sampleRate, to: tempURL)
+            defer {
+                try? FileManager.default.removeItem(at: tempURL)
+            }
+            _ = try await WhisperKitServerTranscriber(timeoutSeconds: 20.0)
+                .transcribe(audioFile: tempURL, options: .none)
+            nativeInferencePrewarmed = true
+            return true
+        } catch {
+            try? FileManager.default.removeItem(at: tempURL)
+            if isEmptyTranscriptFailure(error) || isLikelyNoiseOnlyFailure(error) {
+                nativeInferencePrewarmed = true
+                return true
+            }
+            return false
+        }
     }
 
     func apply(_ sample: Sample) {
@@ -7529,6 +9013,435 @@ final class MenuBarModel: ObservableObject {
         lastError = nil
         overlayController.show(state: .cancelled, detail: "Discarded locally")
         overlayController.hide(after: 0.9)
+    }
+
+    func setSaveVoiceNotesToSage(_ enabled: Bool) {
+        saveVoiceNotesToSage = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.saveVoiceNotesToSageKey)
+    }
+
+    func setVoiceNotePlaybackVolume(_ volume: Double) {
+        voiceNotePlaybackVolume = min(max(volume, 0), 1)
+        voiceNoteAudioPlayer?.volume = Float(voiceNotePlaybackVolume)
+    }
+
+    func toggleVoiceNoteRecording() async {
+        if isVoiceNoteRecording {
+            await stopVoiceNoteRecording()
+        } else {
+            await startVoiceNoteRecording()
+        }
+    }
+
+    private func startVoiceNoteRecording() async {
+        guard !isRecording, !isTrainingRecording, !isTeachingRecording else {
+            lastError = "Stop the current recording before starting a voice note."
+            return
+        }
+        guard !isVoiceNoteTranscribing else {
+            return
+        }
+
+        if microphonePermission != .granted {
+            microphonePermission = await permissionService.requestMicrophone()
+        }
+        await refreshPermissions(promptForAccessibility: false, verifyMicrophoneAccess: true)
+        guard microphonePermission == .granted else {
+            statusMessage = "Waiting for microphone"
+            lastError = "Allow Microphone in System Settings so QuietType can capture local audio."
+            return
+        }
+        guard await ensureNativeSpeechServerReadyForTranscription() else {
+            statusMessage = "Native speech warming"
+            lastError = "QuietType is waiting for the Apple Silicon speech engine before voice notes can transcribe."
+            return
+        }
+
+        voiceNoteSamples = []
+        voiceNoteFrameCount = 0
+        voiceNoteDuration = 0
+        voiceNoteInputLevel = 0
+        voiceNoteSampleRate = 16_000
+        peakVoiceNoteInputRMS = 0
+        voiceNoteNoiseFloorRMS = 0.006
+        voiceNoteStartedAt = Date()
+        lastError = nil
+        statusMessage = "Recording voice note"
+
+        let service = AVAudioCaptureService { [weak self] frame in
+            await self?.recordVoiceNote(frame)
+        }
+
+        do {
+            try service.start()
+            voiceNoteCaptureService = service
+            microphoneAccessVerified = true
+            microphonePermission = .granted
+            updatePermissionsStartupStep()
+            isVoiceNoteRecording = true
+        } catch {
+            voiceNoteCaptureService = nil
+            voiceNoteStartedAt = nil
+            isVoiceNoteRecording = false
+            microphoneAccessVerified = false
+            microphonePermission = .denied
+            updatePermissionsStartupStep()
+            lastError = "Could not start microphone: \(error)"
+            statusMessage = "Microphone permission needed"
+        }
+    }
+
+    private func stopVoiceNoteRecording() async {
+        guard isVoiceNoteRecording else {
+            return
+        }
+
+        voiceNoteCaptureService?.stop()
+        voiceNoteCaptureService = nil
+        isVoiceNoteRecording = false
+        isVoiceNoteTranscribing = true
+        defer {
+            isVoiceNoteTranscribing = false
+            voiceNoteInputLevel = 0
+            voiceNoteStartedAt = nil
+        }
+
+        let duration = voiceNoteDuration
+        guard voiceNoteFrameCount > 0 else {
+            statusMessage = "No audio captured"
+            lastError = nil
+            voiceNoteSamples = []
+            return
+        }
+        guard peakVoiceNoteInputRMS >= Self.minimumUsableRMS else {
+            statusMessage = "No usable microphone signal"
+            lastError = "Check the selected input device in macOS Sound settings, then try again."
+            voiceNoteSamples = []
+            return
+        }
+
+        do {
+            statusMessage = "Transcribing voice note"
+            activeTranscriptionOptions = currentTranscriptionOptions(appName: "Voice Notes")
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("quiettype-voice-note-\(UUID().uuidString).wav")
+            try WavFileWriter.writeMonoPCM16(samples: voiceNoteSamples, sampleRate: voiceNoteSampleRate, to: tempURL)
+            defer {
+                try? FileManager.default.removeItem(at: tempURL)
+                voiceNoteSamples = []
+            }
+
+            let timedResult = try await transcribeFullAudioWithTiming(tempURL)
+            let rawTranscript = timedResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !isLikelyNoiseTranscript(rawTranscript, duration: duration) else {
+                throw AudioTranscriberError.noiseOnlyTranscript(rawTranscript)
+            }
+
+            let polishedText = try await polishVoiceNoteTranscript(rawTranscript)
+            let encryptedAudioURL = try await voiceNoteAudioStore.saveWAVData(Data(contentsOf: tempURL))
+            let id = try await saveVoiceNote(
+                rawTranscript: rawTranscript,
+                polishedText: polishedText,
+                audioURL: encryptedAudioURL,
+                duration: duration
+            )
+            selectedVoiceNoteID = id
+            statusMessage = "Voice note saved locally"
+            lastError = nil
+            if saveVoiceNotesToSage {
+                await sendVoiceNoteToSage(id: id)
+            }
+        } catch {
+            if isLikelyNoiseOnlyFailure(error) {
+                statusMessage = "No clear speech detected"
+                lastError = nil
+            } else if isEmptyTranscriptFailure(error) {
+                statusMessage = "No transcript returned"
+                lastError = nil
+            } else {
+                statusMessage = "Voice note failed"
+                lastError = String(describing: error)
+            }
+            voiceNoteSamples = []
+        }
+    }
+
+    private func recordVoiceNote(_ frame: AudioFrame) async {
+        guard isVoiceNoteRecording else {
+            return
+        }
+
+        voiceNoteFrameCount += 1
+        voiceNoteSampleRate = frame.sampleRate
+        voiceNoteSamples.append(contentsOf: frame.samples)
+        if let voiceNoteStartedAt {
+            voiceNoteDuration = Date().timeIntervalSince(voiceNoteStartedAt)
+        }
+        let rms = sqrt(frame.samples.reduce(0.0) { partial, sample in
+            partial + Double(sample * sample)
+        } / Double(max(frame.samples.count, 1)))
+        peakVoiceNoteInputRMS = max(peakVoiceNoteInputRMS, rms)
+        voiceNoteNoiseFloorRMS = Self.updatedNoiseFloor(currentFloor: voiceNoteNoiseFloorRMS, rms: rms)
+        voiceNoteInputLevel = Self.displayLevel(rms: rms, noiseFloor: voiceNoteNoiseFloorRMS, previous: voiceNoteInputLevel)
+
+        if voiceNoteDuration >= Self.maxDictationDurationSeconds && isVoiceNoteRecording {
+            statusMessage = "5 minute note limit reached"
+            await stopVoiceNoteRecording()
+        }
+    }
+
+    private func polishVoiceNoteTranscript(_ rawTranscript: String) async throws -> String {
+        let context = AppContext(appName: "Voice Notes", profile: .notes)
+        let controller = DictationSessionController(
+            profile: currentDictationProfile(),
+            asrBackend: TranscriptASRBackend(transcript: rawTranscript),
+            contextCollector: StaticContextCollector(context: context),
+            inserter: BufferingTextInserter(),
+            memoryStore: memoryStore,
+            semanticEditor: editorMode.makeEditor(model: ollamaModel)
+        )
+        try await controller.begin()
+        return try await controller.finishAndInsert().text
+    }
+
+    private func saveVoiceNote(rawTranscript: String, polishedText: String, audioURL: URL, duration: Double) async throws -> String {
+        let createdAt = Date()
+        let title = Self.defaultVoiceNoteTitle(from: polishedText.nilIfBlank ?? rawTranscript, createdAt: createdAt)
+        let memory = DictationMemory(
+            type: .voiceNote,
+            payload: [
+                "title": title,
+                "raw_transcript": rawTranscript,
+                "polished_text": polishedText,
+                "audio_path": audioURL.path,
+                "duration_seconds": String(format: "%.3f", duration),
+                "created_at": ISO8601DateFormatter().string(from: createdAt),
+                "encrypted_audio": "aes-gcm-keychain",
+                "sent_to_sage": "false"
+            ],
+            contexts: ["voice_notes", "local_long_term"],
+            source: "QuietType Voice Notes",
+            confidence: 1.0,
+            privacy: "local_encrypted"
+        )
+        let id = try await memoryStore.put(memory)
+        var stored = memory
+        stored.id = id
+        localMemories.removeAll { $0.id == id }
+        localMemories.insert(stored, at: 0)
+        ensureSelectedVoiceNote()
+        return id
+    }
+
+    func updateVoiceNote(id: String, title: String, rawTranscript: String, polishedText: String) async {
+        do {
+            try await memoryStore.update(memoryID: id, patch: [
+                "title": title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank ?? "Voice note",
+                "raw_transcript": rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines),
+                "polished_text": polishedText.trimmingCharacters(in: .whitespacesAndNewlines),
+                "updated_at": ISO8601DateFormatter().string(from: Date())
+            ])
+            await refreshVoiceNotes()
+            selectedVoiceNoteID = id
+            statusMessage = "Voice note saved"
+            lastError = nil
+        } catch {
+            lastError = "Voice note save failed: \(error.localizedDescription)"
+        }
+    }
+
+    func deleteVoiceNote(id: String) async {
+        guard let memory = localMemories.first(where: { $0.id == id }) else {
+            lastError = "Voice note not found."
+            return
+        }
+        let audioPath = memory.payload["audio_path"]
+        let sageMemoryID = memory.payload["sage_memory_id"]?.nilIfBlank
+        do {
+            if let sageMemoryID {
+                if sageDirectClient == nil {
+                    await registerSageAgentIfAvailable()
+                }
+                guard let sageDirectClient else {
+                    lastError = "Connect SAGE before removing the linked voice note memory."
+                    return
+                }
+                _ = try await sageDirectClient.deprecateMemory(
+                    id: sageMemoryID,
+                    reason: "QuietType voice note deleted by user."
+                )
+                sageMemories.removeAll { $0.id == sageMemoryID }
+            }
+            try await memoryStore.delete(memoryID: id)
+            if let audioPath {
+                try? FileManager.default.removeItem(atPath: audioPath)
+            }
+            localMemories.removeAll { $0.id == id }
+            selectedVoiceNoteID = nil
+            ensureSelectedVoiceNote()
+            statusMessage = sageMemoryID == nil ? "Voice note removed" : "Voice note and SAGE memory removed"
+            lastError = nil
+        } catch {
+            lastError = "Voice note delete failed: \(error.localizedDescription)"
+        }
+    }
+
+    func sendVoiceNoteToSage(id: String) async {
+        guard let memory = localMemories.first(where: { $0.id == id && $0.type == .voiceNote }) else {
+            lastError = "Voice note not found."
+            return
+        }
+        guard let sageDirectClient else {
+            await registerSageAgentIfAvailable()
+            guard let sageDirectClient else {
+                lastError = "Connect SAGE before sending a voice note."
+                return
+            }
+            await submitVoiceNote(memory, using: sageDirectClient)
+            return
+        }
+        await submitVoiceNote(memory, using: sageDirectClient)
+    }
+
+    private func submitVoiceNote(_ memory: DictationMemory, using client: SageDirectClient) async {
+        do {
+            guard let memoryID = memory.id else {
+                throw MemoryStoreError.notFound("voice note")
+            }
+            let title = memory.payload["title"]?.nilIfBlank ?? "Voice note"
+            let raw = memory.payload["raw_transcript"] ?? ""
+            let polished = memory.payload["polished_text"] ?? ""
+            let createdAt = memory.payload["created_at"] ?? ""
+            let duration = memory.payload["duration_seconds"] ?? ""
+            let content = """
+            QuietType voice note for long-term recall. Title: \(title). Created locally: \(createdAt). Duration seconds: \(duration). Transcript: "\(polished)". Raw transcript: "\(raw)". Audio remains encrypted on the user's Mac and is not attached to this SAGE memory.
+            """
+            let submission = try await client.submitTranscriptNote(content: content, confidence: 0.9)
+            try await memoryStore.update(memoryID: memoryID, patch: [
+                "sent_to_sage": "true",
+                "sage_memory_id": submission.memoryID,
+                "sent_to_sage_at": ISO8601DateFormatter().string(from: Date())
+            ])
+            await refreshVoiceNotes()
+            selectedVoiceNoteID = memoryID
+            sageMemories.insert(
+                SageMemoryRecord(
+                    id: submission.memoryID,
+                    content: content,
+                    domain: "quiettype.transcripts",
+                    type: "observation",
+                    confidence: 0.9,
+                    createdAt: nil,
+                    submittingAgent: sageAgentID
+                ),
+                at: 0
+            )
+            statusMessage = "Voice note copied to SAGE"
+            lastError = nil
+        } catch {
+            lastError = "Voice note SAGE send failed: \(error.localizedDescription)"
+        }
+    }
+
+    func playVoiceNoteAudio(id: String) async {
+        if playingVoiceNoteID == id, let player = voiceNoteAudioPlayer {
+            if player.isPlaying {
+                player.currentTime = 0
+            } else {
+                player.currentTime = 0
+                player.play()
+                isVoiceNotePlaying = true
+                statusMessage = "Playing voice note"
+                startVoiceNotePlaybackTimer()
+            }
+            return
+        }
+
+        stopVoiceNotePlayback()
+        guard let note = voiceNotes.first(where: { $0.id == id }),
+              let audioPath = note.audioPath else {
+            lastError = "Voice note audio is unavailable."
+            return
+        }
+
+        do {
+            let data = try await voiceNoteAudioStore.decryptAudio(at: URL(fileURLWithPath: audioPath))
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("quiettype-playback-\(UUID().uuidString).wav")
+            try data.write(to: tempURL, options: [.atomic])
+            let player = try AVAudioPlayer(contentsOf: tempURL)
+            player.prepareToPlay()
+            player.volume = Float(voiceNotePlaybackVolume)
+            voiceNoteAudioPlayer = player
+            voiceNotePlaybackTempURL = tempURL
+            playingVoiceNoteID = id
+            voiceNotePlaybackDuration = player.duration
+            voiceNotePlaybackProgress = 0
+            player.play()
+            isVoiceNotePlaying = true
+            startVoiceNotePlaybackTimer()
+            statusMessage = "Playing voice note"
+            lastError = nil
+        } catch {
+            lastError = "Could not play encrypted audio: \(error.localizedDescription)"
+        }
+    }
+
+    func stopCurrentVoiceNoteAudio() {
+        stopVoiceNotePlayback()
+        statusMessage = "Voice note stopped"
+    }
+
+    private func startVoiceNotePlaybackTimer() {
+        voiceNotePlaybackTimer?.invalidate()
+        voiceNotePlaybackTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.updateVoiceNotePlaybackProgress()
+            }
+        }
+    }
+
+    private func updateVoiceNotePlaybackProgress() {
+        guard let player = voiceNoteAudioPlayer else {
+            stopVoiceNotePlayback()
+            return
+        }
+        voiceNotePlaybackDuration = player.duration
+        voiceNotePlaybackProgress = player.duration > 0 ? min(max(player.currentTime / player.duration, 0), 1) : 0
+        if !player.isPlaying {
+            isVoiceNotePlaying = false
+            voiceNotePlaybackTimer?.invalidate()
+            voiceNotePlaybackTimer = nil
+            if player.currentTime >= player.duration {
+                playingVoiceNoteID = nil
+                voiceNotePlaybackProgress = 0
+                try? voiceNotePlaybackTempURL.map { try FileManager.default.removeItem(at: $0) }
+                voiceNotePlaybackTempURL = nil
+                voiceNoteAudioPlayer = nil
+            }
+        }
+    }
+
+    private func stopVoiceNotePlayback() {
+        voiceNotePlaybackTimer?.invalidate()
+        voiceNotePlaybackTimer = nil
+        voiceNoteAudioPlayer?.stop()
+        voiceNoteAudioPlayer = nil
+        playingVoiceNoteID = nil
+        isVoiceNotePlaying = false
+        voiceNotePlaybackProgress = 0
+        voiceNotePlaybackDuration = 0
+        try? voiceNotePlaybackTempURL.map { try FileManager.default.removeItem(at: $0) }
+        voiceNotePlaybackTempURL = nil
+    }
+
+    private func ensureSelectedVoiceNote() {
+        let notes = voiceNotes
+        if let selectedVoiceNoteID,
+           notes.contains(where: { $0.id == selectedVoiceNoteID }) {
+            return
+        }
+        selectedVoiceNoteID = notes.first?.id
     }
 
     private func prepareForDictation() async -> Bool {
@@ -7889,7 +9802,7 @@ final class MenuBarModel: ObservableObject {
         return !isLikelyNoiseTranscript(trimmed)
     }
 
-    private func isLikelyNoiseTranscript(_ text: String) -> Bool {
+    private func isLikelyNoiseTranscript(_ text: String, duration: Double? = nil) -> Bool {
         let trimmed = text
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: ".!?"))
@@ -7915,7 +9828,7 @@ final class MenuBarModel: ObservableObject {
             "thanks",
             "thank you"
         ]
-        return recordingDuration >= 2.5 && tinyHallucinations.contains(lowered)
+        return (duration ?? recordingDuration) >= 2.5 && tinyHallucinations.contains(lowered)
     }
 
     private func isLikelyNoiseOnlyFailure(_ error: Error) -> Bool {
@@ -7959,11 +9872,11 @@ final class MenuBarModel: ObservableObject {
         return profile
     }
 
-    private func currentTranscriptionOptions() -> AudioTranscriptionOptions {
+    private func currentTranscriptionOptions(appName: String? = nil) -> AudioTranscriptionOptions {
         AudioTranscriptionOptions(
             initialPrompt: ASRPromptBuilder().prompt(
                 for: currentDictationProfile(),
-                appName: selectedProfile.appName
+                appName: appName ?? selectedProfile.appName
             )
         )
     }
@@ -7971,10 +9884,12 @@ final class MenuBarModel: ObservableObject {
     private func prepareNativeSpeechServerIfAvailable() async {
         if nativeSpeechServerReady,
            await whisperKitSupervisor?.isServerHealthy() == true {
+            _ = await warmNativeSpeechInferenceIfNeeded()
             return
         }
 
         nativeSpeechServerReady = false
+        nativeInferencePrewarmed = false
         refreshSpeechEngineStatus()
         startNativeSpeechWarmup()
     }
@@ -7982,10 +9897,12 @@ final class MenuBarModel: ObservableObject {
     private func ensureNativeSpeechServerReadyForTranscription() async -> Bool {
         if nativeSpeechServerReady,
            await whisperKitSupervisor?.isServerHealthy() == true {
+            _ = await warmNativeSpeechInferenceIfNeeded()
             return true
         }
 
         nativeSpeechServerReady = false
+        nativeInferencePrewarmed = false
         refreshSpeechEngineStatus()
 
         guard let executableURL = WhisperKitServerBundleLocator.bundledExecutable(),
@@ -8014,18 +9931,20 @@ final class MenuBarModel: ObservableObject {
 
         do {
             try await whisperKitSupervisor?.ensureRunning(stopOnTimeout: false)
+            let didPrewarm = await warmNativeSpeechInferenceIfNeeded()
             nativeSpeechServerReady = true
             speechEngineReady = true
             speechEngineStatus = "Native speech ready"
             statusMessage = "Native speech ready"
             updateStartupStep(
                 id: "nativeSpeech",
-                detail: "Apple Silicon transcription server is warm.",
+                detail: didPrewarm ? "Apple Silicon transcription server is ready for first dictation." : "Apple Silicon transcription server is reachable. First dictation may finish warming it.",
                 state: .ready
             )
             return true
         } catch {
             nativeSpeechServerReady = false
+            nativeInferencePrewarmed = false
             speechEngineReady = false
             let detail = String(describing: error)
             speechEngineStatus = "Native speech starting"

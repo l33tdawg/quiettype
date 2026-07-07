@@ -14,6 +14,7 @@ public enum DictationMemoryType: String, Codable, Sendable {
     case styleProfile = "dictation.style_profile"
     case formattingPreference = "dictation.formatting_preference"
     case transcriptNote = "dictation.transcript_note"
+    case voiceNote = "dictation.voice_note"
 }
 
 public struct DictationMemory: Codable, Equatable, Sendable, Identifiable {

@@ -91,6 +91,18 @@ Beta builds are designed to bundle SAGE GUI so first-run setup can
 start the local SAGE node without asking users to hunt for a separate download.
 Release builds can pin a known-good SAGE GUI release to avoid version drift.
 
+### Voice notes with editable local transcripts
+
+Voice Notes is a separate local recording space for private thoughts, diary
+entries, rough plans and long-form ideas. QuietType records the audio,
+transcribes it locally, lets you edit both the raw transcript and polished note,
+and stores the result on the Mac.
+
+Voice note audio is encrypted at rest before it is written to disk. Transcript
+edits live in QuietType's encrypted local memory store. New voice notes also
+copy their transcript to SAGE by default so useful context can become governed
+memory, but the audio file remains local and encrypted.
+
 ### Local personalization without cloud training
 
 The setup flow asks users to read short scripts. QuietType uses those local
@@ -111,7 +123,9 @@ user's machine.
 - microphone and Accessibility setup guidance
 - setup progress and local activity status
 - SAGE memory search/review UI for corrections, vocabulary and review notes
+- encrypted Voice Notes with playback, transcript editing and optional SAGE transcript copies
 - bundled SAGE GUI for first-run governed memory setup
+- signed update checks with visible download/install status and restart flow
 - signed and notarized beta DMG
 
 ## Privacy Model
@@ -122,8 +136,10 @@ should not leave the Mac.
 | Area | Default |
 | --- | --- |
 | Voice audio | Local only |
+| Voice note audio | Encrypted local file |
 | Voice training samples | Local only |
 | Raw transcript text | Local only |
+| Voice note transcripts | Encrypted local store; SAGE transcript copy on by default |
 | Prompt cleanup | Local only |
 | Vocabulary memory | Mandatory local SAGE memory |
 | Correction/review notes | Mandatory local SAGE memory |
@@ -151,6 +167,10 @@ Public releases:
 ```text
 https://github.com/l33tdawg/quiettype/releases
 ```
+
+The download badge and landing-page links point at the latest published GitHub
+Release. Source on `main` may be ahead of the published beta while a new signed
+DMG is being prepared.
 
 ## Development
 

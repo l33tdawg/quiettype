@@ -232,14 +232,17 @@
 
     .signal {
       position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      opacity: 0.72;
+      inset: 34px -18px 86px 26px;
+      width: calc(100% - 8px);
+      height: calc(100% - 120px);
+      opacity: 0.86;
+      z-index: 0;
+      pointer-events: none;
     }
 
     .app-frame {
       position: relative;
+      z-index: 1;
       width: min(700px, 100%);
       border: 1px solid rgba(0, 0, 0, 0.16);
       border-radius: 10px;
@@ -959,31 +962,57 @@
 
     function drawSignal() {
       context.clearRect(0, 0, width, height);
-      context.strokeStyle = "rgba(23, 23, 23, 0.14)";
-      context.lineWidth = 1;
+      const bandX = width * 0.08;
+      const bandWidth = width * 0.84;
+      const centerY = height * 0.48;
+      const bandHeight = Math.min(210, height * 0.46);
 
-      for (let row = 0; row < 8; row += 1) {
-        const y = 70 + row * 58;
+      context.save();
+      context.fillStyle = "rgba(255, 255, 255, 0.28)";
+      context.strokeStyle = "rgba(23, 23, 23, 0.055)";
+      context.lineWidth = 1;
+      context.beginPath();
+      context.roundRect(bandX, centerY - bandHeight / 2, bandWidth, bandHeight, 18);
+      context.fill();
+      context.stroke();
+      context.restore();
+
+      context.lineCap = "round";
+      context.lineJoin = "round";
+
+      for (let row = -2; row <= 2; row += 1) {
+        const rowDistance = Math.abs(row);
+        const y = centerY + row * 34;
+        const alpha = 0.18 - rowDistance * 0.035;
+        context.strokeStyle = `rgba(23, 23, 23, ${alpha})`;
+        context.lineWidth = row === 0 ? 2 : 1.25;
         context.beginPath();
-        for (let x = 0; x <= width; x += 12) {
-          const wave = Math.sin((x * 0.018) + phase + row * 0.7) * (8 + row * 0.5);
-          if (x === 0) context.moveTo(x, y + wave);
+        for (let x = bandX; x <= bandX + bandWidth; x += 8) {
+          const t = (x - bandX) / bandWidth;
+          const envelope = Math.pow(Math.sin(Math.PI * t), 1.85);
+          const primary = Math.sin((t * 18) + phase + row * 0.42);
+          const secondary = Math.sin((t * 43) - phase * 0.72 + row);
+          const wave = (primary * 30 + secondary * 8) * envelope * (1 - rowDistance * 0.18);
+          if (x === bandX) context.moveTo(x, y + wave);
           else context.lineTo(x, y + wave);
         }
         context.stroke();
       }
 
-      context.strokeStyle = "rgba(23, 23, 23, 0.2)";
-      for (let i = 0; i < 28; i += 1) {
-        const x = (i * 97 + phase * 34) % (width + 80) - 40;
-        const y = 24 + ((i * 61) % Math.max(1, height - 48));
+      context.strokeStyle = "rgba(23, 23, 23, 0.11)";
+      context.lineWidth = 1.5;
+      for (let i = 0; i < 46; i += 1) {
+        const t = i / 45;
+        const x = bandX + t * bandWidth;
+        const envelope = Math.pow(Math.sin(Math.PI * t), 1.55);
+        const tick = 7 + envelope * (34 + Math.sin(i * 1.7 + phase * 2.6) * 10);
         context.beginPath();
-        context.moveTo(x, y);
-        context.lineTo(x + 22, y);
+        context.moveTo(x, centerY - tick / 2);
+        context.lineTo(x, centerY + tick / 2);
         context.stroke();
       }
 
-      phase += 0.012;
+      phase += 0.018;
       requestAnimationFrame(drawSignal);
     }
 
