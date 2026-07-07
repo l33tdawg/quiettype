@@ -1352,12 +1352,54 @@ struct TesterView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .onAppear {
-            Task {
-                if model.dictionaryMemories.isEmpty {
-                    await model.refreshDictionaryMemories()
-                }
+        .overlay {
+            reviewDeleteConfirmationOverlay
+        }
+        .task {
+            guard model.dictionaryMemories.isEmpty else {
+                return
             }
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled, model.dictionaryMemories.isEmpty else {
+                return
+            }
+            await model.refreshDictionaryMemories()
+        }
+    }
+
+    @ViewBuilder
+    private var reviewDeleteConfirmationOverlay: some View {
+        if let deleteMemory = pendingReviewDeleteMemory {
+            ZStack {
+                Color.black.opacity(0.18)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        guard !isDeletingReviewMemory else {
+                            return
+                        }
+                        pendingReviewDeleteMemory = nil
+                    }
+
+                DeleteMemoryConfirmPopover(
+                    title: "Remove this memory?",
+                    isDeleting: isDeletingReviewMemory,
+                    message: "QuietType will ask SAGE to forget this \(deleteMemory.kind.lowercased()) memory and remove it from Review.",
+                    onCancel: {
+                        pendingReviewDeleteMemory = nil
+                    },
+                    onDelete: {
+                        Task {
+                            isDeletingReviewMemory = true
+                            await model.deleteReviewMemory(memoryID: deleteMemory.id)
+                            isDeletingReviewMemory = false
+                            pendingReviewDeleteMemory = nil
+                        }
+                    }
+                )
+                .padding(24)
+            }
+            .transition(.opacity)
+            .zIndex(50)
         }
     }
 
@@ -1679,51 +1721,18 @@ struct TesterView: View {
                     subtitle: model.sageReady ? "QuietType will show transcript reviews and corrections here after dictation." : "QuietType needs SAGE BFT-governed memory before transcript review can run."
                 )
             } else {
-                ZStack(alignment: .center) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(reviewMemories) { memory in
-                            DictionaryMemoryRow(memory: memory, saveAction: { rawTranscript, polishedText in
-                                await model.updateTranscriptNote(memoryID: memory.id, rawTranscript: rawTranscript, polishedText: polishedText)
-                            }, deleteAction: {
-                                pendingReviewDeleteMemory = memory
-                            })
-                        }
-                    }
-                    .background(Color(nsColor: .windowBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
-
-                    if let deleteMemory = pendingReviewDeleteMemory {
-                        Color.black.opacity(0.06)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .onTapGesture {
-                                guard !isDeletingReviewMemory else {
-                                    return
-                                }
-                                self.pendingReviewDeleteMemory = nil
-                            }
-                            .zIndex(20)
-
-                        DeleteMemoryConfirmPopover(
-                            title: "Remove this memory?",
-                            isDeleting: isDeletingReviewMemory,
-                            message: "QuietType will ask SAGE to forget this \(deleteMemory.kind.lowercased()) memory and remove it from Review.",
-                            onCancel: {
-                                pendingReviewDeleteMemory = nil
-                            },
-                            onDelete: {
-                                Task {
-                                    isDeletingReviewMemory = true
-                                    await model.deleteReviewMemory(memoryID: deleteMemory.id)
-                                    isDeletingReviewMemory = false
-                                    self.pendingReviewDeleteMemory = nil
-                                }
-                            }
-                        )
-                        .padding(24)
-                        .zIndex(30)
+                LazyVStack(spacing: 0) {
+                    ForEach(reviewMemories) { memory in
+                        DictionaryMemoryRow(memory: memory, saveAction: { rawTranscript, polishedText in
+                            await model.updateTranscriptNote(memoryID: memory.id, rawTranscript: rawTranscript, polishedText: polishedText)
+                        }, deleteAction: {
+                            pendingReviewDeleteMemory = memory
+                        })
                     }
                 }
+                .background(Color(nsColor: .windowBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
             }
         }
         .padding(16)
@@ -5896,9 +5905,9 @@ private struct DictionaryMemoryRow: View {
     @State private var draftPolishedText: String
     var memory: DictionaryMemoryItem
     var saveAction: (String, String) async -> Void
-    var deleteAction: () async -> Void
+    var deleteAction: () -> Void
 
-    init(memory: DictionaryMemoryItem, saveAction: @escaping (String, String) async -> Void, deleteAction: @escaping () async -> Void) {
+    init(memory: DictionaryMemoryItem, saveAction: @escaping (String, String) async -> Void, deleteAction: @escaping () -> Void) {
         self.memory = memory
         self.saveAction = saveAction
         self.deleteAction = deleteAction
@@ -5992,9 +6001,7 @@ private struct DictionaryMemoryRow: View {
                 }
                 if !isEditing {
                     Button {
-                        Task {
-                            await deleteAction()
-                        }
+                        deleteAction()
                     } label: {
                         Image(systemName: "trash")
                             .font(.system(size: 13 + typeDelta, weight: .semibold))
