@@ -5582,6 +5582,7 @@ private func quietUpdateInstruction(
 private struct UpdateInstallOverlay: View {
     @ObservedObject var model: MenuBarModel
     @Environment(\.quietTypeTypeDelta) private var typeDelta
+    private let cardSurface = Color(nsColor: .textBackgroundColor)
 
     var body: some View {
         ZStack {
@@ -5625,9 +5626,9 @@ private struct UpdateInstallOverlay: View {
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.96))
+                .background(cardSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.06), lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: 8) {
                     ProgressView(value: quietUpdateProgressValue(
@@ -5671,9 +5672,10 @@ private struct UpdateInstallOverlay: View {
             }
             .padding(22)
             .frame(width: 520)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(cardSurface)
             .clipShape(RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.82), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.primary.opacity(0.08), lineWidth: 1))
             .shadow(color: Color.black.opacity(0.34), radius: 34, y: 20)
         }
         .animation(.easeInOut(duration: 0.18), value: model.updateProgressMessages)
