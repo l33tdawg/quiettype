@@ -1329,7 +1329,7 @@ struct TesterView: View {
     }
 
     private var dictionaryPage: some View {
-        nativePage {
+        ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 pageHeader(
                     title: "Review",
@@ -1342,6 +1342,8 @@ struct TesterView: View {
             }
             .padding(34)
         }
+        .scrollIndicators(.hidden)
+        .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) {
             if showingRecognizedTerms {
                 RecognizedTermsDrawer(isPresented: $showingRecognizedTerms)
@@ -1622,7 +1624,9 @@ struct TesterView: View {
     }
 
     private var memoryLibraryPanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let reviewMemories = model.filteredDictionaryMemories
+
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Transcript review")
@@ -1668,7 +1672,7 @@ struct TesterView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 1))
 
-            if model.filteredDictionaryMemories.isEmpty {
+            if reviewMemories.isEmpty {
                 EmptyStatePanel(
                     icon: "text.bubble",
                     title: model.sageReady ? "No transcripts yet" : "SAGE setup required",
@@ -1676,8 +1680,8 @@ struct TesterView: View {
                 )
             } else {
                 ZStack(alignment: .center) {
-                    VStack(spacing: 0) {
-                        ForEach(model.filteredDictionaryMemories) { memory in
+                    LazyVStack(spacing: 0) {
+                        ForEach(reviewMemories) { memory in
                             DictionaryMemoryRow(memory: memory, saveAction: { rawTranscript, polishedText in
                                 await model.updateTranscriptNote(memoryID: memory.id, rawTranscript: rawTranscript, polishedText: polishedText)
                             }, deleteAction: {
@@ -5581,7 +5585,7 @@ private struct UpdateInstallOverlay: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.18)
+            Color.black.opacity(0.42)
                 .ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 18) {
@@ -5621,8 +5625,9 @@ private struct UpdateInstallOverlay: View {
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: .controlBackgroundColor))
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.96))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.06), lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: 8) {
                     ProgressView(value: quietUpdateProgressValue(
@@ -5666,10 +5671,10 @@ private struct UpdateInstallOverlay: View {
             }
             .padding(22)
             .frame(width: 520)
-            .background(.ultraThinMaterial)
+            .background(Color(nsColor: .windowBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.32), lineWidth: 1))
-            .shadow(color: Color.black.opacity(0.22), radius: 30, y: 18)
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.primary.opacity(0.12), lineWidth: 1))
+            .shadow(color: Color.black.opacity(0.34), radius: 34, y: 20)
         }
         .animation(.easeInOut(duration: 0.18), value: model.updateProgressMessages)
         .animation(.easeInOut(duration: 0.18), value: model.updateInstallCompleted)
@@ -8008,8 +8013,9 @@ final class MenuBarModel: ObservableObject {
     }
 
     var dictionaryMemories: [DictionaryMemoryItem] {
-        let localItems = localMemories.map { memory in
-            let isTranscript = memory.type == .transcriptNote
+        let localItems = localMemories
+            .filter { $0.type == .transcriptNote }
+            .map { memory in
             return DictionaryMemoryItem(
                 id: memory.id ?? UUID().uuidString,
                 title: memory.payload["corrected"]
@@ -8017,30 +8023,31 @@ final class MenuBarModel: ObservableObject {
                     ?? memory.payload["polished_text"]?.prefix(64).description
                     ?? memory.type.rawValue,
                 summary: memorySummary(from: memory),
-                kind: isTranscript ? "Transcript" : memory.type.rawValue.replacingOccurrences(of: "dictation.", with: "").replacingOccurrences(of: "_", with: " ").capitalized,
+                kind: "Transcript",
                 confidence: memory.confidence,
-                source: isTranscript ? (memory.payload["app"]?.nilIfBlank ?? "QuietType") : (memory.source.isEmpty ? "QuietType" : memory.source),
+                source: memory.payload["app"]?.nilIfBlank ?? "QuietType",
                 rawTranscript: memory.payload["raw_transcript"],
                 polishedText: memory.payload["polished_text"],
                 audioPath: memory.payload["audio_path"]?.nilIfBlank,
-                isEditableTranscript: isTranscript
+                isEditableTranscript: true
             )
         }
 
-        let sageItems = sageMemories.map { memory in
+        let sageItems = sageMemories
+            .filter { $0.domain == "quiettype.transcripts" }
+            .map { memory in
             let transcript = transcriptMemoryParts(from: memory.content)
-            let isTranscript = memory.domain == "quiettype.transcripts"
             return DictionaryMemoryItem(
                 id: memory.id,
                 title: memoryTitle(from: memory.content),
                 summary: memory.content.isEmpty ? "Memory content unavailable." : memory.content,
-                kind: isTranscript ? "Transcript" : memory.domain.replacingOccurrences(of: "quiettype.", with: "").capitalized,
+                kind: "Transcript",
                 confidence: memory.confidence,
-                source: isTranscript ? (transcript.appName?.nilIfBlank ?? "QuietType") : (memory.submittingAgent == sageAgentID ? "QuietType" : "SAGE"),
+                source: transcript.appName?.nilIfBlank ?? "QuietType",
                 rawTranscript: transcript.rawTranscript,
                 polishedText: transcript.polishedText,
                 audioPath: transcript.audioPath,
-                isEditableTranscript: isTranscript
+                isEditableTranscript: true
             )
         }
 
@@ -8049,7 +8056,7 @@ final class MenuBarModel: ObservableObject {
 
     var filteredDictionaryMemories: [DictionaryMemoryItem] {
         var seenMemoryIDs = Set<String>()
-        let reviewMemories = dictionaryMemories.filter(\.isEditableTranscript).filter { memory in
+        let reviewMemories = dictionaryMemories.filter { memory in
             seenMemoryIDs.insert(memory.id).inserted
         }
 
