@@ -20,5 +20,6 @@ final class ModelsTests: XCTestCase {
 
         XCTAssertEqual(profile.speechRateWPM, 152)
         XCTAssertEqual(profile.spellingPreference, .system)
+        XCTAssertTrue(profile.profanityFilterEnabled)
     }
 }

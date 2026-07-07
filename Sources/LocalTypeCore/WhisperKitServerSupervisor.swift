@@ -118,7 +118,6 @@ public final class WhisperKitServerSupervisor: @unchecked Sendable {
             "--host", host,
             "--port", "\(port)",
             "--language", "en",
-            "--without-timestamps",
             "--skip-special-tokens",
             "--no-speech-threshold", "0.25",
             "--chunking-strategy", "none",

@@ -139,6 +139,22 @@ public struct CascadingAudioFileTranscriber: AudioFileTranscribing {
         }
         throw AudioTranscriberError.allBackendsFailed(errors)
     }
+
+    public func transcribeWithTiming(audioFile: URL, options: AudioTranscriptionOptions) async throws -> TimedTranscriptionResult {
+        guard !transcribers.isEmpty else {
+            throw AudioTranscriberError.allBackendsFailed(["No local ASR backend is ready. Wait for the Apple Silicon speech engine to finish startup."])
+        }
+
+        var errors: [String] = []
+        for transcriber in transcribers {
+            do {
+                return try await transcriber.transcribeWithTiming(audioFile: audioFile, options: options)
+            } catch {
+                errors.append(String(describing: error))
+            }
+        }
+        throw AudioTranscriberError.allBackendsFailed(errors)
+    }
 }
 
 extension WhisperCommandASRBackend: AudioFileTranscribing {

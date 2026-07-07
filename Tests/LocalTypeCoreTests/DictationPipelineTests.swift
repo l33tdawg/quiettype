@@ -60,6 +60,31 @@ final class DictationPipelineTests: XCTestCase {
         XCTAssertTrue(result.text.localizedCaseInsensitiveContains("looks like a real menu item"))
     }
 
+    func testProfanityFilterMasksExplicitWordsByDefault() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Slack", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "this is fucking annoying", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "This is f***ing annoying.")
+    }
+
+    func testProfanityFilterCanBeDisabled() async throws {
+        let profile = DictationProfile(profanityFilterEnabled: false)
+        let pipeline = DictationPipeline(profile: profile, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Slack", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "this is fucking annoying", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "This is fucking annoying.")
+    }
+
     func testFormatsExplicitNumberedList() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Notes", profile: .notes)

@@ -3,6 +3,7 @@ import AppKit
 import Darwin
 import Foundation
 import SwiftUI
+@preconcurrency import UserNotifications
 
 @main
 struct LocalTypeMacApp: App {
@@ -26,30 +27,100 @@ struct LocalTypeMacApp: App {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = self
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
     }
 }
 
 @MainActor
 private final class DictationOverlayPanel: NSPanel {
     var cancelAction: (() -> Void)?
+    var didMove: ((NSPoint) -> Void)?
+    private var dragStartLocation: NSPoint?
+    private var dragStartOrigin: NSPoint?
+    private var didDrag = false
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown || event.type == .leftMouseUp,
-           cancelAction != nil,
-           cancelHitRect.contains(event.locationInWindow) {
-            if event.type == .leftMouseUp {
-                cancelAction?()
+        switch event.type {
+        case .leftMouseDown:
+            if cancelAction == nil || !cancelHitRect.contains(event.locationInWindow) {
+                beginPanelDrag()
             }
+            super.sendEvent(event)
+        case .leftMouseDragged:
+            updatePanelDrag()
+            if didDrag {
+                return
+            }
+            super.sendEvent(event)
+        case .leftMouseUp:
+            if didDrag {
+                finishPanelDrag(savePosition: true)
+                return
+            }
+            if cancelAction != nil, cancelHitRect.contains(event.locationInWindow) {
+                resetPanelDrag()
+                cancelAction?()
+                return
+            }
+            super.sendEvent(event)
+            resetPanelDrag()
+        default:
+            super.sendEvent(event)
+        }
+    }
+
+    private func beginPanelDrag() {
+        dragStartLocation = NSEvent.mouseLocation
+        dragStartOrigin = frame.origin
+        didDrag = false
+    }
+
+    private func updatePanelDrag() {
+        guard let dragStartLocation, let dragStartOrigin else {
             return
         }
-        super.sendEvent(event)
+
+        let currentLocation = NSEvent.mouseLocation
+        let delta = NSPoint(
+            x: currentLocation.x - dragStartLocation.x,
+            y: currentLocation.y - dragStartLocation.y
+        )
+        guard abs(delta.x) > 2 || abs(delta.y) > 2 else {
+            return
+        }
+
+        didDrag = true
+        setFrameOrigin(NSPoint(
+            x: dragStartOrigin.x + delta.x,
+            y: dragStartOrigin.y + delta.y
+        ))
+    }
+
+    private func finishPanelDrag(savePosition: Bool) {
+        if savePosition {
+            didMove?(frame.origin)
+        }
+        resetPanelDrag()
+    }
+
+    private func resetPanelDrag() {
+        dragStartLocation = nil
+        dragStartOrigin = nil
+        didDrag = false
     }
 
     private var cancelHitRect: NSRect {
@@ -62,6 +133,8 @@ private final class DictationOverlayPanel: NSPanel {
 final class DictationOverlayController {
     private var panel: DictationOverlayPanel?
     private var presentationID = 0
+    private static let originXKey = "quiettype.overlayOriginX"
+    private static let originYKey = "quiettype.overlayOriginY"
 
     func show(
         state: OverlayState,
@@ -76,7 +149,7 @@ final class DictationOverlayController {
         let hasTranscript = !(transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasAction = onCancel != nil
         panel.cancelAction = onCancel
-        panel.ignoresMouseEvents = !(hasTranscript || hasAction)
+        panel.ignoresMouseEvents = false
         let compactWidth: CGFloat = hasAction ? 328 : 280
         panel.setContentSize(hasTranscript ? NSSize(width: 390, height: 154) : NSSize(width: compactWidth, height: 82))
         panel.contentView = NSHostingView(rootView: DictationOverlayView(
@@ -138,14 +211,28 @@ final class DictationOverlayController {
         panel.isOpaque = false
         panel.hasShadow = true
         panel.becomesKeyOnlyIfNeeded = true
-        panel.ignoresMouseEvents = true
+        panel.ignoresMouseEvents = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.didMove = { origin in
+            UserDefaults.standard.set(origin.x, forKey: Self.originXKey)
+            UserDefaults.standard.set(origin.y, forKey: Self.originYKey)
+        }
         return panel
     }
 
     private func position(_ panel: NSPanel) {
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let size = panel.frame.size
+        let storedX = UserDefaults.standard.object(forKey: Self.originXKey) as? Double
+        let storedY = UserDefaults.standard.object(forKey: Self.originYKey) as? Double
+        if let storedX, let storedY {
+            let storedOrigin = NSPoint(x: storedX, y: storedY)
+            let storedFrame = NSRect(origin: storedOrigin, size: size)
+            if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(storedFrame) }) {
+                panel.setFrameOrigin(storedOrigin)
+                return
+            }
+        }
         let origin = NSPoint(
             x: screen.midX - size.width / 2,
             y: screen.minY + 110
@@ -267,12 +354,12 @@ private struct DictationOverlayView: View {
             RoundedRectangle(cornerRadius: 18)
                 .fill(.ultraThinMaterial)
             RoundedRectangle(cornerRadius: 18)
-                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.18))
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.08))
         }
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(
             RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.white.opacity(0.30), lineWidth: 1)
+                .stroke(Color.white.opacity(0.22), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.16), radius: 20, y: 10)
     }
@@ -580,28 +667,69 @@ struct TesterView: View {
 
     @ViewBuilder
     private var mainContent: some View {
-        ZStack {
-            switch selectedSection {
-            case .home:
-                homePage
-            case .history:
-                dictionaryPage
-            case .setup:
-                setupPage
-            case .dictionary:
-                dictionaryPage
-            case .settings:
-                settingsPage
-            case .help:
-                helpPage
+        VStack(spacing: 0) {
+            updateAvailableBanner
+
+            ZStack {
+                switch selectedSection {
+                case .home:
+                    homePage
+                case .history:
+                    dictionaryPage
+                case .setup:
+                    setupPage
+                case .dictionary:
+                    dictionaryPage
+                case .settings:
+                    settingsPage
+                case .help:
+                    helpPage
+                }
             }
+            .id(selectedSection)
+            .transition(.asymmetric(
+                insertion: .move(edge: .trailing).combined(with: .opacity),
+                removal: .opacity
+            ))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .id(selectedSection)
-        .transition(.asymmetric(
-            insertion: .move(edge: .trailing).combined(with: .opacity),
-            removal: .opacity
-        ))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var updateAvailableBanner: some View {
+        if let update = model.availableUpdate {
+            HStack(spacing: 12) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("QuietType \(update.versionLabel) is available")
+                        .font(.system(size: 14 + textSizeChoice.pointDelta, weight: .semibold))
+                    Text("Download and install the signed update when you are ready.")
+                        .font(.system(size: 12 + textSizeChoice.pointDelta))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    Task {
+                        await model.checkForUpdatesAndInstall()
+                    }
+                } label: {
+                    Label("Update", systemImage: "arrow.down.circle")
+                }
+                .buttonStyle(QuietButtonStyle(prominence: .primary))
+                .disabled(model.isCheckingForUpdates)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
+            .background(Color.green.opacity(colorScheme == .dark ? 0.24 : 0.16))
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color.green.opacity(0.28))
+                    .frame(height: 1)
+            }
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
     }
 
     private var firstRunStage: QuietTypeFirstRunStage {
@@ -1159,7 +1287,7 @@ struct TesterView: View {
             MemoryStatPill(title: "Sessions today", value: "\(model.sessionsToday)")
             MemoryStatPill(title: "Last duration", value: model.lastDictationDurationLabel)
             MemoryStatPill(title: "Insert latency", value: model.lastLatencyMS.map { "\($0) ms" } ?? "Warm")
-            MemoryStatPill(title: "Review notes", value: "\(model.transcriptNoteCount)")
+            MemoryStatPill(title: "Transcriptions", value: "\(model.transcriptNoteCount)")
         }
     }
 
@@ -1592,8 +1720,8 @@ struct TesterView: View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 4), spacing: 14) {
             MetricTile(icon: "text.bubble", value: "\(model.sessionsToday)", label: "Sessions today")
             MetricTile(icon: "speedometer", value: model.currentWordsPerMinuteLabel, label: "Speaking pace")
-            MetricTile(icon: "brain.head.profile", value: "\(model.sageLessonCount)", label: "SAGE lessons")
-            MetricTile(icon: "checklist.checked", value: "\(model.transcriptNoteCount)", label: "Review notes")
+            MetricTile(icon: "brain.head.profile", value: "\(model.sageLessonCount)", label: "Reviews")
+            MetricTile(icon: "checklist.checked", value: "\(model.transcriptNoteCount)", label: "Transcriptions")
         }
         .anchorPreference(key: GuideSpotlightPreferenceKey.self, value: .bounds) { anchor in
             [.privacy: anchor]
@@ -1732,13 +1860,29 @@ struct TesterView: View {
                     ))
                     .toggleStyle(.checkbox)
                     .tint(.primary)
+                    .quickTooltip("When on, QuietType inserts the cleaned-up version of your dictation. When off, it leaves the result in QuietType so you can copy or review it first.")
 
-                    Toggle("Save review notes to SAGE", isOn: Binding(
-                        get: { model.historyReviewEnabled },
-                        set: { model.setHistoryReviewEnabled($0) }
+                    Toggle("Save review notes to SAGE", isOn: .constant(true))
+                    .toggleStyle(.checkbox)
+                    .tint(.primary)
+                    .disabled(true)
+                    .quickTooltip("Required for QuietType learning. Review notes and corrections are saved to local SAGE memory so future dictation can improve.")
+
+                    Toggle("Filter profanity", isOn: Binding(
+                        get: { model.profanityFilterEnabled },
+                        set: { model.setProfanityFilterEnabled($0) }
                     ))
                     .toggleStyle(.checkbox)
                     .tint(.primary)
+                    .quickTooltip("Masks common explicit words in polished output. Turn this off when you want QuietType to preserve exactly what you said.")
+
+                    Toggle("Keyboard reminders", isOn: Binding(
+                        get: { model.typingReminderEnabled },
+                        set: { model.setTypingReminderEnabled($0) }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .tint(.primary)
+                    .quickTooltip("When you type several words with the keyboard, QuietType can occasionally remind you to use local voice input instead. It is capped at 3 reminders per week with at least 48 hours between reminders.")
 
                     Spacer(minLength: 0)
                 }
@@ -1936,7 +2080,7 @@ struct TesterView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text(model.appVersionLabel)
                     .font(.callout.weight(.semibold))
-                Text("Update checks only contact GitHub when you click the button.")
+                Text("QuietType checks GitHub once a day for signed updates. Downloads happen only when you click Update.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2068,7 +2212,7 @@ struct TesterView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(model.appVersionLabel)
                             .font(.callout.weight(.semibold))
-                        Text("Manual update checks contact GitHub only when you click the button.")
+                        Text("QuietType checks GitHub once a day for signed updates. Downloads happen only when you click Update.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -2315,8 +2459,8 @@ struct TesterView: View {
                 ActivityRow(icon: "textformat.abc", title: "Current words", value: "\(model.currentSessionWordCount)")
                 ActivityRow(icon: "speedometer", title: "Speaking pace", value: model.currentWordsPerMinuteLabel)
                 ActivityRow(icon: "text.bubble", title: "Sessions today", value: "\(model.sessionsToday)")
-                ActivityRow(icon: "brain.head.profile", title: "SAGE lessons", value: "\(model.sageLessonCount)")
-                ActivityRow(icon: "checklist.checked", title: "Review notes", value: "\(model.transcriptNoteCount)")
+                ActivityRow(icon: "brain.head.profile", title: "Reviews", value: "\(model.sageLessonCount)")
+                ActivityRow(icon: "checklist.checked", title: "Transcriptions", value: "\(model.transcriptNoteCount)")
                 ActivityRow(icon: "wand.and.stars", title: "Correction signal", value: model.correctionSignalLabel)
                 ActivityRow(icon: "textformat.abc", title: "Words translated", value: model.wordsProcessedLabel)
                 ActivityMeterRow(icon: "speedometer", title: "Local CPU", value: "\(model.cpuUsagePercent)%", progress: Double(model.cpuUsagePercent) / 100.0)
@@ -3748,6 +3892,7 @@ struct DictionaryMemoryItem: Identifiable, Equatable {
     var source: String
     var rawTranscript: String?
     var polishedText: String?
+    var audioPath: String?
     var isEditableTranscript: Bool
 }
 
@@ -3755,6 +3900,207 @@ private struct TranscriptMemoryParts: Equatable {
     var rawTranscript: String?
     var polishedText: String?
     var appName: String?
+    var audioPath: String?
+    var wordTimingsBase64: String?
+}
+
+private struct DerivedWordCorrection: Equatable {
+    var raw: String
+    var corrected: String
+    var tokenIndex: Int
+    var source: CorrectionTextSource
+}
+
+private enum CorrectionTextSource: String, Equatable {
+    case rawTranscript
+    case polishedText
+}
+
+private struct AudioWordOffset: Codable, Equatable {
+    var heard: String
+    var corrected: String
+    var word: String
+    var startSeconds: Double
+    var endSeconds: Double
+    var wordIndex: Int
+    var source: String
+}
+
+@MainActor
+private final class TypingReminderMonitor {
+    private var globalMonitor: Any?
+    private var localMonitor: Any?
+    private var characterCountInCurrentWord = 0
+    private var wordCount = 0
+    private var burstStartedAt: Date?
+    private var lastKeyAt: Date?
+    private var notificationAuthorizationRequested = false
+
+    var shouldRemind: (() -> Bool)?
+    var shortcutLabel = "Fn"
+
+    private let wordsBeforeReminder = 5
+    private let idleResetSeconds: TimeInterval = 8
+    private let burstWindowSeconds: TimeInterval = 45
+    private let reminderCooldownSeconds: TimeInterval = 60 * 60 * 48
+    private let reminderWindowSeconds: TimeInterval = 60 * 60 * 24 * 7
+    private let maxRemindersPerWindow = 3
+    private let reminderHistoryKey = "quiettype.typingReminderHistory"
+
+    func register() {
+        guard globalMonitor == nil && localMonitor == nil else {
+            return
+        }
+
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.handle(event)
+            }
+        }
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.handle(event)
+            return event
+        }
+    }
+
+    func unregister() {
+        if let globalMonitor {
+            NSEvent.removeMonitor(globalMonitor)
+            self.globalMonitor = nil
+        }
+        if let localMonitor {
+            NSEvent.removeMonitor(localMonitor)
+            self.localMonitor = nil
+        }
+        resetBurst()
+    }
+
+    private func handle(_ event: NSEvent) {
+        guard shouldRemind?() == true else {
+            resetBurst()
+            return
+        }
+        guard isPlainTypingEvent(event) else {
+            return
+        }
+
+        let now = Date()
+        if let lastKeyAt, now.timeIntervalSince(lastKeyAt) > idleResetSeconds {
+            resetBurst()
+        }
+        if burstStartedAt == nil {
+            burstStartedAt = now
+        }
+        lastKeyAt = now
+
+        if isWordBoundary(event) {
+            if characterCountInCurrentWord >= 2 {
+                wordCount += 1
+            }
+            characterCountInCurrentWord = 0
+        } else if isPrintableKey(event) {
+            characterCountInCurrentWord += 1
+        }
+
+        guard wordCount >= wordsBeforeReminder,
+              let burstStartedAt,
+              now.timeIntervalSince(burstStartedAt) <= burstWindowSeconds,
+              shouldPassCooldown(now) else {
+            return
+        }
+
+        recordReminder(at: now)
+        resetBurst(keepingCooldown: true)
+        showReminder()
+    }
+
+    private func isPlainTypingEvent(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .control, .option])
+        return flags.isEmpty
+    }
+
+    private func isWordBoundary(_ event: NSEvent) -> Bool {
+        [36, 49, 76].contains(Int(event.keyCode))
+    }
+
+    private func isPrintableKey(_ event: NSEvent) -> Bool {
+        let ignored: Set<Int> = [
+            36, 48, 49, 51, 53, 76,
+            123, 124, 125, 126
+        ]
+        return !ignored.contains(Int(event.keyCode))
+    }
+
+    private func shouldPassCooldown(_ now: Date) -> Bool {
+        let recent = reminderHistory(now: now)
+        if recent.count >= maxRemindersPerWindow {
+            return false
+        }
+        guard let lastReminderAt = recent.max() else {
+            return true
+        }
+        return now.timeIntervalSince(lastReminderAt) >= reminderCooldownSeconds
+    }
+
+    private func reminderHistory(now: Date = Date()) -> [Date] {
+        let timestamps = UserDefaults.standard.array(forKey: reminderHistoryKey) as? [TimeInterval] ?? []
+        let cutoff = now.addingTimeInterval(-reminderWindowSeconds)
+        let dates = timestamps
+            .map(Date.init(timeIntervalSince1970:))
+            .filter { $0 >= cutoff }
+        persistReminderHistory(dates)
+        return dates
+    }
+
+    private func recordReminder(at date: Date) {
+        var dates = reminderHistory(now: date)
+        dates.append(date)
+        persistReminderHistory(dates)
+    }
+
+    private func persistReminderHistory(_ dates: [Date]) {
+        UserDefaults.standard.set(
+            dates.map(\.timeIntervalSince1970),
+            forKey: reminderHistoryKey
+        )
+    }
+
+    private func resetBurst(keepingCooldown: Bool = false) {
+        characterCountInCurrentWord = 0
+        wordCount = 0
+        burstStartedAt = nil
+        lastKeyAt = nil
+        if !keepingCooldown {
+            // Keep lastReminderAt intact for normal idle resets.
+        }
+    }
+
+    private func showReminder() {
+        let center = UNUserNotificationCenter.current()
+        let content = UNMutableNotificationContent()
+        content.title = "QuietType is ready"
+        content.body = "Press \(shortcutLabel) to dictate this faster with local voice input."
+        content.sound = nil
+
+        let request = UNNotificationRequest(
+            identifier: "quiettype.typing-reminder.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+
+        if notificationAuthorizationRequested {
+            center.add(request)
+            return
+        }
+
+        notificationAuthorizationRequested = true
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else {
+                return
+            }
+            center.add(request)
+        }
+    }
 }
 
 private extension String {
@@ -3774,6 +4120,56 @@ private extension String {
             value = value.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return value
+    }
+}
+
+private extension Array {
+    func ifEmpty(_ fallback: () -> [Element]) -> [Element] {
+        isEmpty ? fallback() : self
+    }
+}
+
+private struct QuickTooltipModifier: ViewModifier {
+    let text: String
+    @State private var isPresented = false
+    @State private var hoverTask: Task<Void, Never>?
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { hovering in
+                hoverTask?.cancel()
+                if hovering {
+                    hoverTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 150_000_000)
+                        guard !Task.isCancelled else {
+                            return
+                        }
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            isPresented = true
+                        }
+                    }
+                } else {
+                    withAnimation(.easeOut(duration: 0.08)) {
+                        isPresented = false
+                    }
+                }
+            }
+            .popover(isPresented: $isPresented, arrowEdge: .top) {
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 300, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+            }
+    }
+}
+
+private extension View {
+    func quickTooltip(_ text: String) -> some View {
+        modifier(QuickTooltipModifier(text: text))
     }
 }
 
@@ -4704,6 +5100,11 @@ private struct QuietTypeUpdateResult {
     var message: String
 }
 
+struct QuietTypeUpdateAvailability: Codable, Equatable {
+    var versionLabel: String
+    var tagName: String
+}
+
 private enum QuietTypeUpdaterError: LocalizedError {
     case releaseUnavailable(Int)
     case releaseDecodeFailed
@@ -4945,6 +5346,18 @@ private final class QuietTypeGitHubUpdater {
 
     func openReleasesPage() {
         NSWorkspace.shared.open(releasesPageURL)
+    }
+
+    func checkAvailability() async throws -> QuietTypeUpdateAvailability? {
+        let (release, _, latestVersion) = try await latestReleaseAsset()
+        let currentVersion = QuietTypeReleaseVersion.current()
+        guard latestVersion > currentVersion else {
+            return nil
+        }
+        return QuietTypeUpdateAvailability(
+            versionLabel: display(latestVersion),
+            tagName: release.tagName
+        )
     }
 
     func checkDownloadBackupAndInstall(progress: @escaping @MainActor (String) -> Void) async throws -> QuietTypeUpdateResult {
@@ -5246,6 +5659,7 @@ final class MenuBarModel: ObservableObject {
     @Published var lastDictationDuration = 0.0
     @Published var sessionsToday = 0
     @Published var totalTranslatedWordCount = 0
+    @Published var lastWordsPerMinute = 0
     @Published var inputLevel = 0.0
     @Published var capturedFrameCount = 0
     @Published var lastRecordingURL: URL?
@@ -5259,6 +5673,8 @@ final class MenuBarModel: ObservableObject {
     @Published var editorMode = EditorMode.ruleBased
     @Published var ollamaModel = "qwen3:4b"
     @Published var spellingPreference = SpellingPreference.system
+    @Published var profanityFilterEnabled = true
+    @Published var typingReminderEnabled = true
     @Published var teachRaw = ""
     @Published var teachCorrected = ""
     @Published var teachingKind = TeachingKind.correction
@@ -5288,6 +5704,7 @@ final class MenuBarModel: ObservableObject {
     @Published var cpuUsagePercent = 0
     @Published var isCheckingForUpdates = false
     @Published var updateStatus = ""
+    @Published var availableUpdate: QuietTypeUpdateAvailability?
     @Published var isInstallingSage = false
     @Published var sageInstallStatus = ""
 
@@ -5300,6 +5717,7 @@ final class MenuBarModel: ObservableObject {
     private var whisperKitSupervisor: WhisperKitServerSupervisor?
     private var didStartAppServices = false
     private var nativeSpeechStartupTask: Task<Void, Never>?
+    private var updateCheckTask: Task<Void, Never>?
     private var terminationObserver: NSObjectProtocol?
     private var captureService: AVAudioCaptureService?
     private var trainingCaptureService: AVAudioCaptureService?
@@ -5331,6 +5749,7 @@ final class MenuBarModel: ObservableObject {
     private var activeTranscriptionOptions = AudioTranscriptionOptions.none
     private var hotKeyController: CarbonHotKeyController?
     private var functionKeyMonitor: FunctionKeyToggleMonitor?
+    private var typingReminderMonitor: TypingReminderMonitor?
     private var cancelKeyGlobalMonitor: Any?
     private var cancelKeyLocalMonitor: Any?
     private var lastHotKeyToggleAt: Date?
@@ -5339,15 +5758,23 @@ final class MenuBarModel: ObservableObject {
     private var microphoneAccessVerified = false
     private static let hotKeyChoiceKey = "quiettype.hotKeyChoice"
     private static let spellingPreferenceKey = "quiettype.spellingPreference"
+    private static let profanityFilterEnabledKey = "quiettype.profanityFilterEnabled"
+    private static let typingReminderEnabledKey = "quiettype.typingReminderEnabled"
     private static let calibrationSavedCountKey = "quiettype.calibrationSavedCount"
     private static let trainingPairCountKey = "quiettype.trainingPairCount"
     private static let sessionsTodayKey = "quiettype.sessionsToday"
     private static let sessionsTodayDateKey = "quiettype.sessionsTodayDate"
     private static let totalTranslatedWordCountKey = "quiettype.totalTranslatedWordCount"
+    private static let lastWordsPerMinuteKey = "quiettype.lastWordsPerMinute"
     private static let historyReviewEnabledKey = "quiettype.historyReviewEnabled"
+    private static let lastBackgroundUpdateCheckKey = "quiettype.lastBackgroundUpdateCheck"
+    private static let availableUpdateKey = "quiettype.availableUpdate"
+    private static let notifiedUpdateTagKey = "quiettype.notifiedUpdateTag"
+    private static let backgroundUpdateCheckInterval: TimeInterval = 60 * 60 * 24
     private static let requiredCalibrationSets = 3
     private static let maxDictationDurationSeconds = 300.0
     private static let maxTrainingPairCount = 10
+    private static let maxReviewAudioFiles = 10
     private static let streamingTranscriptMinimumDuration = 8.0
     private static let minimumUsableRMS = 0.0015
 
@@ -5356,14 +5783,23 @@ final class MenuBarModel: ObservableObject {
         trainingPairCount = UserDefaults.standard.integer(forKey: Self.trainingPairCountKey)
         sessionsToday = Self.loadSessionsToday()
         totalTranslatedWordCount = UserDefaults.standard.integer(forKey: Self.totalTranslatedWordCountKey)
-        if UserDefaults.standard.object(forKey: Self.historyReviewEnabledKey) == nil {
-            historyReviewEnabled = true
-        } else {
-            historyReviewEnabled = UserDefaults.standard.bool(forKey: Self.historyReviewEnabledKey)
-        }
+        lastWordsPerMinute = UserDefaults.standard.integer(forKey: Self.lastWordsPerMinuteKey)
+        availableUpdate = Self.loadAvailableUpdate()
+        historyReviewEnabled = true
+        UserDefaults.standard.set(true, forKey: Self.historyReviewEnabledKey)
         if let storedSpelling = UserDefaults.standard.string(forKey: Self.spellingPreferenceKey),
            let preference = SpellingPreference(rawValue: storedSpelling) {
             spellingPreference = preference
+        }
+        if UserDefaults.standard.object(forKey: Self.profanityFilterEnabledKey) == nil {
+            profanityFilterEnabled = true
+        } else {
+            profanityFilterEnabled = UserDefaults.standard.bool(forKey: Self.profanityFilterEnabledKey)
+        }
+        if UserDefaults.standard.object(forKey: Self.typingReminderEnabledKey) == nil {
+            typingReminderEnabled = true
+        } else {
+            typingReminderEnabled = UserDefaults.standard.bool(forKey: Self.typingReminderEnabledKey)
         }
         if let storedHotKey = UserDefaults.standard.string(forKey: Self.hotKeyChoiceKey),
            let choice = HotKeyChoice(rawValue: storedHotKey) {
@@ -5564,10 +6000,16 @@ final class MenuBarModel: ObservableObject {
     var currentWordsPerMinuteLabel: String {
         let words = currentSessionWordCount
         let duration = isRecording ? recordingDuration : lastDictationDuration
-        guard words > 0, duration > 0.25 else {
-            return "Ready"
+        if let currentWPM = Self.wordsPerMinute(wordCount: words, duration: duration) {
+            return "\(currentWPM) WPM"
         }
-        return "\(Int((Double(words) / duration) * 60.0)) WPM"
+        if lastWordsPerMinute > 0 {
+            return "\(lastWordsPerMinute) WPM"
+        }
+        if calibrationSavedCount > 0 {
+            return "\(currentDictationProfile().speechRateWPM) WPM"
+        }
+        return "Ready"
     }
 
     var correctionSignalLabel: String {
@@ -5673,8 +6115,10 @@ final class MenuBarModel: ObservableObject {
     }
 
     var sageLessonCount: Int {
-        localMemories.filter { $0.type != .transcriptNote }.count
-            + sageMemories.filter { $0.domain != "quiettype.transcripts" }.count
+        Set(
+            localMemories.compactMap { lessonID(from: $0) }
+                + sageMemories.compactMap { lessonID(from: $0) }
+        ).count
     }
 
     var sageCorrectionCount: Int {
@@ -5692,8 +6136,37 @@ final class MenuBarModel: ObservableObject {
         return Set(localIDs + sageIDs).count
     }
 
+    private func lessonID(from memory: DictationMemory) -> String? {
+        guard memory.type != .transcriptNote || isReviewedTranscriptLesson(memory) else {
+            return nil
+        }
+        return memory.id
+    }
+
+    private func lessonID(from memory: SageMemoryRecord) -> String? {
+        guard memory.domain != "quiettype.transcripts" || isReviewedTranscriptLesson(memory) else {
+            return nil
+        }
+        return memory.id
+    }
+
+    private func isReviewedTranscriptLesson(_ memory: DictationMemory) -> Bool {
+        memory.payload["reviewed_by_user"] == "true"
+    }
+
+    private func isReviewedTranscriptLesson(_ memory: SageMemoryRecord) -> Bool {
+        memory.content.localizedCaseInsensitiveContains("QuietType reviewed transcript note")
+            || memory.content.localizedCaseInsensitiveContains("Corrected raw transcript:")
+            || memory.content.localizedCaseInsensitiveContains("Corrected polished output:")
+    }
+
     private var processedWordCount: Int {
         totalTranslatedWordCount
+    }
+
+    private var reviewAudioDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/QuietType/ReviewAudio", isDirectory: true)
     }
 
     var dictionaryMemories: [DictionaryMemoryItem] {
@@ -5711,6 +6184,7 @@ final class MenuBarModel: ObservableObject {
                 source: isTranscript ? (memory.payload["app"]?.nilIfBlank ?? "QuietType") : (memory.source.isEmpty ? "QuietType" : memory.source),
                 rawTranscript: memory.payload["raw_transcript"],
                 polishedText: memory.payload["polished_text"],
+                audioPath: memory.payload["audio_path"]?.nilIfBlank,
                 isEditableTranscript: isTranscript
             )
         }
@@ -5727,6 +6201,7 @@ final class MenuBarModel: ObservableObject {
                 source: isTranscript ? (transcript.appName?.nilIfBlank ?? "QuietType") : (memory.submittingAgent == sageAgentID ? "QuietType" : "SAGE"),
                 rawTranscript: transcript.rawTranscript,
                 polishedText: transcript.polishedText,
+                audioPath: transcript.audioPath,
                 isEditableTranscript: isTranscript
             )
         }
@@ -5766,6 +6241,7 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
+    private static let reviewMemoryLimit = 100
     private static let defaultMemorySearchQuery = "QuietType dictation translation correction vocabulary spelling style transcript transcription spoken phrase preferred wording"
 
     private func transcriptMemoryParts(from content: String) -> TranscriptMemoryParts {
@@ -5798,11 +6274,34 @@ final class MenuBarModel: ObservableObject {
             ]
         )
         let app = labeledPlainValue(from: content, label: "App:")
+        let audioPath = labeledQuotedValue(
+            from: content,
+            labels: ["Audio path:"],
+            terminators: [
+                "\". Word timings base64:",
+                "\". Raw transcript:",
+                "\". Corrected raw transcript:",
+                "\". This is",
+                "\"."
+            ]
+        )
+        let wordTimingsBase64 = labeledQuotedValue(
+            from: content,
+            labels: ["Word timings base64:"],
+            terminators: [
+                "\". Raw transcript:",
+                "\". Corrected raw transcript:",
+                "\". This is",
+                "\"."
+            ]
+        )
 
         return TranscriptMemoryParts(
             rawTranscript: raw,
             polishedText: polished,
-            appName: app
+            appName: app,
+            audioPath: audioPath,
+            wordTimingsBase64: wordTimingsBase64
         )
     }
 
@@ -5898,6 +6397,13 @@ final class MenuBarModel: ObservableObject {
         return "\(value)"
     }
 
+    private static func wordsPerMinute(wordCount: Int, duration: TimeInterval) -> Int? {
+        guard wordCount > 0, duration > 0.25 else {
+            return nil
+        }
+        return Int((Double(wordCount) / duration) * 60.0)
+    }
+
     private static func loadSessionsToday() -> Int {
         let today = sessionDateString()
         guard UserDefaults.standard.string(forKey: sessionsTodayDateKey) == today else {
@@ -5906,6 +6412,23 @@ final class MenuBarModel: ObservableObject {
             return 0
         }
         return UserDefaults.standard.integer(forKey: sessionsTodayKey)
+    }
+
+    private static func loadAvailableUpdate() -> QuietTypeUpdateAvailability? {
+        guard let data = UserDefaults.standard.data(forKey: availableUpdateKey),
+              let update = try? JSONDecoder().decode(QuietTypeUpdateAvailability.self, from: data) else {
+            return nil
+        }
+        return update
+    }
+
+    private static func saveAvailableUpdate(_ update: QuietTypeUpdateAvailability?) {
+        if let update,
+           let data = try? JSONEncoder().encode(update) {
+            UserDefaults.standard.set(data, forKey: availableUpdateKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: availableUpdateKey)
+        }
     }
 
     private static func sessionDateString(_ date: Date = Date()) -> String {
@@ -6003,6 +6526,79 @@ final class MenuBarModel: ObservableObject {
         cpuUsagePercent = cpuSampler.sample()
     }
 
+    private func startBackgroundUpdateChecks() {
+        guard updateCheckTask == nil else {
+            return
+        }
+
+        updateCheckTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.checkForUpdatesInBackgroundIfDue()
+                try? await Task.sleep(nanoseconds: 60 * 60 * 1_000_000_000)
+            }
+        }
+    }
+
+    private func checkForUpdatesInBackgroundIfDue() async {
+        guard shouldRunBackgroundUpdateCheck() else {
+            return
+        }
+
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.lastBackgroundUpdateCheckKey)
+        do {
+            if let update = try await updateService.checkAvailability() {
+                availableUpdate = update
+                Self.saveAvailableUpdate(update)
+                await notifyUpdateAvailableIfNeeded(update)
+            } else {
+                availableUpdate = nil
+                Self.saveAvailableUpdate(nil)
+            }
+        } catch {
+            // Background checks should never interrupt dictation or setup.
+        }
+    }
+
+    private func shouldRunBackgroundUpdateCheck(now: Date = Date()) -> Bool {
+        let lastCheck = UserDefaults.standard.double(forKey: Self.lastBackgroundUpdateCheckKey)
+        guard lastCheck > 0 else {
+            return true
+        }
+        return now.timeIntervalSince1970 - lastCheck >= Self.backgroundUpdateCheckInterval
+    }
+
+    private func notifyUpdateAvailableIfNeeded(_ update: QuietTypeUpdateAvailability) async {
+        guard UserDefaults.standard.string(forKey: Self.notifiedUpdateTagKey) != update.tagName else {
+            return
+        }
+
+        let center = UNUserNotificationCenter.current()
+        let granted = await withCheckedContinuation { continuation in
+            center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                continuation.resume(returning: granted)
+            }
+        }
+        guard granted else {
+            return
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = "QuietType update available"
+        content.body = "\(update.versionLabel) is ready to install."
+        content.sound = nil
+        let request = UNNotificationRequest(
+            identifier: "quiettype.update.\(update.tagName)",
+            content: content,
+            trigger: nil
+        )
+        do {
+            try await center.add(request)
+            UserDefaults.standard.set(update.tagName, forKey: Self.notifiedUpdateTagKey)
+        } catch {
+            // Notification delivery is best-effort; the in-app banner remains visible.
+        }
+    }
+
     func requestMicrophone() async {
         microphonePermission = await permissionService.requestMicrophone()
         await refreshPermissions(promptForAccessibility: false, verifyMicrophoneAccess: true)
@@ -6029,6 +6625,8 @@ final class MenuBarModel: ObservableObject {
                 self?.updateStatus = message
             }
             updateStatus = result.message
+            availableUpdate = nil
+            Self.saveAvailableUpdate(nil)
         } catch let error as QuietTypeUpdaterError where error.shouldOpenReleasesPage {
             updateStatus = "Update check needs GitHub release access: \(error.localizedDescription) Opening the QuietType releases page."
             updateService.openReleasesPage()
@@ -6094,7 +6692,9 @@ final class MenuBarModel: ObservableObject {
             refreshSpeechEngineStatus()
             registerGlobalHotKey()
             registerCancelKeyMonitor()
+            registerTypingReminderMonitor()
             startNativeSpeechWarmup()
+            startBackgroundUpdateChecks()
         }
     }
 
@@ -6105,10 +6705,14 @@ final class MenuBarModel: ObservableObject {
         hotKeyController = nil
         functionKeyMonitor?.unregister()
         functionKeyMonitor = nil
+        typingReminderMonitor?.unregister()
+        typingReminderMonitor = nil
         unregisterCancelKeyMonitor()
         overlayController.hide()
         nativeSpeechStartupTask?.cancel()
         nativeSpeechStartupTask = nil
+        updateCheckTask?.cancel()
+        updateCheckTask = nil
         whisperKitSupervisor?.stop()
         whisperKitSupervisor = nil
         nativeSpeechServerReady = false
@@ -6128,6 +6732,16 @@ final class MenuBarModel: ObservableObject {
         }
         spellingPreference = preference
         UserDefaults.standard.set(preference.rawValue, forKey: Self.spellingPreferenceKey)
+    }
+
+    func setProfanityFilterEnabled(_ enabled: Bool) {
+        profanityFilterEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.profanityFilterEnabledKey)
+    }
+
+    func setTypingReminderEnabled(_ enabled: Bool) {
+        typingReminderEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.typingReminderEnabledKey)
     }
 
     func setTeachingKind(_ kind: TeachingKind) {
@@ -6194,6 +6808,7 @@ final class MenuBarModel: ObservableObject {
                 try monitor.register()
                 functionKeyMonitor = monitor
                 hotKeyLabel = HotKeyChoice.function.label
+                typingReminderMonitor?.shortcutLabel = hotKeyLabel
                 statusMessage = functionKeySystemUse.conflictsWithQuietType ? "Fn is shared with macOS" : "Fn shortcut ready"
             } catch {
                 lastError = "Could not register Fn shortcut: \(error)"
@@ -6217,6 +6832,7 @@ final class MenuBarModel: ObservableObject {
                 try controller.register()
                 hotKeyController = controller
                 hotKeyLabel = HotKeyChoice.controlShiftD.label
+                typingReminderMonitor?.shortcutLabel = hotKeyLabel
                 statusMessage = "Shortcut ready"
             } catch {
                 lastError = "Could not register shortcut: \(error)"
@@ -6259,6 +6875,52 @@ final class MenuBarModel: ObservableObject {
             NSEvent.removeMonitor(cancelKeyLocalMonitor)
             self.cancelKeyLocalMonitor = nil
         }
+    }
+
+    private func registerTypingReminderMonitor() {
+        guard typingReminderMonitor == nil else {
+            typingReminderMonitor?.shortcutLabel = hotKeyLabel
+            return
+        }
+
+        let monitor = TypingReminderMonitor()
+        monitor.shortcutLabel = hotKeyLabel
+        monitor.shouldRemind = { [weak self] in
+            guard let self else {
+                return false
+            }
+            return self.shouldShowTypingReminder
+        }
+        monitor.register()
+        typingReminderMonitor = monitor
+    }
+
+    private var shouldShowTypingReminder: Bool {
+        guard typingReminderEnabled,
+              sageReady,
+              permissionsReady,
+              speechEngineReady,
+              !isRecording,
+              !isRunning,
+              !isTrainingRecording,
+              !isTeachingRecording else {
+            return false
+        }
+
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        guard frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier else {
+            return false
+        }
+
+        let appName = frontmost?.localizedName?.lowercased() ?? ""
+        let skippedApps = [
+            "1password",
+            "bitwarden",
+            "keychain",
+            "password",
+            "system settings"
+        ]
+        return !skippedApps.contains { appName.contains($0) }
     }
 
     private func toggleFromHotKey() async {
@@ -6364,7 +7026,7 @@ final class MenuBarModel: ObservableObject {
 
     private func refreshDictionaryMemoriesPreservingRegistration(using client: SageDirectClient) async {
         do {
-            sageMemories = try await loadSageMemories(using: client, limit: 16)
+            sageMemories = try await loadSageMemories(using: client, limit: Self.reviewMemoryLimit)
             if lastError?.hasPrefix("SAGE memory") == true || lastError?.hasPrefix("SAGE setup") == true {
                 lastError = nil
             }
@@ -6380,17 +7042,18 @@ final class MenuBarModel: ObservableObject {
     }
 
     private func loadSageMemories(using client: SageDirectClient, limit: Int) async throws -> [SageMemoryRecord] {
+        var memories = try await client.listMemories(limit: limit)
         do {
             let searched = try await client.searchMemories(query: Self.defaultMemorySearchQuery, limit: limit)
-            if !searched.isEmpty {
-                return searched
+            for memory in searched where !memories.contains(where: { $0.id == memory.id }) {
+                memories.append(memory)
             }
         } catch {
             guard SageDirectClientError.isTextSearchUnavailable(error) else {
                 throw error
             }
         }
-        return try await client.listMemories(limit: limit)
+        return Array(memories.prefix(limit))
     }
 
     private func sageRegistrationFailureDetail(_ error: Error, healthy: Bool = false) -> String {
@@ -6574,7 +7237,7 @@ final class MenuBarModel: ObservableObject {
         }
 
         do {
-            sageMemories = try await loadSageMemories(using: sageDirectClient, limit: 16)
+            sageMemories = try await loadSageMemories(using: sageDirectClient, limit: Self.reviewMemoryLimit)
             if lastError?.hasPrefix("SAGE memory") == true {
                 lastError = nil
             }
@@ -6613,7 +7276,7 @@ final class MenuBarModel: ObservableObject {
         }
 
         do {
-            sageMemories = try await sageDirectClient.searchMemories(query: query, limit: 16)
+            sageMemories = try await sageDirectClient.searchMemories(query: query, limit: Self.reviewMemoryLimit)
         } catch {
             handleSageMemoryRefreshFailure(error)
         }
@@ -6954,8 +7617,10 @@ final class MenuBarModel: ObservableObject {
         }
 
         do {
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("quiettype-last.wav")
+            let url = reviewAudioURL()
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try WavFileWriter.writeMonoPCM16(samples: recordedSamples, sampleRate: recordingSampleRate, to: url)
+            pruneReviewAudioCache(keeping: url)
             lastRecordingURL = url
             output = "Captured \(durationText)s of local audio. Looking for the local speech engine..."
             if let finalChunk = try chunker.flush(outputDirectory: chunkDirectory) {
@@ -6976,6 +7641,39 @@ final class MenuBarModel: ObservableObject {
             output = "Captured \(durationText)s of local audio, but could not save the WAV file."
             lastError = String(describing: error)
             overlayController.hide(after: 1.1)
+        }
+    }
+
+    private func reviewAudioURL(date: Date = Date()) -> URL {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let filename = "dictation-\(formatter.string(from: date))-\(UUID().uuidString.prefix(8)).wav"
+        return reviewAudioDirectory.appendingPathComponent(filename)
+    }
+
+    private func pruneReviewAudioCache(keeping keptURL: URL? = nil) {
+        let fileManager = FileManager.default
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: reviewAudioDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        let keptPath = keptURL?.path
+        let wavFiles = files.filter { $0.pathExtension.lowercased() == "wav" }
+        let sorted = wavFiles.sorted { lhs, rhs in
+            let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return lhsDate > rhsDate
+        }
+
+        let removable = sorted.dropFirst(Self.maxReviewAudioFiles).filter { $0.path != keptPath }
+        for url in removable {
+            try? fileManager.removeItem(at: url)
         }
     }
 
@@ -7104,20 +7802,24 @@ final class MenuBarModel: ObservableObject {
             defer { isRunning = false }
             let streamResult = await streamingSession?.finish()
             let rawTranscript: String
+            let wordTimings: [TranscribedWordTiming]
             if let streamResult, isUsableStreamingTranscript(streamResult.text, chunkCount: streamResult.chunkCount) {
                 rawTranscript = streamResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                wordTimings = []
                 statusMessage = "Processed \(streamResult.chunkCount) streamed chunks"
             } else {
                 if let streamResult, !streamResult.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     statusMessage = "Resolving full audio"
                 }
-                rawTranscript = try await transcribeFullAudio(audioURL)
+                let timedResult = try await transcribeFullAudioWithTiming(audioURL)
+                rawTranscript = timedResult.text
+                wordTimings = timedResult.words
             }
             guard !isLikelyNoiseTranscript(rawTranscript) else {
                 throw AudioTranscriberError.noiseOnlyTranscript(rawTranscript)
             }
             transcript = rawTranscript
-            await processTranscript(rawTranscript)
+            await processTranscript(rawTranscript, audioURL: audioURL, wordTimings: wordTimings)
         } catch {
             isRunning = false
             overlayController.hide(after: 1.1)
@@ -7148,6 +7850,20 @@ final class MenuBarModel: ObservableObject {
             }
             statusMessage = "Retrying native speech"
             return try await transcriber.transcribe(audioFile: audioURL, options: .none)
+        }
+    }
+
+    private func transcribeFullAudioWithTiming(_ audioURL: URL) async throws -> TimedTranscriptionResult {
+        let transcriber = makeAudioTranscriber()
+        do {
+            return try await transcriber.transcribeWithTiming(audioFile: audioURL, options: activeTranscriptionOptions)
+        } catch {
+            if isEmptyTranscriptFailure(error), activeTranscriptionOptions != .none {
+                statusMessage = "Retrying native speech"
+                return try await transcriber.transcribeWithTiming(audioFile: audioURL, options: .none)
+            }
+            let text = try await transcribeFullAudio(audioURL)
+            return TimedTranscriptionResult(text: text)
         }
     }
 
@@ -7239,6 +7955,7 @@ final class MenuBarModel: ObservableObject {
     private func currentDictationProfile() -> DictationProfile {
         var profile = ProfileMemoryCompiler.enrich(.development, with: localMemories)
         profile.spellingPreference = spellingPreference
+        profile.profanityFilterEnabled = profanityFilterEnabled
         return profile
     }
 
@@ -7322,7 +8039,7 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
-    private func processTranscript(_ rawTranscript: String) async {
+    private func processTranscript(_ rawTranscript: String, audioURL: URL? = nil, wordTimings: [TranscribedWordTiming] = []) async {
         do {
             let context = AppContext(appName: selectedProfile.appName, profile: selectedProfile.appProfile)
             let bufferInserter = BufferingTextInserter()
@@ -7355,10 +8072,14 @@ final class MenuBarModel: ObservableObject {
             let insertLatency = Int(Date().timeIntervalSince(insertStarted) * 1000)
             lastLatencyMS = result.timing.keyReleaseToInsertMS.map { $0 + insertLatency } ?? insertLatency
             let translatedWords = wordCount(result.text)
+            if let measuredWPM = Self.wordsPerMinute(wordCount: translatedWords, duration: lastDictationDuration) {
+                lastWordsPerMinute = measuredWPM
+                UserDefaults.standard.set(measuredWPM, forKey: Self.lastWordsPerMinuteKey)
+            }
             totalTranslatedWordCount += translatedWords
             UserDefaults.standard.set(totalTranslatedWordCount, forKey: Self.totalTranslatedWordCountKey)
             statusMessage = didInsert ? "Inserted or ready to copy" : "Ready to copy"
-            await saveTranscriptNote(rawTranscript: rawTranscript, polishedText: result.text, inserted: didInsert, latencyMS: result.timing.keyReleaseToInsertMS)
+            await saveTranscriptNote(rawTranscript: rawTranscript, polishedText: result.text, inserted: didInsert, latencyMS: result.timing.keyReleaseToInsertMS, audioURL: audioURL, wordTimings: wordTimings)
             overlayController.show(state: .inserted, detail: "Ready to copy", transcript: result.text)
             overlayController.hide(after: 3.0)
         } catch {
@@ -7368,7 +8089,7 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
-    private func saveTranscriptNote(rawTranscript: String, polishedText: String, inserted: Bool, latencyMS: Int?) async {
+    private func saveTranscriptNote(rawTranscript: String, polishedText: String, inserted: Bool, latencyMS: Int?, audioURL: URL?, wordTimings: [TranscribedWordTiming]) async {
         guard historyReviewEnabled else {
             return
         }
@@ -7378,8 +8099,11 @@ final class MenuBarModel: ObservableObject {
             return
         }
 
+        let audioPath = audioURL?.path ?? ""
+        let wordTimingsJSON = encodedWordTimings(wordTimings)
+        let wordTimingsBase64 = Data(wordTimingsJSON.utf8).base64EncodedString()
         let content = """
-        QuietType transcript note for review. App: \(selectedProfile.appName). Inserted: \(inserted ? "yes" : "no"). Raw transcript: "\(raw)". Polished output: "\(polished)". This is review history committed to SAGE, not an automatic correction rule.
+        QuietType transcript note for review. App: \(selectedProfile.appName). Inserted: \(inserted ? "yes" : "no"). Audio path: "\(audioPath)". Word timings base64: "\(wordTimingsBase64)". Raw transcript: "\(raw)". Polished output: "\(polished)". This is review history committed to SAGE, not an automatic correction rule.
         """
 
         do {
@@ -7396,6 +8120,8 @@ final class MenuBarModel: ObservableObject {
                     "app": selectedProfile.appName,
                     "style": selectedProfile.appProfile.rawValue,
                     "inserted": inserted ? "true" : "false",
+                    "audio_path": audioPath,
+                    "audio_word_offsets": wordTimingsJSON.isEmpty ? "unavailable" : wordTimingsJSON,
                     "latency_ms": latencyMS.map(String.init) ?? "",
                     "created_at": ISO8601DateFormatter().string(from: Date())
                 ],
@@ -7432,9 +8158,27 @@ final class MenuBarModel: ObservableObject {
 
             let reviewedAt = ISO8601DateFormatter().string(from: Date())
             let existingLocalMemory = localMemories.first(where: { $0.id == memoryID })
+            let existingSageMemory = sageMemories.first(where: { $0.id == memoryID })
+            let existingSageParts = existingSageMemory.map { transcriptMemoryParts(from: $0.content) }
+            let originalRaw = existingLocalMemory?.payload["raw_transcript"]
+                ?? existingSageParts?.rawTranscript
+                ?? ""
+            let originalPolished = existingLocalMemory?.payload["polished_text"]
+                ?? existingSageParts?.polishedText
+                ?? ""
+            let audioPath = existingLocalMemory?.payload["audio_path"]?.nilIfBlank
+                ?? existingSageParts?.audioPath?.nilIfBlank
+            let wordTimings = decodedWordTimings(from: existingLocalMemory?.payload["audio_word_offsets"])
+                .ifEmpty { decodedWordTimings(base64: existingSageParts?.wordTimingsBase64) }
+            let plannedLessons = derivedWordCorrections(
+                originalRaw: originalRaw,
+                originalPolished: originalPolished,
+                reviewedRaw: raw,
+                reviewedPolished: polished
+            )
 
             let content = """
-            QuietType reviewed transcript note. Supersedes SAGE note: \(memoryID). Corrected raw transcript: "\(raw)". Corrected polished output: "\(polished)". User-reviewed notes may create compact correction lessons only when the change is obvious and conservative.
+            QuietType reviewed transcript note. Supersedes SAGE note: \(memoryID). Audio path: "\(audioPath ?? "")". Word timings base64: "\(encodedWordTimingsBase64(wordTimings))". Derived word lessons: \(plannedLessons.count). Corrected raw transcript: "\(raw)". Corrected polished output: "\(polished)". User-reviewed notes create one compact correction lesson per edited word when the change is obvious and conservative.
             """
             let submission = try await sageDirectClient.submitTranscriptNote(content: content, confidence: 0.9)
             _ = try await sageDirectClient.deprecateMemory(
@@ -7454,6 +8198,9 @@ final class MenuBarModel: ObservableObject {
                     "reviewed_at": reviewedAt,
                     "reviewed_by_user": "true",
                     "supersedes": memoryID,
+                    "audio_path": audioPath ?? "",
+                    "audio_word_offsets": encodedWordTimings(wordTimings).nilIfBlank ?? "unavailable",
+                    "derived_word_lesson_count": "\(plannedLessons.count)",
                     "app": existingLocalMemory?.payload["app"] ?? selectedProfile.appName,
                     "style": existingLocalMemory?.payload["style"] ?? selectedProfile.appProfile.rawValue
                 ],
@@ -7475,10 +8222,18 @@ final class MenuBarModel: ObservableObject {
                 at: 0
             )
 
-            if let lesson = await saveDerivedCorrectionLesson(fromRaw: raw, polished: polished, memoryID: submission.memoryID) {
-                statusMessage = "Review saved, learned \(lesson.corrected), and deprecated the old note"
-            } else {
+            let lessons = await saveDerivedCorrectionLessons(
+                plannedLessons,
+                memoryID: submission.memoryID,
+                audioPath: audioPath,
+                wordTimings: wordTimings
+            )
+            if lessons.isEmpty {
                 statusMessage = "Transcript review saved and old note deprecated"
+            } else if lessons.count == 1, let lesson = lessons.first {
+                statusMessage = "Review saved, trained \(lesson.corrected), and deprecated the old note"
+            } else {
+                statusMessage = "Review saved, trained \(lessons.count) words, and deprecated the old note"
             }
             lastError = nil
         } catch {
@@ -7506,74 +8261,192 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
-    private func saveDerivedCorrectionLesson(fromRaw raw: String, polished: String, memoryID: String) async -> (raw: String, corrected: String)? {
-        guard let correction = deriveSingleCorrection(raw: raw, polished: polished) else {
-            return nil
+    private func saveDerivedCorrectionLessons(
+        _ corrections: [DerivedWordCorrection],
+        memoryID: String,
+        audioPath: String?,
+        wordTimings: [TranscribedWordTiming]
+    ) async -> [DerivedWordCorrection] {
+        guard !corrections.isEmpty else {
+            return []
         }
 
-        do {
-            guard let sageDirectClient else {
-                throw QuietTypeSageRequirementError.notConnected
-            }
-            let content = "QuietType correction: when spoken text is \"\(correction.raw)\", prefer \"\(correction.corrected)\". Source: reviewed transcript \(memoryID). Apply during local dictation cleanup only."
-            let submission = try await sageDirectClient.submitTranslationMemory(content: content, confidence: 0.93)
-            let memory = DictationMemory(
-                id: submission.memoryID,
-                type: .correction,
-                payload: [
-                    "raw": correction.raw,
-                    "corrected": correction.corrected,
-                    "kind": "review_correction",
-                    "context": "reviewed transcript \(memoryID)"
-                ],
-                contexts: [selectedProfile.appName, selectedProfile.appProfile.rawValue, "review_correction"],
-                source: "SAGE · quiettype-agent",
-                confidence: 0.93
-            )
-            localMemories.insert(memory, at: 0)
-            sageMemories.insert(
-                SageMemoryRecord(
+        var saved: [DerivedWordCorrection] = []
+        for correction in corrections {
+            do {
+                guard let sageDirectClient else {
+                    throw QuietTypeSageRequirementError.notConnected
+                }
+                let wordOffset = audioWordOffset(for: correction, in: wordTimings)
+                let wordOffsetJSON = encodedAudioWordOffset(wordOffset)
+                let content = "QuietType correction training: when spoken text is \"\(correction.raw)\", prefer \"\(correction.corrected)\". Source: reviewed transcript \(memoryID). Audio path: \"\(audioPath ?? "")\". Audio word offsets: \(wordOffsetJSON.nilIfBlank ?? "unavailable"). Apply during local dictation cleanup only."
+                let submission = try await sageDirectClient.submitTranslationMemory(content: content, confidence: 0.93)
+                let memory = DictationMemory(
                     id: submission.memoryID,
-                    content: content,
-                    domain: "quiettype.translation",
-                    type: "fact",
-                    confidence: 0.93,
-                    createdAt: nil,
-                    submittingAgent: sageAgentID
-                ),
-                at: 0
-            )
+                    type: .correction,
+                    payload: [
+                        "raw": correction.raw,
+                        "corrected": correction.corrected,
+                        "kind": "review_word_correction",
+                        "context": "reviewed transcript \(memoryID)",
+                        "audio_path": audioPath ?? "",
+                        "audio_word_offsets": wordOffsetJSON.nilIfBlank ?? "unavailable"
+                    ],
+                    contexts: [selectedProfile.appName, selectedProfile.appProfile.rawValue, "review_word_correction"],
+                    source: "SAGE · quiettype-agent",
+                    confidence: 0.93
+                )
+                localMemories.insert(memory, at: 0)
+                sageMemories.insert(
+                    SageMemoryRecord(
+                        id: submission.memoryID,
+                        content: content,
+                        domain: "quiettype.translation",
+                        type: "fact",
+                        confidence: 0.93,
+                        createdAt: nil,
+                        submittingAgent: sageAgentID
+                    ),
+                    at: 0
+                )
 
-            return correction
-        } catch {
-            return nil
+                saved.append(correction)
+            } catch {
+                continue
+            }
+        }
+        return saved
+    }
+
+    private func derivedWordCorrections(
+        originalRaw: String,
+        originalPolished: String,
+        reviewedRaw: String,
+        reviewedPolished: String
+    ) -> [DerivedWordCorrection] {
+        var corrections: [DerivedWordCorrection] = []
+        corrections.append(contentsOf: tokenCorrections(from: originalPolished, to: reviewedPolished, source: .polishedText))
+        corrections.append(contentsOf: tokenCorrections(from: originalRaw, to: reviewedRaw, source: .rawTranscript))
+
+        var seen = Set<String>()
+        return corrections.filter { correction in
+            let key = "\(correction.raw.lowercased())->\(correction.corrected.lowercased())"
+            return seen.insert(key).inserted
         }
     }
 
-    private func deriveSingleCorrection(raw: String, polished: String) -> (raw: String, corrected: String)? {
-        let rawTokens = correctionTokens(from: raw)
-        let polishedTokens = correctionTokens(from: polished)
+    private func tokenCorrections(from original: String, to reviewed: String, source: CorrectionTextSource) -> [DerivedWordCorrection] {
+        let rawTokens = correctionTokens(from: original)
+        let polishedTokens = correctionTokens(from: reviewed)
         guard rawTokens.count == polishedTokens.count, !rawTokens.isEmpty else {
+            return []
+        }
+
+        let differences = zip(rawTokens.indices, zip(rawTokens, polishedTokens)).filter { $0.1.0 != $0.1.1 }
+        guard !differences.isEmpty, differences.count <= 8 else {
+            return []
+        }
+
+        return differences.compactMap { difference in
+            let heard = difference.1.0
+            let corrected = difference.1.1
+            guard heard.count >= 2, corrected.count >= 2 else {
+                return nil
+            }
+
+            if heard.caseInsensitiveCompare(corrected) == .orderedSame,
+               !looksLikePreferredTerm(corrected) {
+                return nil
+            }
+
+            return DerivedWordCorrection(
+                raw: heard,
+                corrected: corrected,
+                tokenIndex: difference.0,
+                source: source
+            )
+        }
+    }
+
+    private func audioWordOffset(for correction: DerivedWordCorrection, in wordTimings: [TranscribedWordTiming]) -> AudioWordOffset? {
+        guard !wordTimings.isEmpty else {
             return nil
         }
 
-        let differences = zip(rawTokens, polishedTokens).filter { $0.0 != $0.1 }
-        guard differences.count == 1, let difference = differences.first else {
+        let normalizedRaw = normalizedCorrectionToken(correction.raw)
+        if correction.source == .rawTranscript,
+           wordTimings.indices.contains(correction.tokenIndex),
+           normalizedCorrectionToken(wordTimings[correction.tokenIndex].word) == normalizedRaw {
+            return audioWordOffset(from: wordTimings[correction.tokenIndex], index: correction.tokenIndex, correction: correction)
+        }
+
+        guard let match = wordTimings.enumerated().first(where: { _, timing in
+            normalizedCorrectionToken(timing.word) == normalizedRaw
+        }) else {
             return nil
         }
 
-        let heard = difference.0
-        let corrected = difference.1
-        guard heard.count >= 2, corrected.count >= 2 else {
-            return nil
-        }
+        return audioWordOffset(from: match.element, index: match.offset, correction: correction)
+    }
 
-        if heard.caseInsensitiveCompare(corrected) == .orderedSame,
-           !looksLikePreferredTerm(corrected) {
-            return nil
-        }
+    private func audioWordOffset(from timing: TranscribedWordTiming, index: Int, correction: DerivedWordCorrection) -> AudioWordOffset {
+        AudioWordOffset(
+            heard: correction.raw,
+            corrected: correction.corrected,
+            word: timing.word,
+            startSeconds: timing.startSeconds,
+            endSeconds: timing.endSeconds,
+            wordIndex: index,
+            source: "native_word_timestamps"
+        )
+    }
 
-        return (heard, corrected)
+    private func encodedAudioWordOffset(_ offset: AudioWordOffset?) -> String {
+        guard let offset,
+              let data = try? JSONEncoder().encode(offset) else {
+            return ""
+        }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func encodedWordTimings(_ wordTimings: [TranscribedWordTiming]) -> String {
+        guard !wordTimings.isEmpty,
+              let data = try? JSONEncoder().encode(wordTimings) else {
+            return ""
+        }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func encodedWordTimingsBase64(_ wordTimings: [TranscribedWordTiming]) -> String {
+        let json = encodedWordTimings(wordTimings)
+        guard !json.isEmpty else {
+            return ""
+        }
+        return Data(json.utf8).base64EncodedString()
+    }
+
+    private func decodedWordTimings(from value: String?) -> [TranscribedWordTiming] {
+        guard let value,
+              value != "unavailable",
+              let data = value.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([TranscribedWordTiming].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    private func decodedWordTimings(base64 value: String?) -> [TranscribedWordTiming] {
+        guard let value,
+              let data = Data(base64Encoded: value),
+              let decoded = try? JSONDecoder().decode([TranscribedWordTiming].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    private func normalizedCorrectionToken(_ text: String) -> String {
+        text.trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines))
+            .lowercased()
     }
 
     private func correctionTokens(from text: String) -> [String] {

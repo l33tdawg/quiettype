@@ -19,6 +19,7 @@ public struct PromptBuilder: Sendable {
         - Add punctuation and paragraphing.
         - Preserve technical terms, acronyms, code identifiers, and symbols.
         - For lists, use bullets only when the speech clearly enumerates items or the app profile prefers structure.
+        - Profanity filter: \(request.profile.profanityFilterEnabled ? "mask explicit profanity unless it is clearly part of a quoted technical/security string." : "off; preserve profanity if the user said it.")
 
         App profile: \(request.appContext.profile.rawValue)
         Active app: \(request.appContext.appName)

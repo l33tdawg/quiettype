@@ -84,6 +84,7 @@ public struct DictationProfile: Codable, Equatable, Sendable {
     public var activeASRBackend: String
     public var activeEditorModel: String
     public var spellingPreference: SpellingPreference
+    public var profanityFilterEnabled: Bool
     public var vocabulary: [VocabularyEntry]
     public var confusions: [ASRConfusion]
 
@@ -95,6 +96,7 @@ public struct DictationProfile: Codable, Equatable, Sendable {
         case activeASRBackend
         case activeEditorModel
         case spellingPreference
+        case profanityFilterEnabled
         case vocabulary
         case confusions
     }
@@ -107,6 +109,7 @@ public struct DictationProfile: Codable, Equatable, Sendable {
         activeASRBackend: String = "stub",
         activeEditorModel: String = "ollama-local",
         spellingPreference: SpellingPreference = .system,
+        profanityFilterEnabled: Bool = true,
         vocabulary: [VocabularyEntry] = [],
         confusions: [ASRConfusion] = []
     ) {
@@ -117,6 +120,7 @@ public struct DictationProfile: Codable, Equatable, Sendable {
         self.activeASRBackend = activeASRBackend
         self.activeEditorModel = activeEditorModel
         self.spellingPreference = spellingPreference
+        self.profanityFilterEnabled = profanityFilterEnabled
         self.vocabulary = vocabulary
         self.confusions = confusions
     }
@@ -130,6 +134,7 @@ public struct DictationProfile: Codable, Equatable, Sendable {
         self.activeASRBackend = try container.decodeIfPresent(String.self, forKey: .activeASRBackend) ?? "stub"
         self.activeEditorModel = try container.decodeIfPresent(String.self, forKey: .activeEditorModel) ?? "ollama-local"
         self.spellingPreference = try container.decodeIfPresent(SpellingPreference.self, forKey: .spellingPreference) ?? .system
+        self.profanityFilterEnabled = try container.decodeIfPresent(Bool.self, forKey: .profanityFilterEnabled) ?? true
         self.vocabulary = try container.decodeIfPresent([VocabularyEntry].self, forKey: .vocabulary) ?? []
         self.confusions = try container.decodeIfPresent([ASRConfusion].self, forKey: .confusions) ?? []
     }

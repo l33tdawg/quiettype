@@ -25,6 +25,9 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         text = resolveSimpleCorrections(text)
         text = format(text, for: request.appContext.profile)
         text = applySpellingPreference(text, request.profile.spellingPreference)
+        if request.profile.profanityFilterEnabled {
+            text = applyProfanityFilter(text)
+        }
 
         guard !text.isEmpty else {
             throw LocalTypeError.editorReturnedEmptyText
@@ -960,6 +963,34 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         case .american:
             return replaceSpellingVariants(in: text, variants: britishToAmericanSpelling)
         }
+    }
+
+    private func applyProfanityFilter(_ text: String) -> String {
+        var result = text
+        let replacements = [
+            ("motherfucking", "m************"),
+            ("motherfucker", "m***********"),
+            ("bullshit", "b*******"),
+            ("fucking", "f***ing"),
+            ("fucked", "f***ed"),
+            ("fucker", "f***er"),
+            ("asshole", "a******"),
+            ("bastard", "b******"),
+            ("bitch", "b****"),
+            ("fuck", "f***"),
+            ("shit", "s***"),
+            ("damn", "d***")
+        ]
+
+        for (word, masked) in replacements {
+            result = result.replacingOccurrences(
+                of: #"\b\#(word)\b"#,
+                with: masked,
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+
+        return result
     }
 
     private func replaceSpellingVariants(in text: String, variants: [String: String]) -> String {

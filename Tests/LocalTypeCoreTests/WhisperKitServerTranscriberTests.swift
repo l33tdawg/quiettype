@@ -49,6 +49,30 @@ final class WhisperKitServerTranscriberTests: XCTestCase {
         XCTAssertEqual(try WhisperKitServerTranscriber.parseTranscript(from: data), "hello quiettype")
     }
 
+    func testParsesTopLevelWordTimestamps() throws {
+        let data = #"{"text":"hello quiettype","words":[{"word":"hello","start":0.1,"end":0.4,"confidence":0.91},{"word":"quiettype","start":0.5,"end":0.9,"probability":0.88}]}"#.data(using: .utf8)!
+
+        let result = try WhisperKitServerTranscriber.parseTimedTranscript(from: data)
+
+        XCTAssertEqual(result.text, "hello quiettype")
+        XCTAssertEqual(result.words, [
+            TranscribedWordTiming(word: "hello", startSeconds: 0.1, endSeconds: 0.4, confidence: 0.91),
+            TranscribedWordTiming(word: "quiettype", startSeconds: 0.5, endSeconds: 0.9, confidence: 0.88)
+        ])
+    }
+
+    func testParsesSegmentWordTimestamps() throws {
+        let data = #"{"segments":[{"text":"hello quiettype","words":[{"text":"hello","start_seconds":"0.10","end_seconds":"0.40"},{"text":"quiettype","start_seconds":"0.50","end_seconds":"0.90"}]}]}"#.data(using: .utf8)!
+
+        let result = try WhisperKitServerTranscriber.parseTimedTranscript(from: data)
+
+        XCTAssertEqual(result.text, "hello quiettype")
+        XCTAssertEqual(result.words, [
+            TranscribedWordTiming(word: "hello", startSeconds: 0.1, endSeconds: 0.4),
+            TranscribedWordTiming(word: "quiettype", startSeconds: 0.5, endSeconds: 0.9)
+        ])
+    }
+
     func testPreservesSingingMarkerInServerResponse() throws {
         let data = #"{"text":"*singing* I want it all"}"#.data(using: .utf8)!
 

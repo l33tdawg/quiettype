@@ -19,6 +19,14 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
     }
 
     public func transcribe(audioFile: URL, options: AudioTranscriptionOptions) async throws -> String {
+        try await createTranscription(audioFile: audioFile, options: options, includeWordTimestamps: false).text
+    }
+
+    public func transcribeWithTiming(audioFile: URL, options: AudioTranscriptionOptions) async throws -> TimedTranscriptionResult {
+        try await createTranscription(audioFile: audioFile, options: options, includeWordTimestamps: true)
+    }
+
+    private func createTranscription(audioFile: URL, options: AudioTranscriptionOptions, includeWordTimestamps: Bool) async throws -> TimedTranscriptionResult {
         guard endpoint.isLoopbackHTTP else {
             throw AudioTranscriberError.nonLoopbackEndpoint(endpoint.absoluteString)
         }
@@ -28,7 +36,12 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
         request.httpMethod = "POST"
         request.timeoutInterval = timeoutSeconds
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try multipartBody(audioFile: audioFile, boundary: boundary, options: options)
+        request.httpBody = try multipartBody(
+            audioFile: audioFile,
+            boundary: boundary,
+            options: options,
+            includeWordTimestamps: includeWordTimestamps
+        )
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -38,17 +51,22 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
             throw AudioTranscriberError.badResponse(http.statusCode)
         }
 
-        let transcript = try Self.parseTranscript(from: data)
-        guard !transcript.isEmpty else {
+        let result = try Self.parseTimedTranscript(from: data)
+        guard !result.text.isEmpty else {
             throw AudioTranscriberError.emptyTranscript
         }
-        guard !WhisperCommandASRBackend.isNoiseOnlyTranscript(transcript) else {
-            throw AudioTranscriberError.noiseOnlyTranscript(transcript)
+        guard !WhisperCommandASRBackend.isNoiseOnlyTranscript(result.text) else {
+            throw AudioTranscriberError.noiseOnlyTranscript(result.text)
         }
-        return transcript
+        return result
     }
 
-    private func multipartBody(audioFile: URL, boundary: String, options: AudioTranscriptionOptions) throws -> Data {
+    private func multipartBody(
+        audioFile: URL,
+        boundary: String,
+        options: AudioTranscriptionOptions,
+        includeWordTimestamps: Bool
+    ) throws -> Data {
         var data = Data()
         data.appendMultipartField(name: "model", value: model, boundary: boundary)
         if let language {
@@ -57,23 +75,35 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
         if let prompt = options.initialPrompt {
             data.appendMultipartField(name: "prompt", value: prompt, boundary: boundary)
         }
-        data.appendMultipartField(name: "response_format", value: "json", boundary: boundary)
+        data.appendMultipartField(name: "response_format", value: includeWordTimestamps ? "verbose_json" : "json", boundary: boundary)
+        if includeWordTimestamps {
+            data.appendMultipartField(name: "timestamp_granularities[]", value: "word", boundary: boundary)
+            data.appendMultipartField(name: "timestamp_granularities[]", value: "segment", boundary: boundary)
+            data.appendMultipartField(name: "word_timestamps", value: "true", boundary: boundary)
+        }
         data.appendMultipartFile(name: "file", filename: audioFile.lastPathComponent, contentType: "audio/wav", fileData: try Data(contentsOf: audioFile), boundary: boundary)
         data.appendString("--\(boundary)--\r\n")
         return data
     }
 
     static func parseTranscript(from data: Data) throws -> String {
+        try parseTimedTranscript(from: data).text
+    }
+
+    static func parseTimedTranscript(from data: Data) throws -> TimedTranscriptionResult {
         if let object = try? JSONSerialization.jsonObject(with: data) {
             if let object = object as? [String: Any] {
-                return WhisperCommandASRBackend.sanitizeTranscript(Self.extractText(from: object))
+                return TimedTranscriptionResult(
+                    text: WhisperCommandASRBackend.sanitizeTranscript(Self.extractText(from: object)),
+                    words: Self.extractWords(from: object)
+                )
             }
             if let text = object as? String {
-                return WhisperCommandASRBackend.sanitizeTranscript(text)
+                return TimedTranscriptionResult(text: WhisperCommandASRBackend.sanitizeTranscript(text))
             }
-            return ""
+            return TimedTranscriptionResult(text: "")
         }
-        return WhisperCommandASRBackend.sanitizeTranscript(String(data: data, encoding: .utf8) ?? "")
+        return TimedTranscriptionResult(text: WhisperCommandASRBackend.sanitizeTranscript(String(data: data, encoding: .utf8) ?? ""))
     }
 
     private static func extractText(from object: [String: Any]) -> String {
@@ -101,6 +131,63 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
                 .joined(separator: " ")
         }
         return ""
+    }
+
+    private static func extractWords(from object: [String: Any]) -> [TranscribedWordTiming] {
+        var words: [TranscribedWordTiming] = []
+        words.append(contentsOf: wordTimings(from: object["words"]))
+
+        if let result = object["result"] as? [String: Any] {
+            words.append(contentsOf: extractWords(from: result))
+        }
+
+        if let segments = object["segments"] as? [[String: Any]] {
+            for segment in segments {
+                words.append(contentsOf: wordTimings(from: segment["words"]))
+            }
+        }
+
+        return words.filter { timing in
+            !timing.word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && timing.endSeconds >= timing.startSeconds
+        }
+    }
+
+    private static func wordTimings(from value: Any?) -> [TranscribedWordTiming] {
+        guard let entries = value as? [[String: Any]] else {
+            return []
+        }
+
+        return entries.compactMap { entry in
+            let word = (entry["word"] as? String)
+                ?? (entry["text"] as? String)
+                ?? (entry["token"] as? String)
+                ?? ""
+            guard let start = doubleValue(entry["start"] ?? entry["start_seconds"] ?? entry["startSeconds"]),
+                  let end = doubleValue(entry["end"] ?? entry["end_seconds"] ?? entry["endSeconds"]) else {
+                return nil
+            }
+            let confidence = doubleValue(entry["confidence"] ?? entry["probability"] ?? entry["prob"])
+            return TranscribedWordTiming(
+                word: WhisperCommandASRBackend.sanitizeTranscript(word),
+                startSeconds: start,
+                endSeconds: end,
+                confidence: confidence
+            )
+        }
+    }
+
+    private static func doubleValue(_ value: Any?) -> Double? {
+        if let double = value as? Double {
+            return double
+        }
+        if let int = value as? Int {
+            return Double(int)
+        }
+        if let string = value as? String {
+            return Double(string)
+        }
+        return nil
     }
 }
 
