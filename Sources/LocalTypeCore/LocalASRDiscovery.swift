@@ -134,7 +134,7 @@ public struct CascadingAudioFileTranscriber: AudioFileTranscribing {
             do {
                 return try await transcriber.transcribe(audioFile: audioFile, options: options)
             } catch {
-                errors.append(String(describing: error))
+                errors.append(AudioTranscriberError.describe(error))
             }
         }
         throw AudioTranscriberError.allBackendsFailed(errors)
@@ -150,10 +150,19 @@ public struct CascadingAudioFileTranscriber: AudioFileTranscribing {
             do {
                 return try await transcriber.transcribeWithTiming(audioFile: audioFile, options: options)
             } catch {
-                errors.append(String(describing: error))
+                errors.append(AudioTranscriberError.describe(error))
             }
         }
         throw AudioTranscriberError.allBackendsFailed(errors)
+    }
+}
+
+public extension AudioTranscriberError {
+    static func describe(_ error: Error) -> String {
+        if case let AudioTranscriberError.requestFailed(message) = error {
+            return message
+        }
+        return String(describing: error)
     }
 }
 

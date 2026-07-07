@@ -1,6 +1,11 @@
 import Foundation
 
 public struct WhisperKitServerTranscriber: AudioFileTranscribing {
+    public static let streamingTimeoutSeconds: TimeInterval = 10.0
+    public static let warmupTimeoutSeconds: TimeInterval = 30.0
+    public static let minimumFullAudioTimeoutSeconds: TimeInterval = 45.0
+    public static let maximumFullAudioTimeoutSeconds: TimeInterval = 180.0
+
     private let endpoint: URL
     private let model: String
     private let language: String?
@@ -26,6 +31,21 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
         try await createTranscription(audioFile: audioFile, options: options, includeWordTimestamps: true)
     }
 
+    public static func timeoutForFullAudio(durationSeconds: TimeInterval) -> TimeInterval {
+        min(
+            maximumFullAudioTimeoutSeconds,
+            max(minimumFullAudioTimeoutSeconds, durationSeconds * 8.0)
+        )
+    }
+
+    public static func describeRequestFailure(_ error: Error, timeoutSeconds: TimeInterval) -> String {
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorTimedOut {
+            return "Native WhisperKit request timed out after \(Int(timeoutSeconds.rounded()))s. The Apple Silicon speech engine may still be warming or the recording may be too long for this Mac."
+        }
+        return String(describing: error)
+    }
+
     private func createTranscription(audioFile: URL, options: AudioTranscriptionOptions, includeWordTimestamps: Bool) async throws -> TimedTranscriptionResult {
         guard endpoint.isLoopbackHTTP else {
             throw AudioTranscriberError.nonLoopbackEndpoint(endpoint.absoluteString)
@@ -43,7 +63,13 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
             includeWordTimestamps: includeWordTimestamps
         )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw AudioTranscriberError.requestFailed(Self.describeRequestFailure(error, timeoutSeconds: timeoutSeconds))
+        }
         guard let http = response as? HTTPURLResponse else {
             throw AudioTranscriberError.badResponse(-1)
         }

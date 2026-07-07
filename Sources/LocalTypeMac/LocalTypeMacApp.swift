@@ -9104,7 +9104,7 @@ final class MenuBarModel: ObservableObject {
             defer {
                 try? FileManager.default.removeItem(at: tempURL)
             }
-            _ = try await WhisperKitServerTranscriber(timeoutSeconds: 20.0)
+            _ = try await WhisperKitServerTranscriber(timeoutSeconds: WhisperKitServerTranscriber.warmupTimeoutSeconds)
                 .transcribe(audioFile: tempURL, options: .none)
             nativeInferencePrewarmed = true
             return true
@@ -9782,7 +9782,7 @@ final class MenuBarModel: ObservableObject {
 
         do {
             let url = reviewAudioURL()
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try OwnerOnlyFileSecurity.prepareDirectory(url.deletingLastPathComponent())
             try WavFileWriter.writeMonoPCM16(samples: recordedSamples, sampleRate: recordingSampleRate, to: url)
             pruneReviewAudioCache(keeping: url)
             lastRecordingURL = url
@@ -9932,7 +9932,7 @@ final class MenuBarModel: ObservableObject {
 
         if streamingTranscriptionSession == nil {
             streamingTranscriptionSession = StreamingAudioTranscriptionSession(
-                transcriber: WhisperKitServerTranscriber(timeoutSeconds: 10.0),
+                transcriber: WhisperKitServerTranscriber(timeoutSeconds: WhisperKitServerTranscriber.streamingTimeoutSeconds),
                 options: .none
             )
         }
@@ -10112,7 +10112,7 @@ final class MenuBarModel: ObservableObject {
             return CascadingAudioFileTranscriber([])
         }
         return CascadingAudioFileTranscriber([
-            WhisperKitServerTranscriber(timeoutSeconds: 10.0)
+            WhisperKitServerTranscriber(timeoutSeconds: WhisperKitServerTranscriber.timeoutForFullAudio(durationSeconds: recordingDuration))
         ])
     }
 
@@ -10706,7 +10706,7 @@ final class MenuBarModel: ObservableObject {
 
         do {
             let directory = trainingDirectory().appendingPathComponent("Corrections", isDirectory: true)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try OwnerOnlyFileSecurity.prepareDirectory(directory)
             let sampleNumber = min(teachingSampleCount + 1, 3)
             let audioURL = directory.appendingPathComponent("\(Int(Date().timeIntervalSince1970))-correction-\(sampleNumber).wav")
             try WavFileWriter.writeMonoPCM16(samples: teachingSamples, sampleRate: teachingSampleRate, to: audioURL)
@@ -10938,7 +10938,7 @@ final class MenuBarModel: ObservableObject {
 
         do {
             let directory = trainingDirectory()
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try OwnerOnlyFileSecurity.prepareDirectory(directory)
             let safeID = currentCalibrationSet.id.replacingOccurrences(of: "/", with: "-")
             let audioURL = directory.appendingPathComponent("\(Int(Date().timeIntervalSince1970))-\(safeID).wav")
             try WavFileWriter.writeMonoPCM16(samples: trainingSamples, sampleRate: trainingSampleRate, to: audioURL)

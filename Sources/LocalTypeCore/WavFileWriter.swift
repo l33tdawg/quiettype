@@ -31,6 +31,7 @@ public enum WavFileWriter {
         }
 
         try data.write(to: url, options: [.atomic])
+        try OwnerOnlyFileSecurity.protectFile(url)
     }
 }
 

@@ -43,7 +43,7 @@ public struct StreamingWavChunker: Sendable {
         pendingSamples.append(contentsOf: frame.samples)
         totalSamples += frame.samples.count
 
-        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        try OwnerOnlyFileSecurity.prepareDirectory(outputDirectory)
 
         var chunks: [WavAudioChunk] = []
         let chunkSampleCount = max(1, Int(Double(activeSampleRate) * chunkDurationSeconds))
@@ -66,7 +66,7 @@ public struct StreamingWavChunker: Sendable {
             return nil
         }
 
-        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        try OwnerOnlyFileSecurity.prepareDirectory(outputDirectory)
         let samples = pendingSamples
         pendingSamples = []
 

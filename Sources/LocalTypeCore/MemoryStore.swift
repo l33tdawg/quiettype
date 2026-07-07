@@ -159,10 +159,11 @@ public actor SQLiteMemoryStore: MemoryStore {
         }
 
         let directory = storeURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try OwnerOnlyFileSecurity.prepareDirectory(directory)
         let data = try JSONEncoder().encode(memories)
         let storedData = try encrypted ? Self.encrypt(data) : data
         try storedData.write(to: storeURL, options: [.atomic])
+        try OwnerOnlyFileSecurity.protectFile(storeURL)
     }
 
     private static func decodeStoredMemories(from data: Data, encrypted: Bool) throws -> [String: DictationMemory] {

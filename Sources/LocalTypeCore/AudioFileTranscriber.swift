@@ -55,6 +55,7 @@ public enum AudioTranscriberError: Error, Equatable {
     case emptyTranscript
     case noiseOnlyTranscript(String)
     case badResponse(Int)
+    case requestFailed(String)
     case allBackendsFailed([String])
 }
 

@@ -228,7 +228,7 @@ public final class SageSigningIdentity: @unchecked Sendable {
     }
 
     private static func mirrorSeedIfNeeded(_ seed: Data, to keyURL: URL, fileManager: FileManager) throws {
-        try fileManager.createDirectory(at: keyURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try OwnerOnlyFileSecurity.prepareDirectory(keyURL.deletingLastPathComponent(), fileManager: fileManager)
         if fileManager.fileExists(atPath: keyURL.path),
            (try? Data(contentsOf: keyURL)) == seed {
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyURL.path)

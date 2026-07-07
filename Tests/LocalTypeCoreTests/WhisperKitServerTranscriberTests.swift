@@ -84,4 +84,25 @@ final class WhisperKitServerTranscriberTests: XCTestCase {
 
         XCTAssertEqual(try WhisperKitServerTranscriber.parseTranscript(from: data), "please send the note")
     }
+
+    func testFullAudioTimeoutScalesWithDuration() {
+        XCTAssertEqual(
+            WhisperKitServerTranscriber.timeoutForFullAudio(durationSeconds: 1),
+            WhisperKitServerTranscriber.minimumFullAudioTimeoutSeconds
+        )
+        XCTAssertEqual(WhisperKitServerTranscriber.timeoutForFullAudio(durationSeconds: 10), 80)
+        XCTAssertEqual(
+            WhisperKitServerTranscriber.timeoutForFullAudio(durationSeconds: 60),
+            WhisperKitServerTranscriber.maximumFullAudioTimeoutSeconds
+        )
+    }
+
+    func testRequestTimeoutFailureMessageIsUserReadable() {
+        let error = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut)
+
+        let message = WhisperKitServerTranscriber.describeRequestFailure(error, timeoutSeconds: 45)
+
+        XCTAssertTrue(message.contains("timed out after 45s"))
+        XCTAssertFalse(message.contains("NSURLErrorDomain"))
+    }
 }
