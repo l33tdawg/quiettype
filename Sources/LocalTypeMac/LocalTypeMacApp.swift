@@ -4010,8 +4010,10 @@ private struct SidebarItem: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .foregroundStyle(selected ? .primary : .secondary)
         .background(selected ? Color(nsColor: .windowBackgroundColor) : Color.clear)
+        .contentShape(RoundedRectangle(cornerRadius: 10))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
