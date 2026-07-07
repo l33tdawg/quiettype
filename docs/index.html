@@ -10,12 +10,12 @@
   <meta property="og:url" content="https://l33tdawg.github.io/quiettype/">
   <meta property="og:title" content="QuietType - Native macOS dictation for AI and everyday writing.">
   <meta property="og:description" content="Fast on-device transcription for AI prompts, messages, email, notes, terminals, editors and docs. Works wherever the cursor is focused. No cloud processing.">
-  <meta property="og:image" content="https://l33tdawg.github.io/quiettype/og.png?v=1.0.0-beta.4-ai2">
+  <meta property="og:image" content="https://l33tdawg.github.io/quiettype/og.png?v=1.0.0-beta.4-ai3">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="QuietType - Native macOS dictation for AI and everyday writing.">
   <meta name="twitter:description" content="Fast on-device transcription for AI prompts, messages, email, notes, terminals, editors and docs. Works wherever the cursor is focused. No cloud processing.">
-  <meta name="twitter:image" content="https://l33tdawg.github.io/quiettype/og.png?v=1.0.0-beta.4-ai2">
+  <meta name="twitter:image" content="https://l33tdawg.github.io/quiettype/og.png?v=1.0.0-beta.4-ai3">
   <meta name="theme-color" content="#f6f6f3">
   <link rel="icon" href="./icon.svg?v=1.0.0-beta.4" type="image/svg+xml">
   <script data-goatcounter="https://quiettype.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
@@ -188,6 +188,13 @@
       line-height: 0.89;
       letter-spacing: 0;
       font-weight: 820;
+    }
+
+    .speed-word {
+      display: inline-block;
+      font-style: italic;
+      transform: skewX(-8deg) translateX(0.04em);
+      transform-origin: left bottom;
     }
 
     .subhead {
@@ -712,7 +719,7 @@
       <div class="shell hero-grid">
         <div class="reveal">
           <div class="eyebrow">Native beta for macOS Apple Silicon</div>
-          <h1>Talk to AI<br>and write everywhere faster.</h1>
+          <h1>Talk to AI<br>and write everywhere<br><em class="speed-word">faster.</em></h1>
           <p class="subhead">QuietType turns natural speech into clean text wherever your cursor is focused: AI prompts, email, WhatsApp, docs, terminals, editors and notes. Local ML on your Mac, without cloud dictation processing.</p>
           <div class="hero-actions">
             <a class="button primary" href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-beta.4/QuietType-1.0.0-beta.4-macOS-arm64.dmg">

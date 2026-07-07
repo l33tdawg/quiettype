@@ -26,10 +26,11 @@
     </g>
   </g>
   <text x="376" y="238" fill="#202020" font-family="-apple-system, BlinkMacSystemFont, SF Pro Display, Arial, sans-serif" font-size="92" font-weight="800">QuietType</text>
-  <text x="380" y="304" fill="#202020" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="40" font-weight="650">Talk to AI</text>
-  <text x="380" y="352" fill="#202020" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="40" font-weight="650">and write everywhere faster.</text>
-  <text x="382" y="418" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="30" font-weight="560">On-device dictation for AI prompts, email,</text>
-  <text x="382" y="460" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="30" font-weight="560">WhatsApp, docs and anywhere the cursor is focused.</text>
-  <line x1="380" y1="500" x2="1022" y2="500" stroke="#DFDFDB" stroke-width="2"/>
-  <text x="380" y="548" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="24" font-weight="650">No cloud transcription · SAGE memory · Apple Silicon</text>
+  <text x="380" y="286" fill="#202020" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="40" font-weight="650">Talk to AI</text>
+  <text x="380" y="334" fill="#202020" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="40" font-weight="650">and write everywhere</text>
+  <text x="386" y="382" fill="#202020" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="40" font-weight="650" font-style="italic" transform="skewX(-8 386 382)">faster.</text>
+  <text x="382" y="442" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="30" font-weight="560">On-device dictation for AI prompts, email,</text>
+  <text x="382" y="484" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="30" font-weight="560">WhatsApp, docs and anywhere the cursor is focused.</text>
+  <line x1="380" y1="522" x2="1022" y2="522" stroke="#DFDFDB" stroke-width="2"/>
+  <text x="380" y="570" fill="#727272" font-family="-apple-system, BlinkMacSystemFont, SF Pro Text, Arial, sans-serif" font-size="24" font-weight="650">No cloud transcription · SAGE memory · Apple Silicon</text>
 </svg>
