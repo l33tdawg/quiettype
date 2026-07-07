@@ -167,6 +167,12 @@ final class SageMemoryStoreTests: XCTestCase {
         let results = try await store.search(MemorySearchQuery(text: "SAGE", types: [.vocabulary]))
 
         XCTAssertEqual(results.first?.payload["preferred"], "SAGE")
+
+        let encryptedURL = directory.appendingPathComponent("memory-store.qtmemory")
+        let stored = try Data(contentsOf: encryptedURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: encryptedURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path))
+        XCTAssertFalse(String(data: stored, encoding: .utf8)?.contains("SAGE") == true)
     }
 
     func testSigningIdentityPrefersExistingMirroredSeedOverKeychainSeed() throws {

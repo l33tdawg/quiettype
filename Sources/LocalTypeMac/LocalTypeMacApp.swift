@@ -1392,7 +1392,7 @@ struct TesterView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("\(model.filteredVoiceNotes.count) notes")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        Text(model.saveVoiceNotesToSage ? "New transcripts copy to SAGE" : "Encrypted on this Mac")
+                        Text(model.saveVoiceNotesToSage ? "New transcripts copy to SAGE" : "Local encrypted store")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -1846,7 +1846,7 @@ struct TesterView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
                 HelpFAQRow(
                     question: "Does anything leave my Mac?",
-                    answer: "No dictation content is sent to cloud services. Dictation, cleanup, training samples, and SAGE memory stay local. Manual update checks contact GitHub only when you choose Check for updates or Install SAGE."
+                    answer: "No dictation content is sent to cloud services. Dictation, cleanup, training samples, and SAGE memory stay local. QuietType contacts GitHub only for signed app/SAGE update checks and downloads."
                 )
                 HelpFAQRow(
                     question: "Why does QuietType require SAGE?",
@@ -2139,7 +2139,7 @@ struct TesterView: View {
                     ))
                     .toggleStyle(.checkbox)
                     .tint(.primary)
-                    .quickTooltip("When on, new encrypted local voice notes also send a transcript copy to SAGE. Audio remains encrypted on this Mac.")
+                    .quickTooltip("When on, new voice notes also send a transcript copy to SAGE. Audio remains encrypted on this Mac, and local transcript edits stay in QuietType's encrypted memory store.")
 
                     Toggle("Filter profanity", isOn: Binding(
                         get: { model.profanityFilterEnabled },
@@ -2423,7 +2423,7 @@ struct TesterView: View {
     private var storageCleanupPanel: some View {
         settingsSection(title: "Cleanup") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Cleanup actions leave encrypted voice notes and SAGE memory records intact unless the button names that storage explicitly.")
+                Text("Cleanup actions leave encrypted voice-note audio, local transcript records, and SAGE memory records intact unless the button names that storage explicitly.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -4794,7 +4794,7 @@ private struct VoiceNotesIntroPanel: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Voice Notes")
                     .font(.system(size: 34, weight: .bold, design: .rounded))
-                Text("Record private thoughts, diary entries, rough plans, and long-form ideas. Audio and transcript edits stay encrypted on this Mac. When SAGE copy is on, QuietType sends only the transcript as governed memory.")
+                Text("Record private thoughts, diary entries, rough plans, and long-form ideas. Audio is encrypted on this Mac, and transcript edits live in QuietType's encrypted local memory store. When SAGE copy is on, QuietType sends only the transcript as governed memory.")
                     .font(.system(size: 16 + typeDelta, weight: .regular))
                     .foregroundStyle(.secondary)
                     .lineSpacing(4)
@@ -5312,7 +5312,7 @@ private struct VoiceNoteDetailPanel: View {
 
             HStack {
                 Label(
-                    note.sentToSage ? "Saved to SAGE memory" : (savesToSageByDefault ? "Will save to SAGE after recording" : "Local encrypted note"),
+                    note.sentToSage ? "Saved to SAGE memory" : (savesToSageByDefault ? "Will save to SAGE after recording" : "Local encrypted transcript"),
                     systemImage: note.sentToSage ? "checkmark.seal" : "lock"
                 )
                     .font(.system(size: 12 + typeDelta, weight: .medium))
@@ -5368,8 +5368,8 @@ private struct VoiceNoteDetailPanel: View {
                     title: deleteIncludesSageMemory ? "Remove note and memory?" : "Remove note?",
                     isDeleting: isDeleting,
                     message: deleteIncludesSageMemory
-                        ? "QuietType will remove the local transcript and encrypted audio, then ask SAGE to forget the linked memory if one exists."
-                        : "QuietType will remove the local transcript and encrypted audio.",
+                        ? "QuietType will remove the encrypted local transcript record and encrypted audio, then ask SAGE to forget the linked memory if one exists."
+                        : "QuietType will remove the encrypted local transcript record and encrypted audio.",
                     confirmTitle: deleteIncludesSageMemory ? "Remove note and memory" : "Remove note",
                     onCancel: {
                         showingDeleteConfirm = false
@@ -8618,7 +8618,21 @@ final class MenuBarModel: ObservableObject {
             registerTypingReminderMonitor()
             startNativeSpeechWarmup()
             startBackgroundUpdateChecks()
+            repairSensitiveStoragePermissions()
             refreshStorageSnapshot()
+        }
+    }
+
+    private func repairSensitiveStoragePermissions() {
+        let directories = [
+            reviewAudioDirectory,
+            voiceNoteAudioDirectory,
+            trainingDirectory()
+        ]
+        Task.detached(priority: .utility) {
+            for directory in directories {
+                Self.repairOwnerOnlyStorage(at: directory)
+            }
         }
     }
 
@@ -8787,6 +8801,30 @@ final class MenuBarModel: ObservableObject {
             return 0
         }
         return Int64(values?.fileSize ?? 0)
+    }
+
+    nonisolated private static func repairOwnerOnlyStorage(at directory: URL) {
+        let fileManager = FileManager.default
+        try? OwnerOnlyFileSecurity.prepareDirectory(directory, fileManager: fileManager)
+        guard let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink == true {
+                continue
+            }
+            if values?.isDirectory == true {
+                try? OwnerOnlyFileSecurity.prepareDirectory(url, fileManager: fileManager)
+            } else if values?.isRegularFile == true {
+                try? OwnerOnlyFileSecurity.protectFile(url, fileManager: fileManager)
+            }
+        }
     }
 
     private func removeFiles(in directory: URL, where shouldRemove: (URL) -> Bool) throws {

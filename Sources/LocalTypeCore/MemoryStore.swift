@@ -102,10 +102,15 @@ public actor SQLiteMemoryStore: MemoryStore {
             .appendingPathComponent("Library/Application Support/QuietType", isDirectory: true)
         let encryptedURL = directory.appendingPathComponent("memory-store.qtmemory")
         let legacyURL = directory.appendingPathComponent("memory-store.json")
-        let storeURL = FileManager.default.fileExists(atPath: encryptedURL.path) || !FileManager.default.fileExists(atPath: legacyURL.path)
-            ? encryptedURL
-            : legacyURL
-        return SQLiteMemoryStore(storeURL: storeURL, encrypted: true)
+        let fileManager = FileManager.default
+        if !fileManager.fileExists(atPath: encryptedURL.path),
+           fileManager.fileExists(atPath: legacyURL.path),
+           let legacyData = try? Data(contentsOf: legacyURL),
+           let legacyMemories = try? decodeStoredMemories(from: legacyData, encrypted: true),
+           (try? writeStoredMemories(legacyMemories, to: encryptedURL, encrypted: true)) != nil {
+            try? fileManager.removeItem(at: legacyURL)
+        }
+        return SQLiteMemoryStore(storeURL: encryptedURL, encrypted: true)
     }
 
     public func put(_ memory: DictationMemory) async throws -> String {
@@ -158,6 +163,10 @@ public actor SQLiteMemoryStore: MemoryStore {
             return
         }
 
+        try Self.writeStoredMemories(memories, to: storeURL, encrypted: encrypted)
+    }
+
+    private static func writeStoredMemories(_ memories: [String: DictationMemory], to storeURL: URL, encrypted: Bool) throws {
         let directory = storeURL.deletingLastPathComponent()
         try OwnerOnlyFileSecurity.prepareDirectory(directory)
         let data = try JSONEncoder().encode(memories)
