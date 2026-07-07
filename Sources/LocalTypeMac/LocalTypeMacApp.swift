@@ -2238,7 +2238,7 @@ struct TesterView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text(model.appVersionLabel)
                     .font(.callout.weight(.semibold))
-                Text("QuietType checks GitHub once a day for signed updates. Downloads happen only when you click Update.")
+                Text("QuietType checks GitHub for signed updates when the app opens. Downloads happen only when you click Update.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2368,7 +2368,7 @@ struct TesterView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(model.appVersionLabel)
                             .font(.callout.weight(.semibold))
-                        Text("QuietType checks GitHub once a day for signed updates. Downloads happen only when you click Update.")
+                        Text("QuietType checks GitHub for signed updates when the app opens. Downloads happen only when you click Update.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -7224,10 +7224,9 @@ final class MenuBarModel: ObservableObject {
     private static let lastWordsPerMinuteKey = "quiettype.lastWordsPerMinute"
     private static let historyReviewEnabledKey = "quiettype.historyReviewEnabled"
     private static let saveVoiceNotesToSageKey = "quiettype.saveVoiceNotesToSage"
-    private static let lastBackgroundUpdateCheckKey = "quiettype.lastBackgroundUpdateCheck"
     private static let availableUpdateKey = "quiettype.availableUpdate"
     private static let notifiedUpdateTagKey = "quiettype.notifiedUpdateTag"
-    private static let backgroundUpdateCheckInterval: TimeInterval = 60 * 60 * 24
+    private static let backgroundUpdateRefreshInterval: UInt64 = 60 * 60 * 1_000_000_000
     private static let requiredCalibrationSets = 3
     private static let maxDictationDurationSeconds = 300.0
     private static let maxTrainingPairCount = 10
@@ -8093,18 +8092,13 @@ final class MenuBarModel: ObservableObject {
 
         updateCheckTask = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.checkForUpdatesInBackgroundIfDue()
-                try? await Task.sleep(nanoseconds: 60 * 60 * 1_000_000_000)
+                await self?.refreshAvailableUpdateInBackground()
+                try? await Task.sleep(nanoseconds: Self.backgroundUpdateRefreshInterval)
             }
         }
     }
 
-    private func checkForUpdatesInBackgroundIfDue() async {
-        guard shouldRunBackgroundUpdateCheck() else {
-            return
-        }
-
-        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.lastBackgroundUpdateCheckKey)
+    private func refreshAvailableUpdateInBackground() async {
         do {
             if let update = try await updateService.checkAvailability() {
                 availableUpdate = update
@@ -8117,14 +8111,6 @@ final class MenuBarModel: ObservableObject {
         } catch {
             // Background checks should never interrupt dictation or setup.
         }
-    }
-
-    private func shouldRunBackgroundUpdateCheck(now: Date = Date()) -> Bool {
-        let lastCheck = UserDefaults.standard.double(forKey: Self.lastBackgroundUpdateCheckKey)
-        guard lastCheck > 0 else {
-            return true
-        }
-        return now.timeIntervalSince1970 - lastCheck >= Self.backgroundUpdateCheckInterval
     }
 
     private func notifyUpdateAvailableIfNeeded(_ update: QuietTypeUpdateAvailability) async {
