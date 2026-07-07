@@ -153,8 +153,17 @@ final class DictationOverlayController {
         let hasAction = onCancel != nil
         panel.cancelAction = onCancel
         panel.ignoresMouseEvents = false
+        let isTypingReminder = state.title == OverlayState.typingReminder.title
         let compactWidth: CGFloat = hasAction ? 328 : 280
-        panel.setContentSize(hasTranscript ? NSSize(width: 390, height: 154) : NSSize(width: compactWidth, height: 82))
+        let contentSize: NSSize
+        if isTypingReminder {
+            contentSize = NSSize(width: 430, height: 112)
+        } else if hasTranscript {
+            contentSize = NSSize(width: 390, height: 154)
+        } else {
+            contentSize = NSSize(width: compactWidth, height: 82)
+        }
+        panel.setContentSize(contentSize)
         panel.contentView = NSHostingView(rootView: DictationOverlayView(
             state: state,
             level: level,
@@ -277,6 +286,13 @@ struct OverlayState {
         icon: "xmark.circle.fill",
         tint: .secondary
     )
+
+    static let typingReminder = OverlayState(
+        title: "Press Fn and speak",
+        subtitle: "QuietType can dictate this faster",
+        icon: "keyboard",
+        tint: .white
+    )
 }
 
 private struct DictationOverlayView: View {
@@ -292,6 +308,53 @@ private struct DictationOverlayView: View {
     }
 
     var body: some View {
+        if state.title == OverlayState.typingReminder.title {
+            typingReminderBody
+        } else {
+            standardBody
+        }
+    }
+
+    private var typingReminderBody: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(width: 54, height: 54)
+                Image(systemName: state.icon)
+                    .font(.system(size: 25, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(detail ?? state.title)
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                Text(state.subtitle)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.78))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background {
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color(nsColor: .darkGray).opacity(0.96))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.28), radius: 22, y: 12)
+    }
+
+    private var standardBody: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 14) {
                 ZStack {
@@ -1978,6 +2041,8 @@ struct TesterView: View {
         switch selectedSettingsTab {
         case .general:
             generalSettingsLayout
+        case .privacy:
+            privacySettingsLayout
         case .about:
             aboutSettingsLayout
         }
@@ -2004,6 +2069,21 @@ struct TesterView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var privacySettingsLayout: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            privacyNetworkPanel
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 2), spacing: 16) {
+                storageOverviewPanel
+                storageCleanupPanel
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            model.refreshStorageSnapshot()
+        }
     }
 
     private var dictationControlsPanel: some View {
@@ -2040,7 +2120,7 @@ struct TesterView: View {
                     ))
                     .toggleStyle(.checkbox)
                     .tint(.primary)
-                    .quickTooltip("When you type several words with the keyboard, QuietType can occasionally remind you to use local voice input instead. It is capped at 3 reminders per week with at least 48 hours between reminders.")
+                    .quickTooltip("When you type several words with the keyboard, QuietType can occasionally show a local overlay reminding you to press Fn and speak. It is capped at 3 reminders per week with at least 48 hours between reminders.")
 
                     Spacer(minLength: 0)
                 }
@@ -2251,6 +2331,125 @@ struct TesterView: View {
                 .disabled(model.isCheckingForUpdates)
 
                 updateStatusMessage
+            }
+        }
+    }
+
+    private var privacyNetworkPanel: some View {
+        settingsSection(title: "Privacy and network") {
+            VStack(alignment: .leading, spacing: 12) {
+                PrivacyFlowRow(
+                    icon: "waveform",
+                    title: "Dictation",
+                    detail: "Microphone audio is transcribed locally. The bundled WhisperKit server listens on 127.0.0.1:50060 and does not send dictation audio or transcripts to cloud services."
+                )
+                PrivacyFlowRow(
+                    icon: "brain.head.profile",
+                    title: "SAGE memory",
+                    detail: "Corrections, vocabulary, training hints, and optional voice-note transcript copies are committed to local SAGE through localhost. Voice-note audio stays encrypted on this Mac."
+                )
+                PrivacyFlowRow(
+                    icon: "sparkles",
+                    title: "Optional local editor",
+                    detail: "Rule cleanup runs in QuietType. If you select Ollama mode, cleanup calls your local Ollama service on 127.0.0.1:11434."
+                )
+                PrivacyFlowRow(
+                    icon: "arrow.down.circle",
+                    title: "Updates",
+                    detail: "QuietType checks GitHub releases for signed app and SAGE updates in the background. DMGs download only when you choose Update or Install SAGE."
+                )
+            }
+        }
+    }
+
+    private var storageOverviewPanel: some View {
+        settingsSection(title: "Storage") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Text(model.storageSnapshot.updatedAtLabel)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        model.refreshStorageSnapshot()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(QuietButtonStyle())
+                }
+
+                ForEach(model.storageSnapshot.entries) { entry in
+                    StorageUsageRow(entry: entry)
+                }
+            }
+        }
+    }
+
+    private var storageCleanupPanel: some View {
+        settingsSection(title: "Cleanup") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cleanup actions leave encrypted voice notes and SAGE memory records intact unless the button names that storage explicitly.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Button {
+                            model.cleanupReviewAudioCache()
+                        } label: {
+                            Label("Review audio", systemImage: "waveform.slash")
+                        }
+                        .buttonStyle(QuietButtonStyle())
+
+                        Button {
+                            model.cleanupTrainingSamples()
+                        } label: {
+                            Label("Training samples", systemImage: "trash")
+                        }
+                        .buttonStyle(QuietButtonStyle())
+                    }
+
+                    HStack(spacing: 8) {
+                        Button {
+                            model.cleanupUpdateCache()
+                        } label: {
+                            Label("Update downloads", systemImage: "externaldrive.badge.minus")
+                        }
+                        .buttonStyle(QuietButtonStyle())
+                        .disabled(model.isCheckingForUpdates)
+
+                        Button {
+                            model.trimSageLog()
+                        } label: {
+                            Label("Trim SAGE log", systemImage: "scissors")
+                        }
+                        .buttonStyle(QuietButtonStyle())
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        model.openQuietTypeStorageFolder()
+                    } label: {
+                        Label("QuietType folder", systemImage: "folder")
+                    }
+                    .buttonStyle(QuietButtonStyle())
+
+                    Button {
+                        model.openSageStorageFolder()
+                    } label: {
+                        Label("SAGE folder", systemImage: "folder.badge.gearshape")
+                    }
+                    .buttonStyle(QuietButtonStyle())
+                }
+
+                if !model.storageCleanupStatus.isEmpty {
+                    Text(model.storageCleanupStatus)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -2517,6 +2716,53 @@ struct TesterView: View {
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.05), lineWidth: 1))
+    }
+
+    private struct PrivacyFlowRow: View {
+        var icon: String
+        var title: String
+        var detail: String
+
+        var body: some View {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.callout.weight(.semibold))
+                    Text(detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private struct StorageUsageRow: View {
+        var entry: QuietTypeStorageEntry
+
+        var body: some View {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(entry.title)
+                        .font(.callout.weight(.semibold))
+                    Text(entry.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                Text(entry.displaySize)
+                    .font(.callout.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var startupPanel: some View {
@@ -3109,6 +3355,7 @@ private enum QuietTypeTextSizeChoice: String, CaseIterable, Identifiable {
 
 private enum QuietTypeSettingsTab: String, CaseIterable, Identifiable {
     case general
+    case privacy
     case about
 
     var id: String { rawValue }
@@ -3116,8 +3363,38 @@ private enum QuietTypeSettingsTab: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .general: "General"
+        case .privacy: "Privacy"
         case .about: "About"
         }
+    }
+}
+
+struct QuietTypeStorageSnapshot: Equatable {
+    var entries: [QuietTypeStorageEntry]
+    var updatedAt: Date?
+
+    static let empty = QuietTypeStorageSnapshot(entries: [], updatedAt: nil)
+
+    var updatedAtLabel: String {
+        guard let updatedAt else {
+            return "Storage not scanned yet."
+        }
+        return "Updated \(updatedAt.formatted(date: .omitted, time: .shortened))"
+    }
+}
+
+struct QuietTypeStorageEntry: Identifiable, Equatable {
+    var id: String
+    var title: String
+    var detail: String
+    var bytes: Int64
+    var exists: Bool
+
+    var displaySize: String {
+        guard exists else {
+            return "0 KB"
+        }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }
 
@@ -4160,7 +4437,7 @@ private actor EncryptedVoiceNoteAudioStore {
     }
 
     func saveWAVData(_ data: Data, date: Date = Date()) throws -> URL {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try OwnerOnlyFileSecurity.prepareDirectory(directory)
         let sealed = try AES.GCM.seal(data, using: Self.audioKey())
         guard let combined = sealed.combined else {
             throw MemoryStoreError.encryptionFailed
@@ -4172,6 +4449,7 @@ private actor EncryptedVoiceNoteAudioStore {
         let filename = "voice-note-\(formatter.string(from: date))-\(UUID().uuidString.prefix(8)).qtvoice"
         let url = directory.appendingPathComponent(filename)
         try (Self.encryptedFilePrefix + combined).write(to: url, options: [.atomic])
+        try OwnerOnlyFileSecurity.protectFile(url)
         return url
     }
 
@@ -4252,9 +4530,9 @@ private final class TypingReminderMonitor {
     private var wordCount = 0
     private var burstStartedAt: Date?
     private var lastKeyAt: Date?
-    private var notificationAuthorizationRequested = false
 
     var shouldRemind: (() -> Bool)?
+    var onReminder: (() -> Void)?
     var shortcutLabel = "Fn"
 
     private let wordsBeforeReminder = 5
@@ -4394,30 +4672,7 @@ private final class TypingReminderMonitor {
     }
 
     private func showReminder() {
-        let center = UNUserNotificationCenter.current()
-        let content = UNMutableNotificationContent()
-        content.title = "QuietType is ready"
-        content.body = "Press \(shortcutLabel) to dictate this faster with local voice input."
-        content.sound = nil
-
-        let request = UNNotificationRequest(
-            identifier: "quiettype.typing-reminder.\(UUID().uuidString)",
-            content: content,
-            trigger: nil
-        )
-
-        if notificationAuthorizationRequested {
-            center.add(request)
-            return
-        }
-
-        notificationAuthorizationRequested = true
-        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            guard granted else {
-                return
-            }
-            center.add(request)
-        }
+        onReminder?()
     }
 }
 
@@ -7151,6 +7406,8 @@ final class MenuBarModel: ObservableObject {
     @Published var updateInstallRequiresRestart = false
     @Published var isInstallingSage = false
     @Published var sageInstallStatus = ""
+    @Published var storageSnapshot = QuietTypeStorageSnapshot.empty
+    @Published var storageCleanupStatus = ""
 
     private let permissionService = MacOSPermissionService()
     private let memoryStore = SQLiteMemoryStore.persistentDefault()
@@ -7627,13 +7884,37 @@ final class MenuBarModel: ObservableObject {
     }
 
     private var reviewAudioDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/QuietType/ReviewAudio", isDirectory: true)
+        quietTypeApplicationSupportDirectory
+            .appendingPathComponent("ReviewAudio", isDirectory: true)
     }
 
     private var voiceNoteAudioDirectory: URL {
+        quietTypeApplicationSupportDirectory
+            .appendingPathComponent("VoiceNotes", isDirectory: true)
+    }
+
+    private var quietTypeApplicationSupportDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/QuietType/VoiceNotes", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/QuietType", isDirectory: true)
+    }
+
+    private var updateDownloadsDirectory: URL {
+        quietTypeApplicationSupportDirectory
+            .appendingPathComponent("Updates", isDirectory: true)
+    }
+
+    private var updateBackupsDirectory: URL {
+        quietTypeApplicationSupportDirectory
+            .appendingPathComponent("Backups", isDirectory: true)
+    }
+
+    private var sageHomeDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".sage", isDirectory: true)
+    }
+
+    private var sageLogURL: URL {
+        sageHomeDirectory.appendingPathComponent("sage.log")
     }
 
     var voiceNotes: [VoiceNoteItem] {
@@ -8305,6 +8586,202 @@ final class MenuBarModel: ObservableObject {
             registerTypingReminderMonitor()
             startNativeSpeechWarmup()
             startBackgroundUpdateChecks()
+            refreshStorageSnapshot()
+        }
+    }
+
+    func refreshStorageSnapshot() {
+        let reviewAudioDirectory = reviewAudioDirectory
+        let voiceNoteAudioDirectory = voiceNoteAudioDirectory
+        let trainingDirectory = trainingDirectory()
+        let updateDownloadsDirectory = updateDownloadsDirectory
+        let updateBackupsDirectory = updateBackupsDirectory
+        let sageHomeDirectory = sageHomeDirectory
+        let sageLogURL = sageLogURL
+        let maxReviewAudioFiles = Self.maxReviewAudioFiles
+
+        Task { [weak self] in
+            let snapshot = await Task.detached(priority: .utility) {
+                let entries = [
+                    Self.storageEntry(
+                        id: "review-audio",
+                        title: "Review audio cache",
+                        detail: "Plain WAV review clips, capped at \(maxReviewAudioFiles) recent dictations.",
+                        urls: [reviewAudioDirectory]
+                    ),
+                    Self.storageEntry(
+                        id: "voice-notes",
+                        title: "Encrypted voice notes",
+                        detail: "Encrypted .qtvoice files for saved local voice notes.",
+                        urls: [voiceNoteAudioDirectory]
+                    ),
+                    Self.storageEntry(
+                        id: "training",
+                        title: "Training samples",
+                        detail: "Local WAV samples used for calibration and spelling corrections.",
+                        urls: [trainingDirectory]
+                    ),
+                    Self.storageEntry(
+                        id: "updates",
+                        title: "Update downloads",
+                        detail: "Downloaded DMGs and app backups from the signed updater.",
+                        urls: [updateDownloadsDirectory, updateBackupsDirectory]
+                    ),
+                    Self.storageEntry(
+                        id: "sage-home",
+                        title: "SAGE home",
+                        detail: "Local governed memory, snapshots, indexes, and logs under ~/.sage.",
+                        urls: [sageHomeDirectory]
+                    ),
+                    Self.storageEntry(
+                        id: "sage-log",
+                        title: "Current SAGE log",
+                        detail: "The active ~/.sage/sage.log file. This row is included so log growth is visible.",
+                        urls: [sageLogURL]
+                    )
+                ]
+                return QuietTypeStorageSnapshot(entries: entries, updatedAt: Date())
+            }.value
+            self?.storageSnapshot = snapshot
+        }
+    }
+
+    func cleanupReviewAudioCache() {
+        do {
+            try removeFiles(in: reviewAudioDirectory) { $0.pathExtension.lowercased() == "wav" }
+            storageCleanupStatus = "Review audio cache cleared."
+        } catch {
+            storageCleanupStatus = "Could not clear review audio: \(error.localizedDescription)"
+        }
+        refreshStorageSnapshot()
+    }
+
+    func cleanupTrainingSamples() {
+        do {
+            try removeDirectoryContents(trainingDirectory())
+            trainingPairCount = 0
+            lastTrainingAudioURL = nil
+            UserDefaults.standard.set(trainingPairCount, forKey: Self.trainingPairCountKey)
+            storageCleanupStatus = "Training samples cleared."
+        } catch {
+            storageCleanupStatus = "Could not clear training samples: \(error.localizedDescription)"
+        }
+        refreshStorageSnapshot()
+    }
+
+    func cleanupUpdateCache() {
+        guard !isCheckingForUpdates else {
+            storageCleanupStatus = "Wait for the current update operation to finish."
+            return
+        }
+        do {
+            try removeDirectoryContents(updateDownloadsDirectory)
+            try removeDirectoryContents(updateBackupsDirectory)
+            storageCleanupStatus = "Update downloads and app backups cleared."
+        } catch {
+            storageCleanupStatus = "Could not clear update downloads: \(error.localizedDescription)"
+        }
+        refreshStorageSnapshot()
+    }
+
+    func trimSageLog() {
+        do {
+            try OwnerOnlyFileSecurity.prepareDirectory(sageHomeDirectory)
+            if FileManager.default.fileExists(atPath: sageLogURL.path) {
+                try Data().write(to: sageLogURL, options: [.atomic])
+                try OwnerOnlyFileSecurity.protectFile(sageLogURL)
+                storageCleanupStatus = "SAGE log trimmed. SAGE may continue writing a new log."
+            } else {
+                storageCleanupStatus = "No SAGE log found."
+            }
+        } catch {
+            storageCleanupStatus = "Could not trim SAGE log: \(error.localizedDescription)"
+        }
+        refreshStorageSnapshot()
+    }
+
+    func openQuietTypeStorageFolder() {
+        try? OwnerOnlyFileSecurity.prepareDirectory(quietTypeApplicationSupportDirectory)
+        NSWorkspace.shared.open(quietTypeApplicationSupportDirectory)
+    }
+
+    func openSageStorageFolder() {
+        NSWorkspace.shared.open(sageHomeDirectory)
+    }
+
+    nonisolated private static func storageEntry(
+        id: String,
+        title: String,
+        detail: String,
+        urls: [URL]
+    ) -> QuietTypeStorageEntry {
+        var total: Int64 = 0
+        var exists = false
+        for url in urls {
+            if FileManager.default.fileExists(atPath: url.path) {
+                exists = true
+                total += sizeOnDisk(url)
+            }
+        }
+        return QuietTypeStorageEntry(id: id, title: title, detail: detail, bytes: total, exists: exists)
+    }
+
+    nonisolated private static func sizeOnDisk(_ url: URL) -> Int64 {
+        let fileManager = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            return 0
+        }
+        if !isDirectory.boolValue {
+            return fileSize(url)
+        }
+        guard let enumerator = fileManager.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return 0
+        }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            total += Self.fileSize(fileURL)
+        }
+        return total
+    }
+
+    nonisolated private static func fileSize(_ url: URL) -> Int64 {
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values?.isRegularFile != false else {
+            return 0
+        }
+        return Int64(values?.fileSize ?? 0)
+    }
+
+    private func removeFiles(in directory: URL, where shouldRemove: (URL) -> Bool) throws {
+        let fileManager = FileManager.default
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+        for file in files where shouldRemove(file) {
+            try fileManager.removeItem(at: file)
+        }
+    }
+
+    private func removeDirectoryContents(_ directory: URL) throws {
+        let fileManager = FileManager.default
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+        for file in files {
+            try fileManager.removeItem(at: file)
         }
     }
 
@@ -8563,8 +9040,20 @@ final class MenuBarModel: ObservableObject {
             }
             return self.shouldShowTypingReminder
         }
+        monitor.onReminder = { [weak self] in
+            self?.showTypingReminderOverlay()
+        }
         monitor.register()
         typingReminderMonitor = monitor
+    }
+
+    private func showTypingReminderOverlay() {
+        let prompt = hotKeyLabel == "Fn" ? "Press Fn and speak" : "Press \(hotKeyLabel) and speak"
+        overlayController.show(
+            state: .typingReminder,
+            detail: prompt
+        )
+        overlayController.hide(after: 3.5)
     }
 
     private var shouldShowTypingReminder: Bool {

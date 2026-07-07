@@ -69,7 +69,26 @@ dist/QuietType-1.0.0-beta.1-macOS-arm64.dmg
 dist/QuietType-1.0.0-beta.1-macOS-arm64.dmg.sha256
 ```
 
-## 2. Notarization
+## 2. Validate the signed artifact
+
+Before sharing a beta, validate the exact DMG artifact that testers will
+install:
+
+```bash
+bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-beta.1-macOS-arm64.dmg
+```
+
+The validator mounts the DMG read-only, checks that `CFBundleExecutable` exists
+and is executable, verifies the outer app, main executable, bundled helper
+binaries, and bundled `SAGE.app`, then runs Gatekeeper assessment on the mounted
+app and the DMG. For clean-machine Launch Services validation, run the same
+command with:
+
+```bash
+QUIETTYPE_VALIDATE_LAUNCH=1 bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-beta.1-macOS-arm64.dmg
+```
+
+## 3. Notarization
 
 For private testers, notarization is required for a normal double-click install experience. Without it, Gatekeeper rejects the DMG as `Unnotarized Developer ID`.
 
@@ -96,7 +115,7 @@ Or run notarization as part of the build:
 QUIETTYPE_NOTARIZE=1 bash scripts/beta-release.sh
 ```
 
-## 3. Create a private GitHub release
+## 4. Create a private GitHub release
 
 The repository is private, so a GitHub release is private to people with repo access.
 
@@ -114,7 +133,7 @@ gh release create "$VERSION" "$DMG" "$DMG.sha256" \
   --notes "Private beta for macOS Apple Silicon. Local dictation, local memory, no cloud processing."
 ```
 
-## 4. Enable GitHub Pages
+## 5. Enable GitHub Pages
 
 Use the repository settings:
 
