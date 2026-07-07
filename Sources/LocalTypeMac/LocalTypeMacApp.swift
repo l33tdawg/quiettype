@@ -2377,8 +2377,6 @@ struct TesterView: View {
                 }
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
                 .disabled(model.isCheckingForUpdates)
-
-                updateStatusMessage
             }
         }
     }
@@ -2631,16 +2629,7 @@ struct TesterView: View {
                     .buttonStyle(QuietButtonStyle(prominence: .primary))
                     .disabled(model.isCheckingForUpdates)
                 }
-
-                updateStatusMessage
             }
-        }
-    }
-
-    @ViewBuilder
-    private var updateStatusMessage: some View {
-        if !model.updateStatus.isEmpty || !model.updateProgressMessages.isEmpty {
-            UpdateInlineStatus(model: model)
         }
     }
 
@@ -5752,149 +5741,6 @@ private struct UpdateInstallOverlay: View {
             return .red
         }
         return index == model.updateProgressMessages.count - 1 ? .primary : .secondary
-    }
-}
-
-private struct UpdateInlineStatus: View {
-    @ObservedObject var model: MenuBarModel
-    @Environment(\.quietTypeTypeDelta) private var typeDelta
-
-    private var visibleMessages: [(offset: Int, element: String)] {
-        Array(model.updateProgressMessages.enumerated().suffix(4))
-    }
-
-    private var currentMessage: String {
-        model.updateStatus.isEmpty ? "Preparing update." : model.updateStatus
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 10) {
-                statusIcon
-                    .frame(width: 18, height: 18)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(statusTitle)
-                        .font(.system(size: 13 + typeDelta, weight: .semibold))
-                        .foregroundStyle(.primary)
-                    Text(currentMessage)
-                        .font(.system(size: 12 + typeDelta, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 12)
-            }
-
-            ProgressView(value: quietUpdateProgressValue(
-                status: model.updateStatus,
-                messages: model.updateProgressMessages,
-                isChecking: model.isCheckingForUpdates,
-                completed: model.updateInstallCompleted,
-                failed: model.updateInstallFailed,
-                requiresRestart: model.updateInstallRequiresRestart
-            ))
-            .progressViewStyle(.linear)
-            .padding(.leading, 28)
-
-            if !visibleMessages.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(visibleMessages, id: \.offset) { item in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: stepIcon(for: item.offset))
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(stepForeground(for: item.offset))
-                                .frame(width: 14)
-                            Text(item.element)
-                                .font(.system(size: 12 + typeDelta, weight: .medium))
-                                .foregroundStyle(item.offset == model.updateProgressMessages.indices.last ? .primary : .secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-                .padding(.leading, 28)
-            }
-
-            Text(quietUpdateInstruction(
-                isChecking: model.isCheckingForUpdates,
-                completed: model.updateInstallCompleted,
-                failed: model.updateInstallFailed,
-                requiresRestart: model.updateInstallRequiresRestart
-            ))
-            .font(.system(size: 12 + typeDelta, weight: .medium))
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.leading, 28)
-        }
-        .padding(.top, 2)
-        .animation(.easeInOut(duration: 0.18), value: model.updateProgressMessages)
-        .animation(.easeInOut(duration: 0.18), value: model.updateInstallCompleted)
-        .animation(.easeInOut(duration: 0.18), value: model.updateInstallFailed)
-    }
-
-    @ViewBuilder
-    private var statusIcon: some View {
-        if model.isCheckingForUpdates && !model.updateInstallCompleted && !model.updateInstallFailed {
-            ProgressView()
-                .controlSize(.small)
-        } else {
-            Image(systemName: statusIconName)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(statusColor)
-        }
-    }
-
-    private var statusTitle: String {
-        if model.updateInstallFailed {
-            return "Update failed"
-        }
-        if model.updateInstallRequiresRestart {
-            return "Update installed"
-        }
-        if model.updateInstallCompleted {
-            return "Update check complete"
-        }
-        if model.isCheckingForUpdates {
-            return "Updating QuietType"
-        }
-        return "Update status"
-    }
-
-    private var statusIconName: String {
-        if model.updateInstallFailed {
-            return "exclamationmark.triangle.fill"
-        }
-        if model.updateInstallCompleted {
-            return model.updateInstallRequiresRestart ? "checkmark.circle.fill" : "info.circle.fill"
-        }
-        return "info.circle"
-    }
-
-    private var statusColor: Color {
-        if model.updateInstallFailed {
-            return .red
-        }
-        if model.updateInstallCompleted {
-            return .green
-        }
-        return .secondary
-    }
-
-    private func stepIcon(for index: Int) -> String {
-        guard index == model.updateProgressMessages.indices.last,
-              model.isCheckingForUpdates,
-              !model.updateInstallCompleted,
-              !model.updateInstallFailed else {
-            return "checkmark.circle"
-        }
-        return "arrow.triangle.2.circlepath"
-    }
-
-    private func stepForeground(for index: Int) -> Color {
-        if model.updateInstallFailed, index == model.updateProgressMessages.indices.last {
-            return .red
-        }
-        return index == model.updateProgressMessages.indices.last ? .primary : .secondary
     }
 }
 
