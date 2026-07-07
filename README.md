@@ -13,8 +13,8 @@ with no cloud processing path for normal dictation.
 ![QuietType home dashboard](docs/screenshots/quiettype-home.png)
 
 <p align="center">
-  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-beta.4/QuietType-1.0.0-beta.4-macOS-arm64.dmg">
-    <img alt="Download QuietType 1.0.0 beta 4 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.0%20beta%204-black?style=for-the-badge&logo=apple">
+  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-beta.5/QuietType-1.0.0-beta.5-macOS-arm64.dmg">
+    <img alt="Download QuietType 1.0.0 beta 5 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.0%20beta%205-black?style=for-the-badge&logo=apple">
   </a>
 </p>
 
@@ -126,7 +126,7 @@ user's machine.
 - encrypted Voice Notes with playback, transcript editing and optional SAGE transcript copies
 - bundled SAGE GUI for first-run governed memory setup
 - signed update checks with visible download/install status and restart flow
-- signed and notarized beta DMG
+- signed beta DMG
 
 ## Privacy Model
 
@@ -152,7 +152,7 @@ local-only unless the user explicitly changes a future SAGE network policy.
 ## Status
 
 QuietType is in public beta for macOS Apple Silicon. The current public beta
-ships as a signed and notarized Apple Silicon DMG through GitHub Releases.
+ships as a signed Apple Silicon DMG through GitHub Releases.
 
 Landing page target:
 
