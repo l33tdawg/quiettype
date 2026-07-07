@@ -1,12 +1,12 @@
 # QuietType
 
-Native macOS dictation for coding agents and desktop workflows.
+Native macOS dictation for AI prompts, everyday writing and desktop workflows.
 
-QuietType lets you talk to Codex, Claude Code, ChatGPT, Cursor, terminals,
-editors, notes and email through local ML on your Mac. It uses native Apple
-technology for capture, permissions, insertion, Keychain storage and
-WhisperKit/Core ML transcription, with no cloud processing path for normal
-dictation.
+QuietType turns natural speech into clean text wherever your cursor is focused:
+ChatGPT, Claude, Codex, Cursor, email, WhatsApp, Slack, terminals, editors,
+notes, docs and internal tools. It uses native Apple technology for capture,
+permissions, insertion, Keychain storage and WhisperKit/Core ML transcription,
+with no cloud processing path for normal dictation.
 
 > Speak freely. Transcribe locally. Nothing leaves your Mac.
 
@@ -20,11 +20,12 @@ dictation.
 
 ## Why
 
-Coding agents work best when you give them rich context: what to inspect, what
-to change, how to test it, what to avoid and what tradeoffs to explain. Typing
-that much context is slow. Cloud dictation is fast, but it can expose exactly
-the material builders and security teams care about: source paths, bug details,
-client context, unreleased plans, private prompts, vocabulary and review notes.
+AI tools work best when you give them rich context: what you want, what to
+avoid, what examples matter and what output should look like. Everyday writing
+has the same problem: email, chat replies, notes, tickets and docs are faster to
+speak than type. Cloud dictation is fast, but it can expose exactly the material
+builders, operators and teams care about: client context, unreleased plans,
+private prompts, source paths, bug details, vocabulary and review notes.
 
 QuietType is built for the opposite default:
 
@@ -39,22 +40,25 @@ QuietType is built for the opposite default:
 
 ## Main Features
 
-### Fast voice input for agents and desktop workflows
+### Fast voice input wherever the cursor is focused
 
 Use QuietType anywhere you can type:
 
-- Codex
-- Claude Code
 - ChatGPT
+- Claude
+- Codex
 - Cursor
+- email
+- WhatsApp
+- Slack
+- notes and docs
 - VS Code
 - terminals
 - GitHub issues
-- Slack and email
-- notes and docs
+- internal tools
 
-The goal is not literal transcription. QuietType turns natural speech into
-usable written instructions:
+The goal is not raw transcription. QuietType turns natural speech into usable
+written text:
 
 ```text
 natural speech
@@ -79,7 +83,7 @@ QuietType uses [SAGE](https://github.com/l33tdawg/sage) as the mandatory
 BFT-governed local memory layer for preferred spellings, technical vocabulary,
 correction patterns and dictation review notes. SAGE gives QuietType an
 auditable memory substrate instead of a loose local notes file: memories are
-governed, inspectable and designed for local-first agent workflows.
+governed, inspectable and designed for local-first AI and desktop workflows.
 
 Learn more at the [SAGE public page](https://l33tdawg.github.io/sage/).
 
