@@ -15,7 +15,7 @@ on:
       build:
         description: "Beta build number"
         required: true
-        default: "5"
+        default: "6"
 
 permissions:
   contents: write

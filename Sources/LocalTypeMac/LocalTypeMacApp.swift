@@ -2243,11 +2243,9 @@ struct TesterView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
-                    Task {
-                        await model.checkForUpdatesAndInstall()
-                    }
+                    performUpdateAction()
                 } label: {
-                    Label(model.isCheckingForUpdates ? "Checking" : "Check for updates", systemImage: "arrow.down.circle")
+                    Label(updateActionButtonTitle, systemImage: updateActionButtonIcon)
                 }
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
                 .disabled(model.isCheckingForUpdates)
@@ -2379,15 +2377,9 @@ struct TesterView: View {
                     Spacer()
 
                     Button {
-                        Task {
-                            await model.checkForUpdatesAndInstall()
-                        }
+                        performUpdateAction()
                     } label: {
-                        if model.isCheckingForUpdates {
-                            Label("Checking", systemImage: "arrow.triangle.2.circlepath")
-                        } else {
-                            Label("Check for updates", systemImage: "arrow.down.circle")
-                        }
+                        Label(updateActionButtonTitle, systemImage: updateActionButtonIcon)
                     }
                     .buttonStyle(QuietButtonStyle(prominence: .primary))
                     .disabled(model.isCheckingForUpdates)
@@ -2400,18 +2392,51 @@ struct TesterView: View {
 
     @ViewBuilder
     private var updateStatusMessage: some View {
-        if !model.updateStatus.isEmpty {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: model.isCheckingForUpdates ? "arrow.triangle.2.circlepath" : "info.circle")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 18)
-                Text(model.updateStatus)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.top, 2)
+        if !model.updateStatus.isEmpty || !model.updateProgressMessages.isEmpty {
+            UpdateInlineStatus(model: model)
+        }
+    }
+
+    private var updateActionButtonTitle: String {
+        if model.updateInstallRequiresRestart {
+            return "Restart"
+        }
+        if model.updateInstallFailed {
+            return "Retry"
+        }
+        guard model.isCheckingForUpdates else {
+            return "Check for updates"
+        }
+        switch quietUpdateStage(status: model.updateStatus, messages: model.updateProgressMessages) {
+        case .checking:
+            return "Checking"
+        case .updating:
+            return "Updating"
+        case .installing:
+            return "Installing"
+        }
+    }
+
+    private var updateActionButtonIcon: String {
+        if model.updateInstallRequiresRestart {
+            return "arrow.clockwise"
+        }
+        if model.updateInstallFailed {
+            return "exclamationmark.arrow.triangle.2.circlepath"
+        }
+        if model.isCheckingForUpdates {
+            return "arrow.triangle.2.circlepath"
+        }
+        return "arrow.down.circle"
+    }
+
+    private func performUpdateAction() {
+        if model.updateInstallRequiresRestart {
+            model.restartInstalledApp()
+            return
+        }
+        Task {
+            await model.checkForUpdatesAndInstall()
         }
     }
 
@@ -5189,6 +5214,77 @@ private struct VoiceNoteTranscriptEditor: View {
     }
 }
 
+private enum QuietUpdateStage {
+    case checking
+    case updating
+    case installing
+}
+
+private func quietUpdateStage(status: String, messages: [String]) -> QuietUpdateStage {
+    let text = ([status] + messages).joined(separator: " ").lowercased()
+    if text.contains("backing up")
+        || text.contains("installing")
+        || text.contains("installed")
+        || text.contains("applications") {
+        return .installing
+    }
+    if text.contains("found")
+        || text.contains("download")
+        || text.contains("verif")
+        || text.contains("dmg") {
+        return .updating
+    }
+    return .checking
+}
+
+private func quietUpdateProgressValue(
+    status: String,
+    messages: [String],
+    isChecking: Bool,
+    completed: Bool,
+    failed: Bool,
+    requiresRestart: Bool
+) -> Double {
+    if failed {
+        return 1.0
+    }
+    if completed || requiresRestart {
+        return 1.0
+    }
+    guard isChecking else {
+        return messages.isEmpty && status.isEmpty ? 0.0 : 1.0
+    }
+    switch quietUpdateStage(status: status, messages: messages) {
+    case .checking:
+        return 0.18
+    case .updating:
+        return 0.56
+    case .installing:
+        return 0.84
+    }
+}
+
+private func quietUpdateInstruction(
+    isChecking: Bool,
+    completed: Bool,
+    failed: Bool,
+    requiresRestart: Bool
+) -> String {
+    if failed {
+        return "The update did not finish. Try again when your connection is ready."
+    }
+    if requiresRestart {
+        return "Restart QuietType to use the updated app in Applications."
+    }
+    if completed {
+        return "QuietType finished checking for updates."
+    }
+    if isChecking {
+        return "Keep QuietType open while the signed update is downloaded, verified, and installed."
+    }
+    return "QuietType will only download updates when you choose Update."
+}
+
 private struct UpdateInstallOverlay: View {
     @ObservedObject var model: MenuBarModel
     @Environment(\.quietTypeTypeDelta) private var typeDelta
@@ -5210,7 +5306,7 @@ private struct UpdateInstallOverlay: View {
                     .frame(width: 46, height: 46)
 
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(model.updateOverlayTitle)
+                        Text(displayTitle)
                             .font(.system(size: 22 + typeDelta, weight: .bold, design: .rounded))
                         Text(model.updateOverlayDetail)
                             .font(.system(size: 13 + typeDelta, weight: .medium))
@@ -5238,19 +5334,29 @@ private struct UpdateInstallOverlay: View {
                 .background(Color(nsColor: .controlBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                HStack {
-                    if model.isCheckingForUpdates && !model.updateInstallCompleted && !model.updateInstallFailed {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Keep QuietType open while the signed update is verified and installed.")
-                            .font(.system(size: 12 + typeDelta, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    } else if model.updateInstallRequiresRestart {
-                        Text("The current app will quit and reopen the updated copy from Applications.")
-                            .font(.system(size: 12 + typeDelta, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
+                VStack(alignment: .leading, spacing: 8) {
+                    ProgressView(value: quietUpdateProgressValue(
+                        status: model.updateStatus,
+                        messages: model.updateProgressMessages,
+                        isChecking: model.isCheckingForUpdates,
+                        completed: model.updateInstallCompleted,
+                        failed: model.updateInstallFailed,
+                        requiresRestart: model.updateInstallRequiresRestart
+                    ))
+                    .progressViewStyle(.linear)
 
+                    Text(quietUpdateInstruction(
+                        isChecking: model.isCheckingForUpdates,
+                        completed: model.updateInstallCompleted,
+                        failed: model.updateInstallFailed,
+                        requiresRestart: model.updateInstallRequiresRestart
+                    ))
+                    .font(.system(size: 12 + typeDelta, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack {
                     Spacer()
 
                     if model.updateInstallRequiresRestart {
@@ -5290,6 +5396,22 @@ private struct UpdateInstallOverlay: View {
         return "arrow.down.circle.fill"
     }
 
+    private var displayTitle: String {
+        guard model.isCheckingForUpdates,
+              !model.updateInstallCompleted,
+              !model.updateInstallFailed else {
+            return model.updateOverlayTitle
+        }
+        switch quietUpdateStage(status: model.updateStatus, messages: model.updateProgressMessages) {
+        case .checking:
+            return "Checking for update"
+        case .updating:
+            return "Updating QuietType"
+        case .installing:
+            return "Installing update"
+        }
+    }
+
     private var iconBackground: Color {
         if model.updateInstallFailed {
             return Color.red.opacity(0.12)
@@ -5322,6 +5444,149 @@ private struct UpdateInstallOverlay: View {
             return .red
         }
         return index == model.updateProgressMessages.count - 1 ? .primary : .secondary
+    }
+}
+
+private struct UpdateInlineStatus: View {
+    @ObservedObject var model: MenuBarModel
+    @Environment(\.quietTypeTypeDelta) private var typeDelta
+
+    private var visibleMessages: [(offset: Int, element: String)] {
+        Array(model.updateProgressMessages.enumerated().suffix(4))
+    }
+
+    private var currentMessage: String {
+        model.updateStatus.isEmpty ? "Preparing update." : model.updateStatus
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                statusIcon
+                    .frame(width: 18, height: 18)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(statusTitle)
+                        .font(.system(size: 13 + typeDelta, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Text(currentMessage)
+                        .font(.system(size: 12 + typeDelta, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+            }
+
+            ProgressView(value: quietUpdateProgressValue(
+                status: model.updateStatus,
+                messages: model.updateProgressMessages,
+                isChecking: model.isCheckingForUpdates,
+                completed: model.updateInstallCompleted,
+                failed: model.updateInstallFailed,
+                requiresRestart: model.updateInstallRequiresRestart
+            ))
+            .progressViewStyle(.linear)
+            .padding(.leading, 28)
+
+            if !visibleMessages.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    ForEach(visibleMessages, id: \.offset) { item in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: stepIcon(for: item.offset))
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(stepForeground(for: item.offset))
+                                .frame(width: 14)
+                            Text(item.element)
+                                .font(.system(size: 12 + typeDelta, weight: .medium))
+                                .foregroundStyle(item.offset == model.updateProgressMessages.indices.last ? .primary : .secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(.leading, 28)
+            }
+
+            Text(quietUpdateInstruction(
+                isChecking: model.isCheckingForUpdates,
+                completed: model.updateInstallCompleted,
+                failed: model.updateInstallFailed,
+                requiresRestart: model.updateInstallRequiresRestart
+            ))
+            .font(.system(size: 12 + typeDelta, weight: .medium))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.leading, 28)
+        }
+        .padding(.top, 2)
+        .animation(.easeInOut(duration: 0.18), value: model.updateProgressMessages)
+        .animation(.easeInOut(duration: 0.18), value: model.updateInstallCompleted)
+        .animation(.easeInOut(duration: 0.18), value: model.updateInstallFailed)
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        if model.isCheckingForUpdates && !model.updateInstallCompleted && !model.updateInstallFailed {
+            ProgressView()
+                .controlSize(.small)
+        } else {
+            Image(systemName: statusIconName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(statusColor)
+        }
+    }
+
+    private var statusTitle: String {
+        if model.updateInstallFailed {
+            return "Update failed"
+        }
+        if model.updateInstallRequiresRestart {
+            return "Update installed"
+        }
+        if model.updateInstallCompleted {
+            return "Update check complete"
+        }
+        if model.isCheckingForUpdates {
+            return "Updating QuietType"
+        }
+        return "Update status"
+    }
+
+    private var statusIconName: String {
+        if model.updateInstallFailed {
+            return "exclamationmark.triangle.fill"
+        }
+        if model.updateInstallCompleted {
+            return model.updateInstallRequiresRestart ? "checkmark.circle.fill" : "info.circle.fill"
+        }
+        return "info.circle"
+    }
+
+    private var statusColor: Color {
+        if model.updateInstallFailed {
+            return .red
+        }
+        if model.updateInstallCompleted {
+            return .green
+        }
+        return .secondary
+    }
+
+    private func stepIcon(for index: Int) -> String {
+        guard index == model.updateProgressMessages.indices.last,
+              model.isCheckingForUpdates,
+              !model.updateInstallCompleted,
+              !model.updateInstallFailed else {
+            return "checkmark.circle"
+        }
+        return "arrow.triangle.2.circlepath"
+    }
+
+    private func stepForeground(for index: Int) -> Color {
+        if model.updateInstallFailed, index == model.updateProgressMessages.indices.last {
+            return .red
+        }
+        return index == model.updateProgressMessages.indices.last ? .primary : .secondary
     }
 }
 
