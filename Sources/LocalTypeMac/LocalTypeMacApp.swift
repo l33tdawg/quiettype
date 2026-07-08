@@ -136,6 +136,7 @@ private final class DictationOverlayPanel: NSPanel {
 final class DictationOverlayController {
     private var panel: DictationOverlayPanel?
     private var presentationID = 0
+    private let chromeInset: CGFloat = 18
     private static let originXKey = "quiettype.overlayOriginX"
     private static let originYKey = "quiettype.overlayOriginY"
 
@@ -163,14 +164,20 @@ final class DictationOverlayController {
         } else {
             contentSize = NSSize(width: compactWidth, height: 82)
         }
-        panel.setContentSize(contentSize)
-        panel.contentView = NSHostingView(rootView: DictationOverlayView(
+        panel.setContentSize(NSSize(
+            width: contentSize.width + chromeInset * 2,
+            height: contentSize.height + chromeInset * 2
+        ))
+        let hostingView = NSHostingView(rootView: DictationOverlayView(
             state: state,
             level: level,
             detail: detail,
             transcript: transcript,
             onCancel: onCancel
         ))
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = hostingView
         position(panel)
         panel.orderFrontRegardless()
         self.panel = panel
@@ -212,7 +219,7 @@ final class DictationOverlayController {
 
     private func makePanel() -> DictationOverlayPanel {
         let panel = DictationOverlayPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 280, height: 82),
+            contentRect: NSRect(x: 0, y: 0, width: 316, height: 118),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -225,9 +232,10 @@ final class DictationOverlayController {
         panel.becomesKeyOnlyIfNeeded = true
         panel.ignoresMouseEvents = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        let chromeInset = chromeInset
         panel.didMove = { origin in
-            UserDefaults.standard.set(origin.x, forKey: Self.originXKey)
-            UserDefaults.standard.set(origin.y, forKey: Self.originYKey)
+            UserDefaults.standard.set(origin.x + chromeInset, forKey: Self.originXKey)
+            UserDefaults.standard.set(origin.y + chromeInset, forKey: Self.originYKey)
         }
         return panel
     }
@@ -238,16 +246,16 @@ final class DictationOverlayController {
         let storedX = UserDefaults.standard.object(forKey: Self.originXKey) as? Double
         let storedY = UserDefaults.standard.object(forKey: Self.originYKey) as? Double
         if let storedX, let storedY {
-            let storedOrigin = NSPoint(x: storedX, y: storedY)
-            let storedFrame = NSRect(origin: storedOrigin, size: size)
+            let panelOrigin = NSPoint(x: storedX - chromeInset, y: storedY - chromeInset)
+            let storedFrame = NSRect(origin: panelOrigin, size: size)
             if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(storedFrame) }) {
-                panel.setFrameOrigin(storedOrigin)
+                panel.setFrameOrigin(panelOrigin)
                 return
             }
         }
         let origin = NSPoint(
             x: screen.midX - size.width / 2,
-            y: screen.minY + 110
+            y: screen.minY + 110 - chromeInset
         )
         panel.setFrameOrigin(origin)
     }
@@ -302,17 +310,21 @@ private struct DictationOverlayView: View {
     var transcript: String?
     var onCancel: (() -> Void)?
     @State private var copiedTranscript = false
+    private let chromeInset: CGFloat = 18
 
     private var cleanedTranscript: String {
         (transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var body: some View {
-        if state.title == OverlayState.typingReminder.title {
-            typingReminderBody
-        } else {
-            standardBody
+        Group {
+            if state.title == OverlayState.typingReminder.title {
+                typingReminderBody
+            } else {
+                standardBody
+            }
         }
+        .padding(chromeInset)
     }
 
     private var typingReminderBody: some View {
@@ -388,7 +400,7 @@ private struct DictationOverlayView: View {
                             .overlay(Circle().stroke(Color.white.opacity(0.22), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
-                    .help("Cancel dictation")
+                    .quickTooltip("Cancel this dictation without inserting text.")
                 }
             }
 
@@ -478,6 +490,7 @@ struct TesterView: View {
     @AppStorage("quiettype.firstRunAssistantComplete") private var firstRunAssistantComplete = false
     @AppStorage("quiettype.appearanceChoice") private var appearanceChoiceRaw = QuietTypeAppearanceChoice.system.rawValue
     @AppStorage("quiettype.textSizeChoice") private var textSizeChoiceRaw = QuietTypeTextSizeChoice.standard.rawValue
+    @AppStorage("quiettype.showTooltips") private var showTooltips = true
     @State private var selectedSection: QuietTypeSection = .home
     @State private var selectedSettingsTab: QuietTypeSettingsTab = .general
     @State private var selectedSetupTab: QuietTypeSetupTab = .overview
@@ -1234,6 +1247,7 @@ struct TesterView: View {
                 selectedSetupTab = model.setupComplete ? .training : suggestedSetupTab
             }
             .buttonStyle(QuietButtonStyle(prominence: .primary))
+            .quickTooltip(model.setupComplete ? "Open voice training so you can add another local sample set." : "Jump to the next setup area QuietType needs before dictation is ready.")
         }
         .padding(16)
         .background(Color(nsColor: .controlBackgroundColor))
@@ -1444,6 +1458,7 @@ struct TesterView: View {
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .quickTooltip(model.saveVoiceNotesToSage ? "New voice-note transcripts are copied to SAGE governed memory. Audio remains encrypted locally." : "Voice notes stay in QuietType's encrypted local store unless you manually send a transcript to SAGE.")
                     }
                     Spacer()
                     if model.isVoiceNoteTranscribing {
@@ -1465,6 +1480,7 @@ struct TesterView: View {
                 .background(Color(nsColor: .controlBackgroundColor))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.07), lineWidth: 1))
+                .quickTooltip("Search saved note titles, raw transcripts, and polished note text.")
 
                 ScrollView {
                     LazyVStack(spacing: 7) {
@@ -1505,6 +1521,7 @@ struct TesterView: View {
                     }
                     .buttonStyle(QuietButtonStyle(prominence: .primary))
                     .disabled(model.isVoiceNoteTranscribing || model.isRecording || model.isTrainingRecording || model.isTeachingRecording)
+                    .quickTooltip(model.isVoiceNoteRecording ? "Stop recording and transcribe this voice note locally." : "Record a long-form note. Audio is encrypted on this Mac after capture.")
                 }
 
                 if let note = model.selectedVoiceNote {
@@ -1553,10 +1570,10 @@ struct TesterView: View {
 
     private var dictionaryStats: some View {
         HStack(spacing: 12) {
-            MemoryStatPill(title: "Sessions today", value: "\(model.sessionsToday)")
-            MemoryStatPill(title: "Last duration", value: model.lastDictationDurationLabel)
-            MemoryStatPill(title: "Insert latency", value: model.lastLatencyMS.map { "\($0) ms" } ?? "Warm")
-            MemoryStatPill(title: "Transcriptions", value: "\(model.transcriptNoteCount)")
+            MemoryStatPill(title: "Sessions today", value: "\(model.sessionsToday)", tooltip: "Completed dictation sessions recorded today.")
+            MemoryStatPill(title: "Last duration", value: model.lastDictationDurationLabel, tooltip: "Duration of the most recent dictation session.")
+            MemoryStatPill(title: "Insert latency", value: model.lastLatencyMS.map { "\($0) ms" } ?? "Warm", tooltip: "Time from finishing dictation to having polished text ready for insertion.")
+            MemoryStatPill(title: "Transcriptions", value: "\(model.transcriptNoteCount)", tooltip: "Transcript review notes available for correction and inspection.")
         }
     }
 
@@ -1586,6 +1603,7 @@ struct TesterView: View {
                     Label("New set", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .buttonStyle(QuietButtonStyle())
+                .quickTooltip("Rotate to a different voice-training script with different names, dates, numbers, and terms.")
             }
 
             HStack(alignment: .top, spacing: 16) {
@@ -1653,12 +1671,14 @@ struct TesterView: View {
                 }
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
                 .disabled(model.isTrainingAnalyzing)
+                .quickTooltip(model.isTrainingRecording ? "Stop recording this training sample and analyze it locally." : "Record the visible script so QuietType can learn your cadence and preserve terms.")
                 Button {
                     showingRecognizedTerms = true
                 } label: {
                     Label("Terms", systemImage: "rectangle.stack.badge.person.crop")
                 }
                 .buttonStyle(QuietButtonStyle())
+                .quickTooltip("Open the recognized-terms drawer to inspect which training terms QuietType detected.")
             }
         }
         .padding(14)
@@ -1693,12 +1713,14 @@ struct TesterView: View {
                     Label("Add correction", systemImage: "square.and.pencil")
                 }
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
+                .quickTooltip("Teach QuietType an exact spelling or correction so future dictation can preserve it.")
                 Button("Refresh") {
                     Task {
                         await model.refreshDictionaryMemories()
                     }
                 }
                 .buttonStyle(QuietButtonStyle())
+                .quickTooltip("Reload review memories from local SAGE and QuietType's local transcript index.")
             }
 
             HStack(spacing: 10) {
@@ -1720,6 +1742,7 @@ struct TesterView: View {
             .background(Color(nsColor: .windowBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+            .quickTooltip("Search transcripts, correction memories, and SAGE-backed review notes.")
 
             if reviewMemories.isEmpty {
                 EmptyStatePanel(
@@ -1987,21 +2010,23 @@ struct TesterView: View {
                         .padding(.vertical, 5)
                         .background(Color(nsColor: .controlBackgroundColor))
                         .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .quickTooltip("Use this shortcut anywhere on your Mac to start or stop QuietType dictation.")
                     Text("start / stop")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
                 StatusPill(icon: model.speechEngineReady ? "waveform" : "waveform.slash", text: model.speechEngineStatus, tint: .secondary)
+                    .quickTooltip("Shows whether the local speech engine is warmed and ready for dictation.")
             }
         }
     }
 
     private var metricsGrid: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 4), spacing: 14) {
-            MetricTile(icon: "text.bubble", value: "\(model.sessionsToday)", label: "Sessions today")
-            MetricTile(icon: "speedometer", value: model.currentWordsPerMinuteLabel, label: "Speaking pace")
-            MetricTile(icon: "brain.head.profile", value: "\(model.sageLessonCount)", label: "Reviews")
-            MetricTile(icon: "checklist.checked", value: "\(model.transcriptNoteCount)", label: "Transcriptions")
+            MetricTile(icon: "text.bubble", value: "\(model.sessionsToday)", label: "Sessions today", tooltip: "Completed dictation sessions recorded today on this Mac.")
+            MetricTile(icon: "speedometer", value: model.currentWordsPerMinuteLabel, label: "Speaking pace", tooltip: "Words per minute from the current or most recent dictation session.")
+            MetricTile(icon: "brain.head.profile", value: "\(model.sageLessonCount)", label: "Reviews", tooltip: "Correction and review memories available through local SAGE.")
+            MetricTile(icon: "checklist.checked", value: "\(model.transcriptNoteCount)", label: "Transcriptions", tooltip: "Transcript review notes QuietType can use for correction and inspection.")
         }
         .anchorPreference(key: GuideSpotlightPreferenceKey.self, value: .bounds) { anchor in
             [.privacy: anchor]
@@ -2193,8 +2218,14 @@ struct TesterView: View {
                 ) { preference in
                     preference.label
                 }
+                .quickTooltip("Choose the spelling convention QuietType should prefer when it cleans up ambiguous words. System follows your macOS language settings.")
 
                 ShortcutPicker(model: model)
+
+                Toggle("Show tooltips", isOn: $showTooltips)
+                    .toggleStyle(.checkbox)
+                    .tint(.primary)
+                    .quickTooltip("Show short hover explanations on controls, status cards, and storage actions. Turn this off when the interface feels familiar.")
             }
         }
     }
@@ -2266,6 +2297,7 @@ struct TesterView: View {
                 }
             }
         }
+        .quickTooltip("SAGE is required before QuietType starts dictation. It keeps vocabulary, corrections, transcript notes, and training hints in governed local memory.")
     }
 
     private var sageRequiredCopy: String {
@@ -2341,6 +2373,7 @@ struct TesterView: View {
                 }
             }
         }
+        .quickTooltip("SAGE is QuietType's governed local memory layer. It stores approved spellings, correction patterns, review notes, and training hints so dictation can improve without cloud memory.")
     }
 
     private var setupStatusPanel: some View {
@@ -2372,6 +2405,7 @@ struct TesterView: View {
                 .buttonStyle(QuietButtonStyle(prominence: model.setupComplete ? .secondary : .primary))
             }
         }
+        .quickTooltip("Readiness combines macOS Microphone permission, Accessibility insertion permission, and SAGE registration. Use setup again when one of these checks changes.")
     }
 
     private var quickUpdatePanel: some View {
@@ -2392,6 +2426,7 @@ struct TesterView: View {
                 .disabled(model.isCheckingForUpdates)
             }
         }
+        .quickTooltip("QuietType checks GitHub metadata for signed releases. It only downloads and installs an update after you click the update button.")
     }
 
     private var privacyNetworkPanel: some View {
@@ -2402,21 +2437,25 @@ struct TesterView: View {
                     title: "Dictation",
                     detail: "Microphone audio is transcribed locally. The bundled WhisperKit server listens on 127.0.0.1:50060 and does not send dictation audio or transcripts to cloud services."
                 )
+                .quickTooltip("The normal dictation path is local audio capture, local transcription, local cleanup, and local insertion into the active app.")
                 PrivacyFlowRow(
                     icon: "brain.head.profile",
                     title: "SAGE memory",
                     detail: "Corrections, vocabulary, training hints, and optional voice-note transcript copies are committed to local SAGE through localhost. Voice-note audio stays encrypted on this Mac."
                 )
+                .quickTooltip("QuietType writes eligible memory events to your local SAGE node through localhost. Audio stays in QuietType's encrypted local store.")
                 PrivacyFlowRow(
                     icon: "sparkles",
                     title: "Optional local editor",
                     detail: "Rule cleanup runs in QuietType. If you select Ollama mode, cleanup calls your local Ollama service on 127.0.0.1:11434."
                 )
+                .quickTooltip("The default cleanup path is built in. Ollama is only used when you choose a local Ollama editor mode.")
                 PrivacyFlowRow(
                     icon: "arrow.down.circle",
                     title: "Updates",
                     detail: "QuietType checks GitHub releases for signed app and SAGE updates in the background. DMGs download only when you choose Update or Install SAGE."
                 )
+                .quickTooltip("Update checks fetch release metadata. Installers are downloaded only after an explicit update or SAGE install action.")
             }
         }
     }
@@ -2435,6 +2474,7 @@ struct TesterView: View {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
                     .buttonStyle(QuietButtonStyle())
+                    .quickTooltip("Rescan QuietType's local storage locations and refresh the size estimates shown below.")
                 }
 
                 ForEach(model.storageSnapshot.entries) { entry in
@@ -2460,6 +2500,7 @@ struct TesterView: View {
                             Label("Review audio", systemImage: "waveform.slash")
                         }
                         .buttonStyle(QuietButtonStyle())
+                        .quickTooltip("Remove temporary review audio cache files. This does not delete encrypted voice notes or SAGE memory.")
 
                         Button {
                             model.cleanupTrainingSamples()
@@ -2467,6 +2508,7 @@ struct TesterView: View {
                             Label("Training samples", systemImage: "trash")
                         }
                         .buttonStyle(QuietButtonStyle())
+                        .quickTooltip("Remove local voice-training sample files. Saved corrections and SAGE memories are left intact.")
                     }
 
                     HStack(spacing: 8) {
@@ -2477,6 +2519,7 @@ struct TesterView: View {
                         }
                         .buttonStyle(QuietButtonStyle())
                         .disabled(model.isCheckingForUpdates)
+                        .quickTooltip("Remove cached update downloads. QuietType can download a signed update again when you choose Update.")
 
                         Button {
                             model.trimSageLog()
@@ -2484,6 +2527,7 @@ struct TesterView: View {
                             Label("Trim SAGE log", systemImage: "scissors")
                         }
                         .buttonStyle(QuietButtonStyle())
+                        .quickTooltip("Ask QuietType to trim its local SAGE integration log. Governed SAGE memory records are not deleted.")
                     }
                 }
 
@@ -2494,6 +2538,7 @@ struct TesterView: View {
                         Label("QuietType folder", systemImage: "folder")
                     }
                     .buttonStyle(QuietButtonStyle())
+                    .quickTooltip("Open QuietType's Application Support folder for local logs, encrypted stores, and caches.")
 
                     Button {
                         model.openSageStorageFolder()
@@ -2501,6 +2546,7 @@ struct TesterView: View {
                         Label("SAGE folder", systemImage: "folder.badge.gearshape")
                     }
                     .buttonStyle(QuietButtonStyle())
+                    .quickTooltip("Open the local SAGE storage folder when available. This is for inspection and troubleshooting.")
                 }
 
                 if !model.storageCleanupStatus.isEmpty {
@@ -2902,7 +2948,7 @@ struct TesterView: View {
             }
             .buttonStyle(.plain)
             .disabled(model.isRunning && !model.isRecording)
-            .help(model.isRecording ? "Stop and insert" : "Start dictation")
+            .quickTooltip(model.isRecording ? "Stop listening, polish the transcript, and insert the result according to your settings." : "Start local dictation. QuietType listens only while this session is active.")
             .anchorPreference(key: GuideSpotlightPreferenceKey.self, value: .bounds) { anchor in
                 [.dictate: anchor]
             }
@@ -2935,14 +2981,23 @@ struct TesterView: View {
 
             VStack(spacing: 10) {
                 ActivityRow(icon: "timer", title: "Current dictation", value: model.lastDictationDurationLabel)
+                    .quickTooltip("Duration of the current or most recent dictation session.")
                 ActivityRow(icon: "textformat.abc", title: "Current words", value: "\(model.currentSessionWordCount)")
+                    .quickTooltip("Words captured in the active session before cleanup and insertion.")
                 ActivityRow(icon: "speedometer", title: "Speaking pace", value: model.currentWordsPerMinuteLabel)
+                    .quickTooltip("Estimated words per minute for the current or most recent session.")
                 ActivityRow(icon: "text.bubble", title: "Sessions today", value: "\(model.sessionsToday)")
+                    .quickTooltip("How many dictation sessions QuietType has completed today.")
                 ActivityRow(icon: "brain.head.profile", title: "Reviews", value: "\(model.sageLessonCount)")
+                    .quickTooltip("SAGE-backed correction and review memories available to QuietType.")
                 ActivityRow(icon: "checklist.checked", title: "Transcriptions", value: "\(model.transcriptNoteCount)")
+                    .quickTooltip("Transcript notes available for review and correction.")
                 ActivityRow(icon: "wand.and.stars", title: "Correction signal", value: model.correctionSignalLabel)
+                    .quickTooltip("A compact status for whether QuietType has useful correction memory to apply.")
                 ActivityRow(icon: "textformat.abc", title: "Words translated", value: model.wordsProcessedLabel)
+                    .quickTooltip("Total words processed through QuietType's local pipeline.")
                 ActivityMeterRow(icon: "speedometer", title: "Local CPU", value: "\(model.cpuUsagePercent)%", progress: Double(model.cpuUsagePercent) / 100.0)
+                    .quickTooltip("Approximate local CPU usage sampled by QuietType while the app is open.")
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -2975,6 +3030,7 @@ struct TesterView: View {
                 }
                 .buttonStyle(QuietButtonStyle())
                 .disabled(model.output.isEmpty)
+                .quickTooltip("Copy the latest polished output without inserting it into another app.")
 
                 if !model.output.isEmpty {
                     Button {
@@ -2985,6 +3041,7 @@ struct TesterView: View {
                     }
                     .buttonStyle(QuietButtonStyle(prominence: .secondary))
                     .opacity(0.78)
+                    .quickTooltip("Clear the visible polished output from this panel.")
                 }
             }
 
@@ -4093,6 +4150,7 @@ private struct MemoryStatPill: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
     var title: String
     var value: String
+    var tooltip: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -4107,6 +4165,7 @@ private struct MemoryStatPill: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .quickTooltip(tooltip)
     }
 }
 
@@ -4381,6 +4440,7 @@ private struct ShortcutPicker: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .buttonStyle(QuietButtonStyle(prominence: model.hotKeyChoice == choice ? .primary : .secondary))
+                    .quickTooltip(choice == .function ? "Use the Fn key as the dictation shortcut. If macOS also uses Fn, emoji or Apple dictation can appear." : "Use the fallback shortcut when Fn conflicts with macOS keyboard settings.")
                 }
             }
 
@@ -4393,6 +4453,7 @@ private struct ShortcutPicker: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .foregroundStyle(.secondary)
+                .quickTooltip("macOS is already using Fn. The fallback shortcut avoids that collision without changing your system keyboard setting.")
             }
         }
     }
@@ -4408,6 +4469,7 @@ struct DictionaryMemoryItem: Identifiable, Equatable {
     var rawTranscript: String?
     var polishedText: String?
     var audioPath: String?
+    var createdAt: Date?
     var isEditableTranscript: Bool
     var hasLocalCopy: Bool
     var hasSageMemory: Bool
@@ -4758,45 +4820,71 @@ private extension Array {
 
 private struct QuickTooltipModifier: ViewModifier {
     let text: String
+    @AppStorage("quiettype.showTooltips") private var showTooltips = true
     @State private var isPresented = false
     @State private var hoverTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
-        content
-            .onHover { hovering in
-                hoverTask?.cancel()
-                if hovering {
-                    hoverTask = Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 150_000_000)
-                        guard !Task.isCancelled else {
-                            return
-                        }
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            isPresented = true
+        Group {
+            if showTooltips {
+                content
+                    .onHover { hovering in
+                        hoverTask?.cancel()
+                        if hovering {
+                            hoverTask = Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 150_000_000)
+                                guard !Task.isCancelled else {
+                                    return
+                                }
+                                withAnimation(.easeOut(duration: 0.12)) {
+                                    isPresented = true
+                                }
+                            }
+                        } else {
+                            withAnimation(.easeOut(duration: 0.08)) {
+                                isPresented = false
+                            }
                         }
                     }
-                } else {
-                    withAnimation(.easeOut(duration: 0.08)) {
+                    .popover(isPresented: $isPresented, arrowEdge: .top) {
+                        Text(text)
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(width: 300, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                    }
+            } else {
+                content
+                    .onAppear {
+                        hoverTask?.cancel()
                         isPresented = false
                     }
-                }
             }
-            .popover(isPresented: $isPresented, arrowEdge: .top) {
-                Text(text)
-                    .font(.caption)
-                    .foregroundStyle(.primary)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: 300, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
+        }
+        .onChange(of: showTooltips) { enabled in
+            if !enabled {
+                hoverTask?.cancel()
+                isPresented = false
             }
+        }
     }
 }
 
 private extension View {
     func quickTooltip(_ text: String) -> some View {
         modifier(QuickTooltipModifier(text: text))
+    }
+
+    @ViewBuilder
+    func quickTooltip(_ text: String?) -> some View {
+        if let text, !text.isEmpty {
+            quickTooltip(text)
+        } else {
+            self
+        }
     }
 }
 
@@ -4841,6 +4929,7 @@ private struct VoiceNotesIntroPanel: View {
                 }
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
                 .disabled(model.isVoiceNoteTranscribing || model.isRecording || model.isTrainingRecording || model.isTeachingRecording)
+                .quickTooltip(model.isVoiceNoteRecording ? "Stop recording and transcribe this voice note locally." : "Start an encrypted local voice note. Transcript copies go to SAGE only when that setting is on.")
             }
             .padding(.top, 8)
         }
@@ -5077,7 +5166,7 @@ private struct VoiceNotePlayerControl: View {
                 .buttonStyle(.plain)
                 .disabled(!isEnabled)
                 .opacity(isEnabled ? 1 : 0.42)
-                .help("Play from the beginning")
+                .quickTooltip("Play the encrypted local audio for this note from the beginning.")
 
                 Button(action: stopAction) {
                     Label("Stop", systemImage: "stop.fill")
@@ -5091,7 +5180,7 @@ private struct VoiceNotePlayerControl: View {
                 .buttonStyle(.plain)
                 .disabled(!isEnabled || (!isPlaying && progress <= 0))
                 .opacity(isEnabled ? 1 : 0.42)
-                .help("Stop playback")
+                .quickTooltip("Stop local audio playback for this note.")
 
                 VStack(spacing: 8) {
                     VoiceNotePlaybackWaveform(progress: progress, isPlaying: isPlaying, isEnabled: isEnabled)
@@ -5128,6 +5217,7 @@ private struct VoiceNotePlayerControl: View {
             }
             .opacity(isEnabled ? 1 : 0.45)
             .disabled(!isEnabled)
+            .quickTooltip("Adjust playback volume for local note audio.")
 
             if !isEnabled {
                 HStack(spacing: 6) {
@@ -5284,7 +5374,7 @@ private struct VoiceNoteDetailPanel: View {
                 .background((showingDeleteConfirm ? Color.red : Color.primary).opacity(showingDeleteConfirm ? 0.11 : 0.055))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .disabled(isDeleting)
-                .help("Delete voice note")
+                .quickTooltip(deleteIncludesSageMemory ? "Remove the encrypted local note and ask SAGE to forget the linked transcript memory when one exists." : "Remove the encrypted local note and audio from this Mac.")
             }
 
             VoiceNotePlayerControl(
@@ -5349,6 +5439,7 @@ private struct VoiceNoteDetailPanel: View {
                     }
                     .buttonStyle(QuietButtonStyle())
                     .disabled(isSendingToSage)
+                    .quickTooltip("Copy this note's transcript into local SAGE governed memory. The audio file is not sent to SAGE.")
                 }
                 Button {
                     Task {
@@ -5361,6 +5452,7 @@ private struct VoiceNoteDetailPanel: View {
                 }
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
                 .disabled(!hasChanges || isSaving)
+                .quickTooltip("Save edits to this note's local encrypted transcript record.")
             }
             .padding(.top, 2)
 
@@ -5473,6 +5565,7 @@ private struct VoiceNoteSageDetailsPanel: View {
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.primary.opacity(0.07), lineWidth: 1))
+        .quickTooltip("Shows what was saved locally versus what was copied to SAGE. SAGE stores transcript memory, not the encrypted audio file.")
     }
 }
 
@@ -5860,7 +5953,8 @@ private struct DictionaryMemoryRow: View {
                     .buttonStyle(.plain)
                     .background(Color.primary.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 7))
-                    .help("Edit transcript")
+                    .quickTooltip("Edit the raw and polished transcript text for this review item.")
+                    .accessibilityLabel("Edit transcript")
                 }
                 if !isEditing {
                     Button {
@@ -5874,7 +5968,8 @@ private struct DictionaryMemoryRow: View {
                     .foregroundStyle(Color.secondary)
                     .background(Color.primary.opacity(0.05))
                     .clipShape(RoundedRectangle(cornerRadius: 7))
-                    .help("Remove memory")
+                    .quickTooltip("Remove this review item locally and ask SAGE to forget its memory when available.")
+                    .accessibilityLabel("Remove memory")
                 }
             }
         }
@@ -6200,6 +6295,7 @@ private struct MetricTile: View {
     var icon: String
     var value: String
     var label: String
+    var tooltip: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -6224,6 +6320,7 @@ private struct MetricTile: View {
         .background(cardColor)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(borderColor, lineWidth: 1))
+        .quickTooltip(tooltip)
     }
 
     private var isDark: Bool {
@@ -6507,7 +6604,7 @@ private struct SidebarIconToggle<Content: View>: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
-        .help(label)
+        .quickTooltip(label)
         .accessibilityLabel(label)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -7762,7 +7859,7 @@ final class MenuBarModel: ObservableObject {
     var transcriptNoteCount: Int {
         let localIDs = localMemories
             .filter { $0.type == .transcriptNote }
-            .compactMap(\.id)
+            .compactMap { $0.payload["sage_memory_id"]?.nilIfBlank ?? $0.id }
         let sageIDs = sageMemories
             .filter { $0.domain == "quiettype.transcripts" }
             .map(\.id)
@@ -7891,10 +7988,13 @@ final class MenuBarModel: ObservableObject {
 
     var dictionaryMemories: [DictionaryMemoryItem] {
         let localIDs = Set(localMemories.compactMap(\.id))
+        let localSageIDs = Set(localMemories.compactMap { $0.payload["sage_memory_id"]?.nilIfBlank })
         let sageIDs = Set(sageMemories.map(\.id))
         let localItems = localMemories
             .filter { $0.type == .transcriptNote && !hiddenReviewMemoryIDs.contains($0.id ?? "") }
             .map { memory in
+            let createdAt = memory.payload["created_at"].flatMap { ISO8601DateFormatter().date(from: $0) }
+            let sageMemoryID = memory.payload["sage_memory_id"]?.nilIfBlank
             return DictionaryMemoryItem(
                 id: memory.id ?? UUID().uuidString,
                 title: memory.payload["corrected"]
@@ -7908,14 +8008,19 @@ final class MenuBarModel: ObservableObject {
                 rawTranscript: memory.payload["raw_transcript"],
                 polishedText: memory.payload["polished_text"],
                 audioPath: memory.payload["audio_path"]?.nilIfBlank,
+                createdAt: createdAt,
                 isEditableTranscript: true,
                 hasLocalCopy: true,
-                hasSageMemory: memory.id.map { sageIDs.contains($0) } ?? false
+                hasSageMemory: sageMemoryID != nil || memory.id.map { sageIDs.contains($0) } ?? false
             )
         }
 
         let sageItems = sageMemories
-            .filter { $0.domain == "quiettype.transcripts" && !hiddenReviewMemoryIDs.contains($0.id) }
+            .filter {
+                $0.domain == "quiettype.transcripts"
+                    && !hiddenReviewMemoryIDs.contains($0.id)
+                    && !localSageIDs.contains($0.id)
+            }
             .map { memory in
             let transcript = transcriptMemoryParts(from: memory.content)
             return DictionaryMemoryItem(
@@ -7928,13 +8033,16 @@ final class MenuBarModel: ObservableObject {
                 rawTranscript: transcript.rawTranscript,
                 polishedText: transcript.polishedText,
                 audioPath: transcript.audioPath,
+                createdAt: memory.createdAt.flatMap { ISO8601DateFormatter().date(from: $0) },
                 isEditableTranscript: true,
                 hasLocalCopy: localIDs.contains(memory.id),
                 hasSageMemory: true
             )
         }
 
-        return localItems + sageItems
+        return (localItems + sageItems).sorted { lhs, rhs in
+            (lhs.createdAt ?? .distantPast) > (rhs.createdAt ?? .distantPast)
+        }
     }
 
     var filteredDictionaryMemories: [DictionaryMemoryItem] {
@@ -9147,6 +9255,7 @@ final class MenuBarModel: ObservableObject {
 
     private func refreshDictionaryMemoriesPreservingRegistration(using client: SageDirectClient) async {
         do {
+            await flushPendingSageTranscriptNotes(using: client)
             sageMemories = try await loadSageMemories(using: client, limit: Self.reviewMemoryLimit)
             if lastError?.hasPrefix("SAGE memory") == true || lastError?.hasPrefix("SAGE setup") == true {
                 lastError = nil
@@ -9370,6 +9479,7 @@ final class MenuBarModel: ObservableObject {
         }
 
         do {
+            await flushPendingSageTranscriptNotes(using: sageDirectClient)
             sageMemories = try await loadSageMemories(using: sageDirectClient, limit: Self.reviewMemoryLimit)
             if lastError?.hasPrefix("SAGE memory") == true {
                 lastError = nil
@@ -9437,6 +9547,7 @@ final class MenuBarModel: ObservableObject {
         }
 
         do {
+            await flushPendingSageTranscriptNotes(using: sageDirectClient)
             sageMemories = try await sageDirectClient.searchMemories(query: query, limit: Self.reviewMemoryLimit)
                 .filter { !hiddenReviewMemoryIDs.contains($0.id) }
         } catch {
@@ -9446,6 +9557,87 @@ final class MenuBarModel: ObservableObject {
 
     func searchDictionaryMemories() async {
         await searchSageMemories()
+    }
+
+    private func flushPendingSageTranscriptNotes(using client: SageDirectClient) async {
+        let pending = localMemories.filter { memory in
+            guard memory.type == .transcriptNote else {
+                return false
+            }
+            return memory.payload["sage_sync_status"] != "synced"
+        }
+        guard !pending.isEmpty else {
+            return
+        }
+
+        var syncedCount = 0
+        for memory in pending {
+            guard let localID = memory.id else {
+                continue
+            }
+            let content = sageTranscriptContent(from: memory)
+            do {
+                let submission = try await client.submitTranscriptNote(
+                    content: content,
+                    confidence: memory.confidence
+                )
+                let syncedAt = ISO8601DateFormatter().string(from: Date())
+                if let supersededID = memory.payload["sage_memory_id"]?.nilIfBlank,
+                   supersededID != submission.memoryID,
+                   memory.payload["reviewed_by_user"] == "true" {
+                    _ = try? await client.deprecateMemory(
+                        id: supersededID,
+                        reason: "Superseded by retried QuietType reviewed transcript note \(submission.memoryID)."
+                    )
+                    hideReviewMemoryID(supersededID)
+                }
+                let patch = [
+                    "sage_memory_id": submission.memoryID,
+                    "sage_sync_status": "synced",
+                    "sage_synced_at": syncedAt
+                ]
+                try await memoryStore.update(memoryID: localID, patch: patch)
+                if let index = localMemories.firstIndex(where: { $0.id == localID }) {
+                    for (key, value) in patch {
+                        localMemories[index].payload[key] = value
+                    }
+                }
+                if !sageMemories.contains(where: { $0.id == submission.memoryID }) {
+                    sageMemories.insert(
+                        SageMemoryRecord(
+                            id: submission.memoryID,
+                            content: content,
+                            domain: "quiettype.transcripts",
+                            type: "observation",
+                            confidence: memory.confidence,
+                            createdAt: memory.payload["created_at"],
+                            submittingAgent: sageAgentID
+                        ),
+                        at: 0
+                    )
+                }
+                syncedCount += 1
+            } catch {
+                let patch = [
+                    "sage_sync_status": "pending",
+                    "sage_last_error": error.localizedDescription,
+                    "sage_last_attempt_at": ISO8601DateFormatter().string(from: Date())
+                ]
+                try? await memoryStore.update(memoryID: localID, patch: patch)
+                if let index = localMemories.firstIndex(where: { $0.id == localID }) {
+                    for (key, value) in patch {
+                        localMemories[index].payload[key] = value
+                    }
+                }
+            }
+        }
+
+        if syncedCount > 0 {
+            statusMessage = syncedCount == 1 ? "Synced 1 review note to SAGE" : "Synced \(syncedCount) review notes to SAGE"
+            if lastError?.hasPrefix("SAGE transcript note sync failed") == true {
+                lastError = nil
+            }
+        }
     }
 
     private func startNativeSpeechWarmup() {
@@ -10515,6 +10707,12 @@ final class MenuBarModel: ObservableObject {
         }
 
         let words = wordCount(trimmed)
+        if recordingDuration >= 12.0 {
+            let minimumCoveredChunks = max(3, Int((recordingDuration * 0.45).rounded(.down)))
+            if chunkCount < minimumCoveredChunks {
+                return false
+            }
+        }
         if recordingDuration >= 2.5 && words <= 1 {
             return false
         }
@@ -10745,51 +10943,68 @@ final class MenuBarModel: ObservableObject {
 
         let audioPath = audioURL?.path ?? ""
         let wordTimingsJSON = encodedWordTimings(wordTimings)
-        let wordTimingsBase64 = Data(wordTimingsJSON.utf8).base64EncodedString()
-        let content = """
-        QuietType transcript note for review. App: \(selectedProfile.appName). Inserted: \(inserted ? "yes" : "no"). Audio path: "\(audioPath)". Word timings base64: "\(wordTimingsBase64)". Raw transcript: "\(raw)". Polished output: "\(polished)". This is review history committed to SAGE, not an automatic correction rule.
-        """
+        let createdAt = ISO8601DateFormatter().string(from: Date())
+        let localID = UUID().uuidString
+        let memory = DictationMemory(
+            id: localID,
+            type: .transcriptNote,
+            payload: [
+                "raw_transcript": raw,
+                "polished_text": polished,
+                "app": selectedProfile.appName,
+                "style": selectedProfile.appProfile.rawValue,
+                "inserted": inserted ? "true" : "false",
+                "audio_path": audioPath,
+                "audio_word_offsets": wordTimingsJSON.isEmpty ? "unavailable" : wordTimingsJSON,
+                "latency_ms": latencyMS.map(String.init) ?? "",
+                "created_at": createdAt,
+                "sage_sync_status": "pending"
+            ],
+            contexts: [selectedProfile.appName, selectedProfile.appProfile.rawValue, "dictation_review"],
+            source: "QuietType local review",
+            confidence: 0.82
+        )
 
         do {
-            guard let sageDirectClient else {
-                throw QuietTypeSageRequirementError.notConnected
-            }
-            let submission = try await sageDirectClient.submitTranscriptNote(content: content)
-            let memory = DictationMemory(
-                id: submission.memoryID,
-                type: .transcriptNote,
-                payload: [
-                    "raw_transcript": raw,
-                    "polished_text": polished,
-                    "app": selectedProfile.appName,
-                    "style": selectedProfile.appProfile.rawValue,
-                    "inserted": inserted ? "true" : "false",
-                    "audio_path": audioPath,
-                    "audio_word_offsets": wordTimingsJSON.isEmpty ? "unavailable" : wordTimingsJSON,
-                    "latency_ms": latencyMS.map(String.init) ?? "",
-                    "created_at": ISO8601DateFormatter().string(from: Date())
-                ],
-                contexts: [selectedProfile.appName, selectedProfile.appProfile.rawValue, "dictation_review"],
-                source: "SAGE · quiettype-agent",
-                confidence: 0.82
-            )
             _ = try await memoryStore.put(memory)
             localMemories.insert(memory, at: 0)
-            sageMemories.insert(
-                SageMemoryRecord(
-                    id: submission.memoryID,
-                    content: content,
-                    domain: "quiettype.transcripts",
-                    type: "observation",
-                    confidence: 0.82,
-                    createdAt: nil,
-                    submittingAgent: sageAgentID
-                ),
-                at: 0
-            )
         } catch {
-            lastError = "SAGE transcript note failed: \(error.localizedDescription)"
+            lastError = "Local transcript note failed: \(error.localizedDescription)"
+            return
         }
+
+        guard let sageDirectClient else {
+            statusMessage = "Review saved locally"
+            lastError = nil
+            return
+        }
+
+        await flushPendingSageTranscriptNotes(using: sageDirectClient)
+        if localMemories.first(where: { $0.id == localID })?.payload["sage_sync_status"] != "synced" {
+            statusMessage = "Review saved locally"
+        }
+    }
+
+    private func sageTranscriptContent(from memory: DictationMemory) -> String {
+        let raw = (memory.payload["raw_transcript"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let polished = (memory.payload["polished_text"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let app = memory.payload["app"] ?? selectedProfile.appName
+        let inserted = memory.payload["inserted"] == "true" ? "yes" : "no"
+        let audioPath = memory.payload["audio_path"] ?? ""
+        let wordTimings = memory.payload["audio_word_offsets"] ?? ""
+        let wordTimingsBase64 = wordTimings == "unavailable" ? "" : Data(wordTimings.utf8).base64EncodedString()
+
+        if memory.payload["reviewed_by_user"] == "true" {
+            let supersedes = memory.payload["supersedes"] ?? memory.payload["sage_memory_id"] ?? memory.id ?? "local"
+            let lessonCount = memory.payload["derived_word_lesson_count"] ?? "0"
+            return """
+            QuietType reviewed transcript note. Supersedes SAGE note: \(supersedes). Audio path: "\(audioPath)". Word timings base64: "\(wordTimingsBase64)". Derived word lessons: \(lessonCount). Corrected raw transcript: "\(raw)". Corrected polished output: "\(polished)". User-reviewed notes create one compact correction lesson per edited word when the change is obvious and conservative.
+            """
+        }
+
+        return """
+        QuietType transcript note for review. App: \(app). Inserted: \(inserted). Audio path: "\(audioPath)". Word timings base64: "\(wordTimingsBase64)". Raw transcript: "\(raw)". Polished output: "\(polished)". This is review history committed to SAGE, not an automatic correction rule.
+        """
     }
 
     func updateTranscriptNote(
@@ -10805,7 +11020,8 @@ final class MenuBarModel: ObservableObject {
         do {
             let reviewedAt = ISO8601DateFormatter().string(from: Date())
             let existingLocalMemory = localMemories.first(where: { $0.id == memoryID })
-            let existingSageMemory = sageMemories.first(where: { $0.id == memoryID })
+            let remoteSageMemoryID = existingLocalMemory?.payload["sage_memory_id"]?.nilIfBlank ?? memoryID
+            let existingSageMemory = sageMemories.first(where: { $0.id == remoteSageMemoryID })
             let localBacked = hasLocalCopy || existingLocalMemory != nil
             let sageBacked = hasSageMemory || existingSageMemory != nil
             let existingSageParts = existingSageMemory.map { transcriptMemoryParts(from: $0.content) }
@@ -10830,7 +11046,8 @@ final class MenuBarModel: ObservableObject {
                 "polished_text": polished,
                 "reviewed_at": reviewedAt,
                 "reviewed_by_user": "true",
-                "derived_word_lesson_count": "\(plannedLessons.count)"
+                "derived_word_lesson_count": "\(plannedLessons.count)",
+                "sage_sync_status": "pending"
             ]
 
             if localBacked {
@@ -10855,7 +11072,7 @@ final class MenuBarModel: ObservableObject {
             }
 
             let content = """
-            QuietType reviewed transcript note. Supersedes SAGE note: \(memoryID). Audio path: "\(audioPath ?? "")". Word timings base64: "\(encodedWordTimingsBase64(wordTimings))". Derived word lessons: \(plannedLessons.count). Corrected raw transcript: "\(raw)". Corrected polished output: "\(polished)". User-reviewed notes create one compact correction lesson per edited word when the change is obvious and conservative.
+            QuietType reviewed transcript note. Supersedes SAGE note: \(remoteSageMemoryID). Audio path: "\(audioPath ?? "")". Word timings base64: "\(encodedWordTimingsBase64(wordTimings))". Derived word lessons: \(plannedLessons.count). Corrected raw transcript: "\(raw)". Corrected polished output: "\(polished)". User-reviewed notes create one compact correction lesson per edited word when the change is obvious and conservative.
             """
 
             guard let sageDirectClient else {
@@ -10868,7 +11085,7 @@ final class MenuBarModel: ObservableObject {
             if sageBacked {
                 do {
                     _ = try await sageDirectClient.deprecateMemory(
-                        id: memoryID,
+                        id: remoteSageMemoryID,
                         reason: "Superseded by corrected QuietType transcript note \(submission.memoryID)."
                     )
                 } catch {
@@ -10877,14 +11094,17 @@ final class MenuBarModel: ObservableObject {
             }
 
             let correctedMemory = DictationMemory(
-                id: submission.memoryID,
+                id: existingLocalMemory?.id ?? submission.memoryID,
                 type: .transcriptNote,
                 payload: [
                     "raw_transcript": raw,
                     "polished_text": polished,
                     "reviewed_at": reviewedAt,
                     "reviewed_by_user": "true",
-                    "supersedes": memoryID,
+                    "supersedes": remoteSageMemoryID,
+                    "sage_memory_id": submission.memoryID,
+                    "sage_sync_status": "synced",
+                    "sage_synced_at": ISO8601DateFormatter().string(from: Date()),
                     "audio_path": audioPath ?? "",
                     "audio_word_offsets": encodedWordTimings(wordTimings).nilIfBlank ?? "unavailable",
                     "derived_word_lesson_count": "\(plannedLessons.count)",
@@ -10896,11 +11116,8 @@ final class MenuBarModel: ObservableObject {
                 confidence: 0.9
             )
             _ = try await memoryStore.put(correctedMemory)
-            if localBacked, submission.memoryID != memoryID {
-                try? await memoryStore.delete(memoryID: memoryID)
-            }
             localMemories.removeAll { $0.id == memoryID || $0.id == submission.memoryID }
-            sageMemories.removeAll { $0.id == memoryID || $0.id == submission.memoryID }
+            sageMemories.removeAll { $0.id == remoteSageMemoryID || $0.id == submission.memoryID }
             localMemories.insert(correctedMemory, at: 0)
             sageMemories.insert(
                 SageMemoryRecord(
@@ -10914,8 +11131,8 @@ final class MenuBarModel: ObservableObject {
                 ),
                 at: 0
             )
-            hideReviewMemoryID(memoryID)
-            unhideReviewMemoryID(submission.memoryID)
+            hideReviewMemoryID(remoteSageMemoryID)
+            unhideReviewMemoryID(correctedMemory.id ?? submission.memoryID)
 
             let lessons = await saveDerivedCorrectionLessons(
                 plannedLessons,
@@ -10938,8 +11155,10 @@ final class MenuBarModel: ObservableObject {
 
     func deleteReviewMemory(memoryID: String, hasLocalCopy: Bool, hasSageMemory: Bool) async {
         do {
-            let localBacked = hasLocalCopy || localMemories.contains(where: { $0.id == memoryID })
-            let sageBacked = hasSageMemory || sageMemories.contains(where: { $0.id == memoryID })
+            let localMemory = localMemories.first(where: { $0.id == memoryID })
+            let remoteSageMemoryID = localMemory?.payload["sage_memory_id"]?.nilIfBlank ?? memoryID
+            let localBacked = hasLocalCopy || localMemory != nil
+            let sageBacked = hasSageMemory || sageMemories.contains(where: { $0.id == remoteSageMemoryID })
 
             if localBacked {
                 do {
@@ -10957,7 +11176,7 @@ final class MenuBarModel: ObservableObject {
                 if let sageDirectClient {
                     do {
                         _ = try await sageDirectClient.deprecateMemory(
-                            id: memoryID,
+                            id: remoteSageMemoryID,
                             reason: "Removed by user from QuietType Review."
                         )
                     } catch {
@@ -10970,8 +11189,11 @@ final class MenuBarModel: ObservableObject {
                 }
             }
 
-            sageMemories.removeAll { $0.id == memoryID }
+            sageMemories.removeAll { $0.id == remoteSageMemoryID }
             hideReviewMemoryID(memoryID)
+            if remoteSageMemoryID != memoryID {
+                hideReviewMemoryID(remoteSageMemoryID)
+            }
             statusMessage = "Memory removed"
             lastError = nil
         } catch {
