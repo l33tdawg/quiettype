@@ -1390,7 +1390,11 @@ struct TesterView: View {
                     onDelete: {
                         Task {
                             isDeletingReviewMemory = true
-                            await model.deleteReviewMemory(memoryID: deleteMemory.id)
+                            await model.deleteReviewMemory(
+                                memoryID: deleteMemory.id,
+                                hasLocalCopy: deleteMemory.hasLocalCopy,
+                                hasSageMemory: deleteMemory.hasSageMemory
+                            )
                             isDeletingReviewMemory = false
                             pendingReviewDeleteMemory = nil
                         }
@@ -1707,6 +1711,9 @@ struct TesterView: View {
                             await model.searchDictionaryMemories()
                         }
                     }
+                    .onChange(of: model.sageQuery) { _ in
+                        model.scheduleDictionarySearch()
+                    }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -1724,7 +1731,13 @@ struct TesterView: View {
                 LazyVStack(spacing: 0) {
                     ForEach(reviewMemories) { memory in
                         DictionaryMemoryRow(memory: memory, saveAction: { rawTranscript, polishedText in
-                            await model.updateTranscriptNote(memoryID: memory.id, rawTranscript: rawTranscript, polishedText: polishedText)
+                            await model.updateTranscriptNote(
+                                memoryID: memory.id,
+                                rawTranscript: rawTranscript,
+                                polishedText: polishedText,
+                                hasLocalCopy: memory.hasLocalCopy,
+                                hasSageMemory: memory.hasSageMemory
+                            )
                         }, deleteAction: {
                             pendingReviewDeleteMemory = memory
                         })
@@ -4396,6 +4409,8 @@ struct DictionaryMemoryItem: Identifiable, Equatable {
     var polishedText: String?
     var audioPath: String?
     var isEditableTranscript: Bool
+    var hasLocalCopy: Bool
+    var hasSageMemory: Bool
 }
 
 struct VoiceNoteItem: Identifiable, Equatable {
@@ -7221,6 +7236,7 @@ final class MenuBarModel: ObservableObject {
     @Published var sageMemories: [SageMemoryRecord] = []
     @Published var sageQuery = ""
     @Published var isQueryingSage = false
+    @Published var hiddenReviewMemoryIDs: Set<String> = []
     @Published var speechEngineStatus = "Checking speech"
     @Published var speechEngineReady = false
     @Published var nativeSpeechServerReady = false
@@ -7314,6 +7330,7 @@ final class MenuBarModel: ObservableObject {
     private var didStartAppServices = false
     private var nativeSpeechStartupTask: Task<Void, Never>?
     private var updateCheckTask: Task<Void, Never>?
+    private var dictionarySearchTask: Task<Void, Never>?
     private var terminationObserver: NSObjectProtocol?
     private var captureService: AVAudioCaptureService?
     private var trainingCaptureService: AVAudioCaptureService?
@@ -7375,6 +7392,7 @@ final class MenuBarModel: ObservableObject {
     private static let lastWordsPerMinuteKey = "quiettype.lastWordsPerMinute"
     private static let historyReviewEnabledKey = "quiettype.historyReviewEnabled"
     private static let saveVoiceNotesToSageKey = "quiettype.saveVoiceNotesToSage"
+    private static let hiddenReviewMemoryIDsKey = "quiettype.hiddenReviewMemoryIDs"
     private static let availableUpdateKey = "quiettype.availableUpdate"
     private static let notifiedUpdateTagKey = "quiettype.notifiedUpdateTag"
     private static let backgroundUpdateRefreshInterval: UInt64 = 60 * 60 * 1_000_000_000
@@ -7392,6 +7410,7 @@ final class MenuBarModel: ObservableObject {
         totalTranslatedWordCount = UserDefaults.standard.integer(forKey: Self.totalTranslatedWordCountKey)
         lastWordsPerMinute = UserDefaults.standard.integer(forKey: Self.lastWordsPerMinuteKey)
         availableUpdate = Self.loadAvailableUpdate()
+        hiddenReviewMemoryIDs = Set(UserDefaults.standard.stringArray(forKey: Self.hiddenReviewMemoryIDsKey) ?? [])
         historyReviewEnabled = true
         UserDefaults.standard.set(true, forKey: Self.historyReviewEnabledKey)
         if UserDefaults.standard.object(forKey: Self.saveVoiceNotesToSageKey) == nil {
@@ -7438,6 +7457,7 @@ final class MenuBarModel: ObservableObject {
     }
 
     deinit {
+        dictionarySearchTask?.cancel()
         if let terminationObserver {
             NotificationCenter.default.removeObserver(terminationObserver)
         }
@@ -7870,8 +7890,10 @@ final class MenuBarModel: ObservableObject {
     }
 
     var dictionaryMemories: [DictionaryMemoryItem] {
+        let localIDs = Set(localMemories.compactMap(\.id))
+        let sageIDs = Set(sageMemories.map(\.id))
         let localItems = localMemories
-            .filter { $0.type == .transcriptNote }
+            .filter { $0.type == .transcriptNote && !hiddenReviewMemoryIDs.contains($0.id ?? "") }
             .map { memory in
             return DictionaryMemoryItem(
                 id: memory.id ?? UUID().uuidString,
@@ -7886,12 +7908,14 @@ final class MenuBarModel: ObservableObject {
                 rawTranscript: memory.payload["raw_transcript"],
                 polishedText: memory.payload["polished_text"],
                 audioPath: memory.payload["audio_path"]?.nilIfBlank,
-                isEditableTranscript: true
+                isEditableTranscript: true,
+                hasLocalCopy: true,
+                hasSageMemory: memory.id.map { sageIDs.contains($0) } ?? false
             )
         }
 
         let sageItems = sageMemories
-            .filter { $0.domain == "quiettype.transcripts" }
+            .filter { $0.domain == "quiettype.transcripts" && !hiddenReviewMemoryIDs.contains($0.id) }
             .map { memory in
             let transcript = transcriptMemoryParts(from: memory.content)
             return DictionaryMemoryItem(
@@ -7904,7 +7928,9 @@ final class MenuBarModel: ObservableObject {
                 rawTranscript: transcript.rawTranscript,
                 polishedText: transcript.polishedText,
                 audioPath: transcript.audioPath,
-                isEditableTranscript: true
+                isEditableTranscript: true,
+                hasLocalCopy: localIDs.contains(memory.id),
+                hasSageMemory: true
             )
         }
 
@@ -9148,7 +9174,19 @@ final class MenuBarModel: ObservableObject {
                 throw error
             }
         }
-        return Array(memories.prefix(limit))
+        return Array(memories.filter { !hiddenReviewMemoryIDs.contains($0.id) }.prefix(limit))
+    }
+
+    private func hideReviewMemoryID(_ memoryID: String) {
+        hiddenReviewMemoryIDs.insert(memoryID)
+        UserDefaults.standard.set(Array(hiddenReviewMemoryIDs), forKey: Self.hiddenReviewMemoryIDsKey)
+    }
+
+    private func unhideReviewMemoryID(_ memoryID: String) {
+        guard hiddenReviewMemoryIDs.remove(memoryID) != nil else {
+            return
+        }
+        UserDefaults.standard.set(Array(hiddenReviewMemoryIDs), forKey: Self.hiddenReviewMemoryIDsKey)
     }
 
     private func sageRegistrationFailureDetail(_ error: Error, healthy: Bool = false) -> String {
@@ -9362,10 +9400,22 @@ final class MenuBarModel: ObservableObject {
     }
 
     func refreshDictionaryMemories() async {
+        await refreshLocalMemories()
         if sageDirectClient == nil {
             await registerSageAgentIfAvailable()
         } else {
             await refreshSageMemories()
+        }
+    }
+
+    func scheduleDictionarySearch() {
+        dictionarySearchTask?.cancel()
+        dictionarySearchTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard let self, !Task.isCancelled else {
+                return
+            }
+            await self.searchDictionaryMemories()
         }
     }
 
@@ -9388,6 +9438,7 @@ final class MenuBarModel: ObservableObject {
 
         do {
             sageMemories = try await sageDirectClient.searchMemories(query: query, limit: Self.reviewMemoryLimit)
+                .filter { !hiddenReviewMemoryIDs.contains($0.id) }
         } catch {
             handleSageMemoryRefreshFailure(error)
         }
@@ -10722,6 +10773,7 @@ final class MenuBarModel: ObservableObject {
                 source: "SAGE · quiettype-agent",
                 confidence: 0.82
             )
+            _ = try await memoryStore.put(memory)
             localMemories.insert(memory, at: 0)
             sageMemories.insert(
                 SageMemoryRecord(
@@ -10740,18 +10792,22 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
-    func updateTranscriptNote(memoryID: String, rawTranscript: String, polishedText: String) async {
+    func updateTranscriptNote(
+        memoryID: String,
+        rawTranscript: String,
+        polishedText: String,
+        hasLocalCopy: Bool,
+        hasSageMemory: Bool
+    ) async {
         let raw = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         let polished = polishedText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         do {
-            guard let sageDirectClient else {
-                throw QuietTypeSageRequirementError.notConnected
-            }
-
             let reviewedAt = ISO8601DateFormatter().string(from: Date())
             let existingLocalMemory = localMemories.first(where: { $0.id == memoryID })
             let existingSageMemory = sageMemories.first(where: { $0.id == memoryID })
+            let localBacked = hasLocalCopy || existingLocalMemory != nil
+            let sageBacked = hasSageMemory || existingSageMemory != nil
             let existingSageParts = existingSageMemory.map { transcriptMemoryParts(from: $0.content) }
             let originalRaw = existingLocalMemory?.payload["raw_transcript"]
                 ?? existingSageParts?.rawTranscript
@@ -10769,18 +10825,56 @@ final class MenuBarModel: ObservableObject {
                 reviewedRaw: raw,
                 reviewedPolished: polished
             )
+            let localPatch = [
+                "raw_transcript": raw,
+                "polished_text": polished,
+                "reviewed_at": reviewedAt,
+                "reviewed_by_user": "true",
+                "derived_word_lesson_count": "\(plannedLessons.count)"
+            ]
+
+            if localBacked {
+                do {
+                    try await memoryStore.update(memoryID: memoryID, patch: localPatch)
+                } catch MemoryStoreError.notFound {
+                    guard var recoveredMemory = existingLocalMemory else {
+                        throw MemoryStoreError.notFound(memoryID)
+                    }
+                    for (key, value) in localPatch {
+                        recoveredMemory.payload[key] = value
+                    }
+                    _ = try await memoryStore.put(recoveredMemory)
+                }
+                if let index = localMemories.firstIndex(where: { $0.id == memoryID }) {
+                    for (key, value) in localPatch {
+                        localMemories[index].payload[key] = value
+                    }
+                }
+            } else if sageDirectClient == nil {
+                throw QuietTypeSageRequirementError.notConnected
+            }
 
             let content = """
             QuietType reviewed transcript note. Supersedes SAGE note: \(memoryID). Audio path: "\(audioPath ?? "")". Word timings base64: "\(encodedWordTimingsBase64(wordTimings))". Derived word lessons: \(plannedLessons.count). Corrected raw transcript: "\(raw)". Corrected polished output: "\(polished)". User-reviewed notes create one compact correction lesson per edited word when the change is obvious and conservative.
             """
-            let submission = try await sageDirectClient.submitTranscriptNote(content: content, confidence: 0.9)
-            _ = try await sageDirectClient.deprecateMemory(
-                id: memoryID,
-                reason: "Superseded by corrected QuietType transcript note \(submission.memoryID)."
-            )
 
-            localMemories.removeAll { $0.id == memoryID }
-            sageMemories.removeAll { $0.id == memoryID }
+            guard let sageDirectClient else {
+                statusMessage = "Transcript review saved locally"
+                lastError = nil
+                return
+            }
+
+            let submission = try await sageDirectClient.submitTranscriptNote(content: content, confidence: 0.9)
+            if sageBacked {
+                do {
+                    _ = try await sageDirectClient.deprecateMemory(
+                        id: memoryID,
+                        reason: "Superseded by corrected QuietType transcript note \(submission.memoryID)."
+                    )
+                } catch {
+                    statusMessage = "Review saved; old SAGE note will be hidden locally"
+                }
+            }
 
             let correctedMemory = DictationMemory(
                 id: submission.memoryID,
@@ -10801,6 +10895,12 @@ final class MenuBarModel: ObservableObject {
                 source: "QuietType",
                 confidence: 0.9
             )
+            _ = try await memoryStore.put(correctedMemory)
+            if localBacked, submission.memoryID != memoryID {
+                try? await memoryStore.delete(memoryID: memoryID)
+            }
+            localMemories.removeAll { $0.id == memoryID || $0.id == submission.memoryID }
+            sageMemories.removeAll { $0.id == memoryID || $0.id == submission.memoryID }
             localMemories.insert(correctedMemory, at: 0)
             sageMemories.insert(
                 SageMemoryRecord(
@@ -10814,6 +10914,8 @@ final class MenuBarModel: ObservableObject {
                 ),
                 at: 0
             )
+            hideReviewMemoryID(memoryID)
+            unhideReviewMemoryID(submission.memoryID)
 
             let lessons = await saveDerivedCorrectionLessons(
                 plannedLessons,
@@ -10834,19 +10936,42 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
-    func deleteReviewMemory(memoryID: String) async {
+    func deleteReviewMemory(memoryID: String, hasLocalCopy: Bool, hasSageMemory: Bool) async {
         do {
-            guard let sageDirectClient else {
-                throw QuietTypeSageRequirementError.notConnected
+            let localBacked = hasLocalCopy || localMemories.contains(where: { $0.id == memoryID })
+            let sageBacked = hasSageMemory || sageMemories.contains(where: { $0.id == memoryID })
+
+            if localBacked {
+                do {
+                    try await memoryStore.delete(memoryID: memoryID)
+                } catch MemoryStoreError.notFound {
+                    // Older in-memory review rows may predate durable local transcript persistence.
+                }
+                localMemories.removeAll { $0.id == memoryID }
             }
 
-            _ = try await sageDirectClient.deprecateMemory(
-                id: memoryID,
-                reason: "Removed by user from QuietType Review."
-            )
+            if sageBacked {
+                if sageDirectClient == nil {
+                    await registerSageAgentIfAvailable()
+                }
+                if let sageDirectClient {
+                    do {
+                        _ = try await sageDirectClient.deprecateMemory(
+                            id: memoryID,
+                            reason: "Removed by user from QuietType Review."
+                        )
+                    } catch {
+                        if !localBacked {
+                            throw error
+                        }
+                    }
+                } else if !localBacked {
+                    throw QuietTypeSageRequirementError.notConnected
+                }
+            }
 
-            localMemories.removeAll { $0.id == memoryID }
             sageMemories.removeAll { $0.id == memoryID }
+            hideReviewMemoryID(memoryID)
             statusMessage = "Memory removed"
             lastError = nil
         } catch {
@@ -10889,6 +11014,7 @@ final class MenuBarModel: ObservableObject {
                     source: "SAGE · quiettype-agent",
                     confidence: 0.93
                 )
+                _ = try await memoryStore.put(memory)
                 localMemories.insert(memory, at: 0)
                 sageMemories.insert(
                     SageMemoryRecord(
