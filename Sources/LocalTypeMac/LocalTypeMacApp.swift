@@ -345,6 +345,7 @@ struct OverlayState {
 }
 
 private struct DictationOverlayView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var presentation: DictationOverlayPresentation
     @State private var copiedTranscript = false
     private let chromeInset: CGFloat = 34
@@ -371,6 +372,14 @@ private struct DictationOverlayView: View {
 
     private var cleanedTranscript: String {
         (transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var glassTintOpacity: Double {
+        colorScheme == .dark ? 0.05 : 0.08
+    }
+
+    private var glassLowlightOpacity: Double {
+        colorScheme == .dark ? 0.18 : 0.05
     }
 
     var body: some View {
@@ -429,8 +438,10 @@ private struct DictationOverlayView: View {
             HStack(spacing: 14) {
                 ZStack {
                     Circle()
-                        .fill(Color(nsColor: .controlBackgroundColor))
+                        .fill(.ultraThinMaterial)
                         .frame(width: 46, height: 46)
+                        .overlay(Circle().fill(Color.white.opacity(colorScheme == .dark ? 0.06 : 0.20)))
+                        .overlay(Circle().stroke(Color.white.opacity(0.36), lineWidth: 0.7))
                     Image(systemName: state.icon)
                         .font(.system(size: 22, weight: .semibold))
                         .foregroundStyle(state.tint)
@@ -487,39 +498,94 @@ private struct DictationOverlayView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.regularMaterial)
+            ZStack {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.white.opacity(glassTintOpacity))
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.28),
+                                Color.white.opacity(0.10),
+                                Color.clear,
+                                Color.black.opacity(glassLowlightOpacity)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.white.opacity(0.34),
+                                Color.white.opacity(0.08),
+                                Color.clear
+                            ],
+                            center: .topLeading,
+                            startRadius: 0,
+                            endRadius: 190
+                        )
+                    )
+                    .blendMode(.screen)
+                    .mask(
+                        LinearGradient(
+                            colors: [Color.white, Color.white.opacity(0.35), Color.clear],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                Color.white.opacity(colorScheme == .dark ? 0.10 : 0.16),
+                                Color.clear
+                            ],
+                            center: .bottomTrailing,
+                            startRadius: 0,
+                            endRadius: 150
+                        )
+                    )
+                    .blendMode(.screen)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(0.18),
-                            Color.white.opacity(0.07),
-                            Color.black.opacity(0.018)
+                            Color.white.opacity(0.34),
+                            Color.white.opacity(0.10),
+                            Color.clear
                         ],
                         startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+                        endPoint: .bottom
                     )
                 )
+                .frame(height: 42)
+                .allowsHitTesting(false)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(0.72),
-                            Color.white.opacity(0.18),
-                            Color.black.opacity(0.18)
+                            Color.white.opacity(0.86),
+                            Color.white.opacity(0.30),
+                            Color.black.opacity(colorScheme == .dark ? 0.20 : 0.12)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
-                    lineWidth: 1
+                    lineWidth: 0.8
                 )
         )
         .compositingGroup()
-        .shadow(color: Color.black.opacity(0.14), radius: 18, y: 9)
+        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.26 : 0.12), radius: 22, y: 10)
     }
 
     private func copyOverlayTranscript(_ text: String) -> Bool {
