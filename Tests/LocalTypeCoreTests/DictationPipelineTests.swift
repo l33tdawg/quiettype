@@ -141,6 +141,45 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testFormatsDigitNumberedMarkersAsNumberedList() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "number 1 investigate the typing reminder number 2 improve the glass overlay", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            1. Investigate the typing reminder
+            2. Improve the glass overlay
+            """
+        )
+    }
+
+    func testDropsLeadInBeforeNumberedMarkers() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "so I have a couple of items for you to take a look at number 1 this detect typing popup please investigate it number 2 the glass overlay looks better but can we improve it further because I don't see it really implemented in version 18",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            1. This detect typing popup please investigate it
+            2. The glass overlay looks better but can we improve it further because I don't see it really implemented in version 18
+            """
+        )
+    }
+
     func testFormatsBulletListIntentAsBullets() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Notes", profile: .notes)
@@ -399,6 +438,26 @@ final class DictationPipelineTests: XCTestCase {
         XCTAssertEqual(
             result.text,
             "Also it seems when I assign a task to an agent click Send expect that the card would move into in progress but doesn't just disappears from to do list instead of being moved."
+        )
+    }
+
+    func testDoesNotFormatDiscussionAboutListsAsList() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Slack", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "I think we should detect instead for the utterance of the word like number followed by the numeral because I think that's probably what's a better indicator right so when I say I want to yeah it's obvious after that the next couple of items would probably be the items on the list right I mean that's kind of logical makes sense to me",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertFalse(result.text.contains("\n- "))
+        XCTAssertFalse(result.text.contains("\n1. "))
+        XCTAssertEqual(
+            result.text,
+            "I think. We should detect instead for the utterance of the word like number followed by the numeral because I think that's probably what's a better indicator right so when I say I want to yeah it's obvious after that the next couple of items would probably be the items on the list right I mean that's kind of logical makes sense to me."
         )
     }
 

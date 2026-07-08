@@ -368,6 +368,27 @@ struct OverlayState {
     )
 }
 
+private struct MacVisualEffectBlur: NSViewRepresentable {
+    var material: NSVisualEffectView.Material
+    var blendingMode: NSVisualEffectView.BlendingMode
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        view.isEmphasized = true
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        view.isEmphasized = true
+    }
+}
+
 private struct DictationOverlayView: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var presentation: DictationOverlayPresentation
@@ -399,11 +420,11 @@ private struct DictationOverlayView: View {
     }
 
     private var glassTintOpacity: Double {
-        colorScheme == .dark ? 0.05 : 0.08
+        colorScheme == .dark ? 0.08 : 0.16
     }
 
     private var glassLowlightOpacity: Double {
-        colorScheme == .dark ? 0.18 : 0.05
+        colorScheme == .dark ? 0.22 : 0.08
     }
 
     var body: some View {
@@ -523,16 +544,17 @@ private struct DictationOverlayView: View {
         .padding(.vertical, 12)
         .background {
             ZStack {
+                MacVisualEffectBlur(material: .popover, blendingMode: .behindWindow)
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color.white.opacity(colorScheme == .dark ? 0.02 : 0.04))
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Color.white.opacity(glassTintOpacity))
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(0.28),
-                                Color.white.opacity(0.10),
+                                Color.white.opacity(0.40),
+                                Color.white.opacity(0.14),
                                 Color.clear,
                                 Color.black.opacity(glassLowlightOpacity)
                             ],
@@ -544,8 +566,8 @@ private struct DictationOverlayView: View {
                     .fill(
                         RadialGradient(
                             colors: [
-                                Color.white.opacity(0.34),
-                                Color.white.opacity(0.08),
+                                Color.white.opacity(0.42),
+                                Color.white.opacity(0.12),
                                 Color.clear
                             ],
                             center: .topLeading,
@@ -582,8 +604,8 @@ private struct DictationOverlayView: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(0.34),
-                            Color.white.opacity(0.10),
+                            Color.white.opacity(0.48),
+                            Color.white.opacity(0.14),
                             Color.clear
                         ],
                         startPoint: .topLeading,
@@ -598,9 +620,9 @@ private struct DictationOverlayView: View {
                 .strokeBorder(
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(0.86),
-                            Color.white.opacity(0.30),
-                            Color.black.opacity(colorScheme == .dark ? 0.20 : 0.12)
+                            Color.white.opacity(0.94),
+                            Color.white.opacity(0.38),
+                            Color.black.opacity(colorScheme == .dark ? 0.24 : 0.16)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -2383,7 +2405,7 @@ struct TesterView: View {
                     ))
                     .toggleStyle(.checkbox)
                     .tint(.primary)
-                    .quickTooltip("When you type several words with the keyboard, QuietType can occasionally show a local overlay reminding you to press Fn and speak. It is capped at 3 reminders per week with at least 48 hours between reminders.")
+                    .quickTooltip("When you type four words with the keyboard, QuietType can occasionally show a local overlay reminding you to press Fn and speak. It is capped at 3 reminders per week with at least 48 hours between reminders.")
 
                     Spacer(minLength: 0)
                 }
@@ -4828,7 +4850,7 @@ private final class TypingReminderMonitor {
     var onReminder: (() -> Void)?
     var shortcutLabel = "Fn"
 
-    private let wordsBeforeReminder = 5
+    private let wordsBeforeReminder = 4
     private let idleResetSeconds: TimeInterval = 8
     private let burstWindowSeconds: TimeInterval = 45
     private let reminderCooldownSeconds: TimeInterval = 60 * 60 * 48
@@ -4864,6 +4886,11 @@ private final class TypingReminderMonitor {
         resetBurst()
     }
 
+    func resetReminderHistory() {
+        UserDefaults.standard.removeObject(forKey: reminderHistoryKey)
+        resetBurst()
+    }
+
     private func handle(_ event: NSEvent) {
         guard shouldRemind?() == true else {
             resetBurst()
@@ -4891,7 +4918,8 @@ private final class TypingReminderMonitor {
             characterCountInCurrentWord += 1
         }
 
-        guard wordCount >= wordsBeforeReminder,
+        let effectiveWordCount = wordCount + (characterCountInCurrentWord >= 2 ? 1 : 0)
+        guard effectiveWordCount >= wordsBeforeReminder,
               let burstStartedAt,
               now.timeIntervalSince(burstStartedAt) <= burstWindowSeconds,
               shouldPassCooldown(now) else {
@@ -4998,12 +5026,74 @@ private extension Array {
 private struct QuickTooltipModifier: ViewModifier {
     let text: String
     @AppStorage("quiettype.showTooltips") private var showTooltips = true
+    @State private var isPresented = false
+    @State private var hoverTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
-        if showTooltips {
-            content.help(text)
-        } else {
-            content
+        Group {
+            if showTooltips {
+                content
+                    .help(text)
+                    .onHover { hovering in
+                        hoverTask?.cancel()
+                        if hovering {
+                            hoverTask = Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 180_000_000)
+                                guard !Task.isCancelled else {
+                                    return
+                                }
+                                withAnimation(.easeOut(duration: 0.12)) {
+                                    isPresented = true
+                                }
+                            }
+                        } else {
+                            withAnimation(.easeOut(duration: 0.08)) {
+                                isPresented = false
+                            }
+                        }
+                    }
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            hoverTask?.cancel()
+                            isPresented = false
+                        }
+                    )
+                    .overlay(alignment: .top) {
+                        if isPresented {
+                            Text(text)
+                                .font(.caption)
+                                .foregroundStyle(.primary)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(width: 300, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .background(.regularMaterial)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                                )
+                                .shadow(color: Color.black.opacity(0.16), radius: 12, y: 6)
+                                .offset(y: -44)
+                                .allowsHitTesting(false)
+                                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                                .zIndex(1000)
+                        }
+                    }
+            } else {
+                content
+                    .onAppear {
+                        hoverTask?.cancel()
+                        isPresented = false
+                    }
+            }
+        }
+        .onChange(of: showTooltips) { enabled in
+            if !enabled {
+                hoverTask?.cancel()
+                isPresented = false
+            }
         }
     }
 }
@@ -5876,7 +5966,7 @@ private struct UpdateInstallOverlay: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .center, spacing: 8) {
                     ProgressView(value: quietUpdateProgressValue(
                         status: model.updateStatus,
                         messages: model.updateProgressMessages,
@@ -5895,6 +5985,8 @@ private struct UpdateInstallOverlay: View {
                     ))
                     .font(.system(size: 12 + typeDelta, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, alignment: .center)
                     .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -9096,8 +9188,12 @@ final class MenuBarModel: ObservableObject {
     }
 
     func setTypingReminderEnabled(_ enabled: Bool) {
+        let wasEnabled = typingReminderEnabled
         typingReminderEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: Self.typingReminderEnabledKey)
+        if enabled && !wasEnabled {
+            typingReminderMonitor?.resetReminderHistory()
+        }
     }
 
     func setTeachingKind(_ kind: TeachingKind) {
@@ -10032,7 +10128,7 @@ final class MenuBarModel: ObservableObject {
         recordingDuration = 0
         recordedSamples = []
         recordingSampleRate = 16_000
-        chunker = StreamingWavChunker(sampleRate: recordingSampleRate, chunkDurationSeconds: 1.0, maxDurationSeconds: Self.maxDictationDurationSeconds)
+        chunker = StreamingWavChunker(sampleRate: recordingSampleRate, chunkDurationSeconds: 4.0, maxDurationSeconds: Self.maxDictationDurationSeconds)
         activeTranscriptionOptions = currentTranscriptionOptions()
         streamingTranscriptionSession = nil
         pendingStreamingChunks = []
@@ -10882,17 +10978,31 @@ final class MenuBarModel: ObservableObject {
             let streamResult = await streamingSession?.finish()
             let rawTranscript: String
             let wordTimings: [TranscribedWordTiming]
-            if let streamResult, isUsableStreamingTranscript(streamResult.text, chunkCount: streamResult.chunkCount) {
-                rawTranscript = streamResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                wordTimings = []
-                statusMessage = "Processed \(streamResult.chunkCount) streamed chunks"
-            } else {
-                if let streamResult, !streamResult.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            do {
+                if streamResult != nil {
                     statusMessage = "Resolving full audio"
                 }
                 let timedResult = try await transcribeFullAudioWithTiming(audioURL)
-                rawTranscript = timedResult.text
+                let fullTranscript = timedResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !isLikelyNoiseTranscript(fullTranscript) else {
+                    throw AudioTranscriberError.noiseOnlyTranscript(fullTranscript)
+                }
+                rawTranscript = fullTranscript
                 wordTimings = timedResult.words
+                statusMessage = wordTimings.isEmpty ? "Processed full audio" : "Processed timed audio"
+            } catch {
+                if let streamResult,
+                   isUsableStreamingTranscript(
+                    streamResult.text,
+                    chunkCount: streamResult.chunkCount,
+                    coveredDuration: streamResult.coveredDurationSeconds
+                   ) {
+                    rawTranscript = streamResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    wordTimings = []
+                    statusMessage = "Used streamed fallback"
+                } else {
+                    throw error
+                }
             }
             guard !isLikelyNoiseTranscript(rawTranscript) else {
                 throw AudioTranscriberError.noiseOnlyTranscript(rawTranscript)
@@ -10946,7 +11056,7 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
-    private func isUsableStreamingTranscript(_ text: String, chunkCount: Int) -> Bool {
+    private func isUsableStreamingTranscript(_ text: String, chunkCount: Int, coveredDuration: Double) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return false
@@ -10957,8 +11067,8 @@ final class MenuBarModel: ObservableObject {
 
         let words = wordCount(trimmed)
         if recordingDuration >= 12.0 {
-            let minimumCoveredChunks = max(3, Int((recordingDuration * 0.45).rounded(.down)))
-            if chunkCount < minimumCoveredChunks {
+            let minimumCoveredDuration = recordingDuration * 0.70
+            if coveredDuration < minimumCoveredDuration {
                 return false
             }
         }

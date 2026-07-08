@@ -5,6 +5,7 @@ public actor StreamingAudioTranscriptionSession {
     private let options: AudioTranscriptionOptions
     private var queue: [WavAudioChunk] = []
     private var transcripts: [Int: String] = [:]
+    private var transcriptDurations: [Int: Double] = [:]
     private var errors: [String] = []
     private var isProcessing = false
     private var isCancelled = false
@@ -38,6 +39,7 @@ public actor StreamingAudioTranscriptionSession {
         return StreamingTranscriptionResult(
             text: mergedTranscript(),
             chunkCount: transcripts.count,
+            coveredDurationSeconds: transcriptDurations.values.reduce(0, +),
             errors: errors
         )
     }
@@ -46,6 +48,7 @@ public actor StreamingAudioTranscriptionSession {
         isCancelled = true
         queue.removeAll(keepingCapacity: false)
         transcripts.removeAll(keepingCapacity: false)
+        transcriptDurations.removeAll(keepingCapacity: false)
         errors.removeAll(keepingCapacity: false)
     }
 
@@ -60,6 +63,7 @@ public actor StreamingAudioTranscriptionSession {
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     transcripts[chunk.sequence] = trimmed
+                    transcriptDurations[chunk.sequence] = chunk.durationSeconds
                 }
             } catch {
                 if !isCancelled {
@@ -100,11 +104,13 @@ public actor StreamingAudioTranscriptionSession {
 public struct StreamingTranscriptionResult: Equatable, Sendable {
     public var text: String
     public var chunkCount: Int
+    public var coveredDurationSeconds: Double
     public var errors: [String]
 
-    public init(text: String, chunkCount: Int, errors: [String]) {
+    public init(text: String, chunkCount: Int, coveredDurationSeconds: Double = 0, errors: [String]) {
         self.text = text
         self.chunkCount = chunkCount
+        self.coveredDurationSeconds = coveredDurationSeconds
         self.errors = errors
     }
 }

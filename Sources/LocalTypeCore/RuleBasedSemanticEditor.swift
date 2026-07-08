@@ -445,7 +445,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         let hasDigitQuantitySequence = digitQuantityMarkerCount(in: text) >= 2
         let hasStructuredQuantityIntent = hasDigitQuantitySequence
             && (hasExplicitListIntent || hasGroceryContext || lower.contains("menu"))
-        let hasNumberedMarkerIntent = lower.contains("number one") && lower.contains("number two")
+        let hasNumberedMarkerIntent = numberedMarkerCount(in: text, includeOrdinals: false) >= 2
 
         let hasNotesItemIntent = profile == .notes
             && (
@@ -465,10 +465,13 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
 
         let numbered = prefersNumberedList(text)
         let embedded = embeddedItemSegment(in: text, hasExplicitListIntent: hasExplicitListIntent || hasShoppingIntent)
-        let body = stripListLeadIn(
+        var body = stripListLeadIn(
             from: embedded.itemsText ?? normalizeGroceryDictationText(text, isGroceryContext: hasMessyGroceryIntent || hasShoppingIntent || hasExplicitListIntent),
             numbered: numbered
         )
+        if numbered {
+            body = stripLeadingTextBeforeFirstNumberedMarker(in: body)
+        }
         let allowsBareWordItems = hasShoppingIntent
             || hasMessyGroceryIntent
             || hasGroceryContext
@@ -875,24 +878,22 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
     private func prefersNumberedList(_ text: String) -> Bool {
         let lower = text.lowercased()
         return lower.contains("numbered list")
-            || lower.contains("number one")
-            || (lower.contains(" first ") && lower.contains(" second "))
-            || (lower.hasPrefix("first ") && lower.contains(" second "))
+            || numberedMarkerCount(in: text, includeOrdinals: false) >= 2
     }
 
     private func markNumberedItems(in text: String) -> String {
         var result = text
         let markers = [
-            #"\bnumber one\b"#,
-            #"\bnumber two\b"#,
-            #"\bnumber three\b"#,
-            #"\bnumber four\b"#,
-            #"\bnumber five\b"#,
-            #"\bnumber six\b"#,
-            #"\bnumber seven\b"#,
-            #"\bnumber eight\b"#,
-            #"\bnumber nine\b"#,
-            #"\bnumber ten\b"#,
+            #"\bnumber\s+(?:one|1)\b"#,
+            #"\bnumber\s+(?:two|2)\b"#,
+            #"\bnumber\s+(?:three|3)\b"#,
+            #"\bnumber\s+(?:four|4)\b"#,
+            #"\bnumber\s+(?:five|5)\b"#,
+            #"\bnumber\s+(?:six|6)\b"#,
+            #"\bnumber\s+(?:seven|7)\b"#,
+            #"\bnumber\s+(?:eight|8)\b"#,
+            #"\bnumber\s+(?:nine|9)\b"#,
+            #"\bnumber\s+(?:ten|10)\b"#,
             #"\bfirst\b"#,
             #"\bsecond\b"#,
             #"\bthird\b"#,
@@ -910,6 +911,55 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         }
 
         return result
+    }
+
+    private func numberedMarkerCount(in text: String, includeOrdinals: Bool) -> Int {
+        numberedMarkerRanges(in: text, includeOrdinals: includeOrdinals).count
+    }
+
+    private func numberedMarkerRanges(in text: String, includeOrdinals: Bool) -> [Range<String.Index>] {
+        let spokenMarkers = [
+            "one", "1",
+            "two", "2",
+            "three", "3",
+            "four", "4",
+            "five", "5",
+            "six", "6",
+            "seven", "7",
+            "eight", "8",
+            "nine", "9",
+            "ten", "10"
+        ].joined(separator: "|")
+        let ordinalMarkers = [
+            "first",
+            "second",
+            "third",
+            "fourth",
+            "fifth",
+            "sixth",
+            "seventh",
+            "eighth",
+            "ninth",
+            "tenth"
+        ].joined(separator: "|")
+        let pattern = includeOrdinals
+            ? #"\b(?:number\s+(?:"# + spokenMarkers + #")|"# + ordinalMarkers + #")\b"#
+            : #"\bnumber\s+(?:"# + spokenMarkers + #")\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return []
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex
+            .matches(in: text, range: range)
+            .compactMap { Range($0.range, in: text) }
+    }
+
+    private func stripLeadingTextBeforeFirstNumberedMarker(in text: String) -> String {
+        let includeOrdinals = text.range(of: #"\bnumbered list\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+        guard let firstMarker = numberedMarkerRanges(in: text, includeOrdinals: includeOrdinals).first else {
+            return text
+        }
+        return normalizeWhitespace(String(text[firstMarker.lowerBound...]))
     }
 
     private func normalizeInlineNumbers(in text: String) -> String {

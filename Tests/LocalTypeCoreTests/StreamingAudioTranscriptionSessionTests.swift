@@ -17,7 +17,27 @@ final class StreamingAudioTranscriptionSessionTests: XCTestCase {
 
         XCTAssertEqual(result.text, "hello world")
         XCTAssertEqual(result.chunkCount, 2)
+        XCTAssertEqual(result.coveredDurationSeconds, 2.0, accuracy: 0.001)
         XCTAssertTrue(result.errors.isEmpty)
+    }
+
+    func testTracksCoveredDurationForSuccessfulTranscriptChunksOnly() async throws {
+        let transcriber = StubAudioTranscriber(outputs: [
+            "chunk-0000.wav": "hello",
+            "chunk-0002.wav": "world"
+        ])
+        let session = StreamingAudioTranscriptionSession(transcriber: transcriber)
+
+        await session.enqueue(WavAudioChunk(sequence: 0, url: URL(fileURLWithPath: "/tmp/chunk-0000.wav"), sampleRate: 16_000, sampleCount: 32_000))
+        await session.enqueue(WavAudioChunk(sequence: 1, url: URL(fileURLWithPath: "/tmp/chunk-0001.wav"), sampleRate: 16_000, sampleCount: 16_000))
+        await session.enqueue(WavAudioChunk(sequence: 2, url: URL(fileURLWithPath: "/tmp/chunk-0002.wav"), sampleRate: 16_000, sampleCount: 48_000))
+
+        let result = await session.finish()
+
+        XCTAssertEqual(result.text, "hello world")
+        XCTAssertEqual(result.chunkCount, 2)
+        XCTAssertEqual(result.coveredDurationSeconds, 5.0, accuracy: 0.001)
+        XCTAssertEqual(result.errors.count, 1)
     }
 
     func testKeepsSuccessfulChunksWhenOneChunkFails() async throws {
@@ -33,6 +53,7 @@ final class StreamingAudioTranscriptionSessionTests: XCTestCase {
 
         XCTAssertEqual(result.text, "hello")
         XCTAssertEqual(result.chunkCount, 1)
+        XCTAssertEqual(result.coveredDurationSeconds, 1.0, accuracy: 0.001)
         XCTAssertEqual(result.errors.count, 1)
     }
 
