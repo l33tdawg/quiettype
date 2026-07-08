@@ -667,25 +667,91 @@
       }
 
       .hero {
-        padding-top: 46px;
+        padding: 42px 0 56px;
+      }
+
+      .hero-grid {
+        gap: 34px;
       }
 
       .hero-visual {
         min-height: auto;
         justify-self: stretch;
+        align-items: start;
+        overflow: visible;
       }
 
       .app-frame {
-        width: min(720px, 100%);
+        width: 100%;
+        max-width: 620px;
+        justify-self: center;
+        border-radius: 9px;
+        transform: rotate(-0.7deg);
+      }
+
+      .frame-bar {
+        height: 26px;
+        padding: 0 10px;
+      }
+
+      .traffic {
+        width: 8px;
+        height: 8px;
       }
 
       .terminal-strip {
         position: relative;
         right: auto;
         bottom: auto;
-        margin-top: -20px;
+        width: min(100%, 620px);
+        justify-self: center;
+        margin-top: 12px;
+        padding: 16px 17px;
+        font-size: 12px;
+        line-height: 1.55;
       }
 
+      .stats {
+        margin-top: 30px;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .shell {
+        width: min(100% - 34px, 1180px);
+      }
+
+      .nav-inner {
+        min-height: 70px;
+      }
+
+      .brand {
+        gap: 10px;
+        font-size: 20px;
+      }
+
+      .brand img {
+        width: 31px;
+        height: 31px;
+      }
+
+      .nav-links .button {
+        min-height: 46px;
+        padding: 0 17px;
+      }
+
+      .hero {
+        padding-top: 34px;
+      }
+
+      .hero-proof {
+        font-size: 15px;
+      }
+
+      .app-frame,
+      .terminal-strip {
+        width: calc(100% - 12px);
+      }
     }
 
     @media (prefers-reduced-motion: reduce) {
