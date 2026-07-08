@@ -469,7 +469,15 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             from: embedded.itemsText ?? normalizeGroceryDictationText(text, isGroceryContext: hasMessyGroceryIntent || hasShoppingIntent || hasExplicitListIntent),
             numbered: numbered
         )
-        let items = splitListItems(from: body, numbered: numbered, splitSpaceSeparated: !hasBulletMarkers)
+        let allowsBareWordItems = hasShoppingIntent
+            || hasMessyGroceryIntent
+            || hasGroceryContext
+            || hasStructuredQuantityIntent
+            || hasBulletListIntent
+            || lower.contains("shopping list")
+            || lower.contains("grocery list")
+            || lower.contains("grocery order")
+        let items = splitListItems(from: body, numbered: numbered, splitSpaceSeparated: allowsBareWordItems && !hasBulletMarkers)
 
         let minimumItems = hasExplicitListIntent || hasShoppingIntent || hasMessyGroceryIntent || hasStructuredQuantityIntent || hasNumberedMarkerIntent || hasBulletListIntent ? 2 : 3
         guard items.count >= minimumItems else {

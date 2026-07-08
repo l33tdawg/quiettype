@@ -136,7 +136,7 @@ private final class DictationOverlayPanel: NSPanel {
 final class DictationOverlayController {
     private var panel: DictationOverlayPanel?
     private var presentationID = 0
-    private let chromeInset: CGFloat = 18
+    private let chromeInset: CGFloat = 34
     private static let originXKey = "quiettype.overlayOriginX"
     private static let originYKey = "quiettype.overlayOriginY"
 
@@ -228,7 +228,7 @@ final class DictationOverlayController {
         panel.level = .statusBar
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.ignoresMouseEvents = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
@@ -310,7 +310,7 @@ private struct DictationOverlayView: View {
     var transcript: String?
     var onCancel: (() -> Void)?
     @State private var copiedTranscript = false
-    private let chromeInset: CGFloat = 18
+    private let chromeInset: CGFloat = 34
 
     private var cleanedTranscript: String {
         (transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -363,7 +363,8 @@ private struct DictationOverlayView: View {
             RoundedRectangle(cornerRadius: 18)
                 .stroke(Color.white.opacity(0.16), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.28), radius: 22, y: 12)
+        .compositingGroup()
+        .shadow(color: Color.black.opacity(0.12), radius: 10, y: 5)
     }
 
     private var standardBody: some View {
@@ -439,7 +440,8 @@ private struct DictationOverlayView: View {
             RoundedRectangle(cornerRadius: 18)
                 .stroke(Color.white.opacity(0.22), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.16), radius: 20, y: 10)
+        .compositingGroup()
+        .shadow(color: Color.black.opacity(0.08), radius: 9, y: 4)
     }
 
     private func copyOverlayTranscript(_ text: String) -> Bool {
@@ -10551,7 +10553,7 @@ final class MenuBarModel: ObservableObject {
     }
 
     private var listeningOverlayDetail: String {
-        "Listening · \(String(format: "%.1f", recordingDuration))s · Esc cancels"
+        "\(String(format: "%.1f", recordingDuration))s · Esc cancels"
     }
 
     private static func updatedNoiseFloor(currentFloor: Double, rms: Double) -> Double {

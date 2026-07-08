@@ -383,6 +383,25 @@ final class DictationPipelineTests: XCTestCase {
         XCTAssertEqual(result.text, "Need to get approval from Alice and Bob before we ship.")
     }
 
+    func testDoesNotSplitTaskBoardProseIntoSingleWordBullets() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Slack", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "also it seems when I assign a task to an agent click Send expect that the card would move into in progress but doesn't just disappears from to do list instead of being moved",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertFalse(result.text.contains("\n- "))
+        XCTAssertEqual(
+            result.text,
+            "Also it seems when I assign a task to an agent click Send expect that the card would move into in progress but doesn't just disappears from to do list instead of being moved."
+        )
+    }
+
     func testFormatsSpokenParagraphBreaksInProse() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Notes", profile: .notes)
