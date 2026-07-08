@@ -281,9 +281,23 @@ struct OverlayState {
         tint: .secondary
     )
 
+    static let voiceNote = OverlayState(
+        title: "Voice Note",
+        subtitle: "Recording locally",
+        icon: "mic.fill",
+        tint: .primary
+    )
+
     static let inserted = OverlayState(
         title: "Inserted",
         subtitle: "Nothing left your Mac",
+        icon: "checkmark.circle.fill",
+        tint: .primary
+    )
+
+    static let saved = OverlayState(
+        title: "Saved",
+        subtitle: "Encrypted locally",
         icon: "checkmark.circle.fill",
         tint: .primary
     )
@@ -385,7 +399,7 @@ private struct DictationOverlayView: View {
                     Text(detail ?? state.subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    OverlayWaveform(level: level, isActive: state.title == OverlayState.listening.title)
+                    OverlayWaveform(level: level, isActive: state.title == OverlayState.listening.title || state.title == OverlayState.voiceNote.title)
                         .frame(width: 170, height: 14)
                 }
 
@@ -430,18 +444,39 @@ private struct DictationOverlayView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background {
-            RoundedRectangle(cornerRadius: 18)
-                .fill(.ultraThinMaterial)
-            RoundedRectangle(cornerRadius: 18)
-                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.08))
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(.regularMaterial)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.18),
+                            Color.white.opacity(0.07),
+                            Color.black.opacity(0.018)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.white.opacity(0.22), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.72),
+                            Color.white.opacity(0.18),
+                            Color.black.opacity(0.18)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
         )
         .compositingGroup()
-        .shadow(color: Color.black.opacity(0.08), radius: 9, y: 4)
+        .shadow(color: Color.black.opacity(0.14), radius: 18, y: 9)
     }
 
     private func copyOverlayTranscript(_ text: String) -> Bool {
@@ -4823,54 +4858,12 @@ private extension Array {
 private struct QuickTooltipModifier: ViewModifier {
     let text: String
     @AppStorage("quiettype.showTooltips") private var showTooltips = true
-    @State private var isPresented = false
-    @State private var hoverTask: Task<Void, Never>?
 
     func body(content: Content) -> some View {
-        Group {
-            if showTooltips {
-                content
-                    .onHover { hovering in
-                        hoverTask?.cancel()
-                        if hovering {
-                            hoverTask = Task { @MainActor in
-                                try? await Task.sleep(nanoseconds: 150_000_000)
-                                guard !Task.isCancelled else {
-                                    return
-                                }
-                                withAnimation(.easeOut(duration: 0.12)) {
-                                    isPresented = true
-                                }
-                            }
-                        } else {
-                            withAnimation(.easeOut(duration: 0.08)) {
-                                isPresented = false
-                            }
-                        }
-                    }
-                    .popover(isPresented: $isPresented, arrowEdge: .top) {
-                        Text(text)
-                            .font(.caption)
-                            .foregroundStyle(.primary)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(width: 300, alignment: .leading)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                    }
-            } else {
-                content
-                    .onAppear {
-                        hoverTask?.cancel()
-                        isPresented = false
-                    }
-            }
-        }
-        .onChange(of: showTooltips) { enabled in
-            if !enabled {
-                hoverTask?.cancel()
-                isPresented = false
-            }
+        if showTooltips {
+            content.help(text)
+        } else {
+            content
         }
     }
 }
@@ -4928,7 +4921,10 @@ private struct VoiceNotesIntroPanel: View {
                         model.isVoiceNoteRecording ? "Stop" : "Record first note",
                         systemImage: model.isVoiceNoteRecording ? "stop.circle" : "mic.circle"
                     )
+                    .frame(maxWidth: .infinity)
+                    .contentShape(RoundedRectangle(cornerRadius: 8))
                 }
+                .frame(minWidth: 210)
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
                 .disabled(model.isVoiceNoteTranscribing || model.isRecording || model.isTrainingRecording || model.isTeachingRecording)
                 .quickTooltip(model.isVoiceNoteRecording ? "Stop recording and transcribe this voice note locally." : "Start an encrypted local voice note. Transcript copies go to SAGE only when that setting is on.")
@@ -6631,6 +6627,7 @@ private struct QuietButtonStyle: ButtonStyle {
             .padding(.vertical, prominence == .ghost ? 7 : 9)
             .background(background(configuration: configuration))
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(border(configuration: configuration), lineWidth: prominence == .ghost ? 0 : 1)
@@ -9064,24 +9061,32 @@ final class MenuBarModel: ObservableObject {
             return
         }
 
-        let handleEscape: (NSEvent) -> Void = { [weak self] event in
+        let handleEscape: (NSEvent) -> Bool = { [weak self] event in
             guard event.keyCode == 53 else {
-                return
+                return false
+            }
+            let shouldCancel = self?.isRecording == true || self?.isVoiceNoteRecording == true
+            guard shouldCancel else {
+                return false
             }
             Task { @MainActor [weak self] in
-                guard let self, self.isRecording else {
+                guard let self else {
                     return
                 }
-                await self.cancelRecording()
+                if self.isRecording {
+                    await self.cancelRecording()
+                } else if self.isVoiceNoteRecording {
+                    await self.cancelVoiceNoteRecording()
+                }
             }
+            return true
         }
 
         cancelKeyGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
-            handleEscape(event)
+            _ = handleEscape(event)
         }
         cancelKeyLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            handleEscape(event)
-            return event
+            handleEscape(event) ? nil : event
         }
     }
 
@@ -9998,6 +10003,7 @@ final class MenuBarModel: ObservableObject {
             microphonePermission = .granted
             updatePermissionsStartupStep()
             isVoiceNoteRecording = true
+            showVoiceNoteOverlay()
         } catch {
             voiceNoteCaptureService = nil
             voiceNoteStartedAt = nil
@@ -10010,6 +10016,28 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
+    func cancelVoiceNoteRecording() async {
+        guard isVoiceNoteRecording else {
+            return
+        }
+
+        voiceNoteCaptureService?.stop()
+        voiceNoteCaptureService = nil
+        isVoiceNoteRecording = false
+        isVoiceNoteTranscribing = false
+        voiceNoteSamples = []
+        voiceNoteFrameCount = 0
+        voiceNoteDuration = 0
+        voiceNoteInputLevel = 0
+        voiceNoteStartedAt = nil
+        peakVoiceNoteInputRMS = 0
+        voiceNoteNoiseFloorRMS = 0.006
+        statusMessage = "Voice note cancelled"
+        lastError = nil
+        overlayController.show(state: .cancelled, detail: "Voice note discarded")
+        overlayController.hide(after: 0.9)
+    }
+
     private func stopVoiceNoteRecording() async {
         guard isVoiceNoteRecording else {
             return
@@ -10019,6 +10047,7 @@ final class MenuBarModel: ObservableObject {
         voiceNoteCaptureService = nil
         isVoiceNoteRecording = false
         isVoiceNoteTranscribing = true
+        overlayController.show(state: .processing, detail: "Transcribing voice note")
         defer {
             isVoiceNoteTranscribing = false
             voiceNoteInputLevel = 0
@@ -10030,12 +10059,16 @@ final class MenuBarModel: ObservableObject {
             statusMessage = "No audio captured"
             lastError = nil
             voiceNoteSamples = []
+            overlayController.show(state: .cancelled, detail: "No audio captured")
+            overlayController.hide(after: 1.1)
             return
         }
         guard peakVoiceNoteInputRMS >= Self.minimumUsableRMS else {
             statusMessage = "No usable microphone signal"
             lastError = "Check the selected input device in macOS Sound settings, then try again."
             voiceNoteSamples = []
+            overlayController.show(state: .cancelled, detail: "No usable signal")
+            overlayController.hide(after: 1.1)
             return
         }
 
@@ -10067,6 +10100,8 @@ final class MenuBarModel: ObservableObject {
             selectedVoiceNoteID = id
             statusMessage = "Voice note saved locally"
             lastError = nil
+            overlayController.show(state: .saved, detail: "Voice note saved", transcript: polishedText)
+            overlayController.hide(after: 2.4)
             if saveVoiceNotesToSage {
                 await sendVoiceNoteToSage(id: id)
             }
@@ -10082,6 +10117,8 @@ final class MenuBarModel: ObservableObject {
                 lastError = String(describing: error)
             }
             voiceNoteSamples = []
+            overlayController.show(state: .cancelled, detail: statusMessage)
+            overlayController.hide(after: 1.4)
         }
     }
 
@@ -10106,7 +10143,29 @@ final class MenuBarModel: ObservableObject {
         if voiceNoteDuration >= Self.maxDictationDurationSeconds && isVoiceNoteRecording {
             statusMessage = "5 minute note limit reached"
             await stopVoiceNoteRecording()
+            return
         }
+
+        if isVoiceNoteRecording {
+            showVoiceNoteOverlay()
+        }
+    }
+
+    private var voiceNoteOverlayDetail: String {
+        "\(String(format: "%.1f", voiceNoteDuration))s · Esc cancels"
+    }
+
+    private func showVoiceNoteOverlay() {
+        overlayController.show(
+            state: .voiceNote,
+            level: voiceNoteInputLevel,
+            detail: voiceNoteOverlayDetail,
+            onCancel: { [weak self] in
+                Task { @MainActor [weak self] in
+                    await self?.cancelVoiceNoteRecording()
+                }
+            }
+        )
     }
 
     private func polishVoiceNoteTranscript(_ rawTranscript: String) async throws -> String {
