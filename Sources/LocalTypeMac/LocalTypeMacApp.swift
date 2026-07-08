@@ -126,9 +126,27 @@ private final class DictationOverlayPanel: NSPanel {
         didDrag = false
     }
 
-    private var cancelHitRect: NSRect {
+    fileprivate var cancelHitRect: NSRect {
         let size = frame.size
-        return NSRect(x: size.width - 66, y: size.height - 66, width: 52, height: 52)
+        return NSRect(
+            x: max(size.width - 118, 0),
+            y: 24,
+            width: 104,
+            height: max(size.height - 48, 52)
+        )
+    }
+}
+
+@MainActor
+private final class DictationOverlayHostingView: NSHostingView<DictationOverlayView> {
+    var cancelHitRect: NSRect?
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .arrow)
+        if let cancelHitRect {
+            addCursorRect(cancelHitRect.intersection(bounds), cursor: .pointingHand)
+        }
     }
 }
 
@@ -158,6 +176,7 @@ private final class DictationOverlayPresentation: ObservableObject {
 @MainActor
 final class DictationOverlayController {
     private var panel: DictationOverlayPanel?
+    private var hostingView: DictationOverlayHostingView?
     private let presentation = DictationOverlayPresentation()
     private var presentationID = 0
     private let chromeInset: CGFloat = 34
@@ -199,11 +218,16 @@ final class DictationOverlayController {
             width: contentSize.width + chromeInset * 2,
             height: contentSize.height + chromeInset * 2
         ))
-        if panel.contentView == nil {
-            let hostingView = NSHostingView(rootView: DictationOverlayView(presentation: presentation))
+        if hostingView == nil {
+            let hostingView = DictationOverlayHostingView(rootView: DictationOverlayView(presentation: presentation))
             hostingView.wantsLayer = true
             hostingView.layer?.backgroundColor = NSColor.clear.cgColor
             panel.contentView = hostingView
+            self.hostingView = hostingView
+        }
+        if let hostingView {
+            hostingView.cancelHitRect = hasAction ? panel.cancelHitRect : nil
+            panel.invalidateCursorRects(for: hostingView)
         }
         position(panel)
         panel.orderFrontRegardless()
@@ -7629,28 +7653,14 @@ final class MenuBarModel: ObservableObject {
         lastWordsPerMinute = UserDefaults.standard.integer(forKey: Self.lastWordsPerMinuteKey)
         availableUpdate = Self.loadAvailableUpdate()
         hiddenReviewMemoryIDs = Set(UserDefaults.standard.stringArray(forKey: Self.hiddenReviewMemoryIDsKey) ?? [])
-        historyReviewEnabled = true
-        UserDefaults.standard.set(true, forKey: Self.historyReviewEnabledKey)
-        if UserDefaults.standard.object(forKey: Self.saveVoiceNotesToSageKey) == nil {
-            saveVoiceNotesToSage = true
-            UserDefaults.standard.set(true, forKey: Self.saveVoiceNotesToSageKey)
-        } else {
-            saveVoiceNotesToSage = UserDefaults.standard.bool(forKey: Self.saveVoiceNotesToSageKey)
-        }
+        historyReviewEnabled = storedBool(forKey: Self.historyReviewEnabledKey, defaultValue: true)
+        saveVoiceNotesToSage = storedBool(forKey: Self.saveVoiceNotesToSageKey, defaultValue: true)
         if let storedSpelling = UserDefaults.standard.string(forKey: Self.spellingPreferenceKey),
            let preference = SpellingPreference(rawValue: storedSpelling) {
             spellingPreference = preference
         }
-        if UserDefaults.standard.object(forKey: Self.profanityFilterEnabledKey) == nil {
-            profanityFilterEnabled = true
-        } else {
-            profanityFilterEnabled = UserDefaults.standard.bool(forKey: Self.profanityFilterEnabledKey)
-        }
-        if UserDefaults.standard.object(forKey: Self.typingReminderEnabledKey) == nil {
-            typingReminderEnabled = true
-        } else {
-            typingReminderEnabled = UserDefaults.standard.bool(forKey: Self.typingReminderEnabledKey)
-        }
+        profanityFilterEnabled = storedBool(forKey: Self.profanityFilterEnabledKey, defaultValue: true)
+        typingReminderEnabled = storedBool(forKey: Self.typingReminderEnabledKey, defaultValue: true)
         if let storedHotKey = UserDefaults.standard.string(forKey: Self.hotKeyChoiceKey),
            let choice = HotKeyChoice(rawValue: storedHotKey) {
             hotKeyChoice = choice
@@ -7672,6 +7682,14 @@ final class MenuBarModel: ObservableObject {
         Task { @MainActor [weak self] in
             self?.startAppServices()
         }
+    }
+
+    private func storedBool(forKey key: String, defaultValue: Bool) -> Bool {
+        guard UserDefaults.standard.object(forKey: key) != nil else {
+            UserDefaults.standard.set(defaultValue, forKey: key)
+            return defaultValue
+        }
+        return UserDefaults.standard.bool(forKey: key)
     }
 
     deinit {
