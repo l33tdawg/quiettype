@@ -226,7 +226,9 @@
       position: relative;
       min-height: 580px;
       display: grid;
-      place-items: center;
+      align-content: center;
+      justify-items: end;
+      gap: 14px;
       justify-self: end;
     }
 
@@ -249,7 +251,6 @@
       background: var(--panel);
       box-shadow: var(--shadow);
       overflow: hidden;
-      transform: rotate(-1.2deg);
     }
 
     .frame-bar {
@@ -276,10 +277,10 @@
     }
 
     .terminal-strip {
-      position: absolute;
-      right: 0;
-      bottom: 18px;
+      position: relative;
+      z-index: 1;
       width: min(520px, 92%);
+      justify-self: end;
       padding: 18px 20px;
       border: 1px solid rgba(255, 255, 255, 0.16);
       border-radius: 8px;
@@ -686,7 +687,6 @@
         max-width: 620px;
         justify-self: center;
         border-radius: 9px;
-        transform: rotate(-0.7deg);
       }
 
       .frame-bar {
@@ -700,12 +700,8 @@
       }
 
       .terminal-strip {
-        position: relative;
-        right: auto;
-        bottom: auto;
         width: min(100%, 620px);
         justify-self: center;
-        margin-top: 12px;
         padding: 16px 17px;
         font-size: 12px;
         line-height: 1.55;
