@@ -133,8 +133,32 @@ private final class DictationOverlayPanel: NSPanel {
 }
 
 @MainActor
+private final class DictationOverlayPresentation: ObservableObject {
+    @Published var state = OverlayState.listening
+    @Published var level = 0.0
+    @Published var detail: String?
+    @Published var transcript: String?
+    @Published var onCancel: (() -> Void)?
+
+    func update(
+        state: OverlayState,
+        level: Double,
+        detail: String?,
+        transcript: String?,
+        onCancel: (() -> Void)?
+    ) {
+        self.state = state
+        self.level = level
+        self.detail = detail
+        self.transcript = transcript
+        self.onCancel = onCancel
+    }
+}
+
+@MainActor
 final class DictationOverlayController {
     private var panel: DictationOverlayPanel?
+    private let presentation = DictationOverlayPresentation()
     private var presentationID = 0
     private let chromeInset: CGFloat = 34
     private static let originXKey = "quiettype.overlayOriginX"
@@ -154,6 +178,13 @@ final class DictationOverlayController {
         let hasAction = onCancel != nil
         panel.cancelAction = onCancel
         panel.ignoresMouseEvents = false
+        presentation.update(
+            state: state,
+            level: level,
+            detail: detail,
+            transcript: transcript,
+            onCancel: onCancel
+        )
         let isTypingReminder = state.title == OverlayState.typingReminder.title
         let compactWidth: CGFloat = hasAction ? 328 : 280
         let contentSize: NSSize
@@ -168,16 +199,12 @@ final class DictationOverlayController {
             width: contentSize.width + chromeInset * 2,
             height: contentSize.height + chromeInset * 2
         ))
-        let hostingView = NSHostingView(rootView: DictationOverlayView(
-            state: state,
-            level: level,
-            detail: detail,
-            transcript: transcript,
-            onCancel: onCancel
-        ))
-        hostingView.wantsLayer = true
-        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
-        panel.contentView = hostingView
+        if panel.contentView == nil {
+            let hostingView = NSHostingView(rootView: DictationOverlayView(presentation: presentation))
+            hostingView.wantsLayer = true
+            hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+            panel.contentView = hostingView
+        }
         position(panel)
         panel.orderFrontRegardless()
         self.panel = panel
@@ -318,13 +345,29 @@ struct OverlayState {
 }
 
 private struct DictationOverlayView: View {
-    var state: OverlayState
-    var level: Double
-    var detail: String?
-    var transcript: String?
-    var onCancel: (() -> Void)?
+    @ObservedObject var presentation: DictationOverlayPresentation
     @State private var copiedTranscript = false
     private let chromeInset: CGFloat = 34
+
+    private var state: OverlayState {
+        presentation.state
+    }
+
+    private var level: Double {
+        presentation.level
+    }
+
+    private var detail: String? {
+        presentation.detail
+    }
+
+    private var transcript: String? {
+        presentation.transcript
+    }
+
+    private var onCancel: (() -> Void)? {
+        presentation.onCancel
+    }
 
     private var cleanedTranscript: String {
         (transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -493,30 +536,37 @@ private struct OverlayWaveform: View {
     private let bars = 18
 
     var body: some View {
-        HStack(alignment: .center, spacing: 3) {
-            ForEach(0..<bars, id: \.self) { index in
-                Capsule()
-                    .fill(Color.primary.opacity(opacity(for: index)))
-                    .frame(width: 4, height: barHeight(index))
-                    .animation(.easeOut(duration: 0.10), value: level)
+        TimelineView(.animation(minimumInterval: 1.0 / 36.0, paused: !isActive)) { timeline in
+            let timestamp = timeline.date.timeIntervalSinceReferenceDate
+            HStack(alignment: .center, spacing: 3) {
+                ForEach(0..<bars, id: \.self) { index in
+                    Capsule()
+                        .fill(Color.primary.opacity(opacity(for: index, timestamp: timestamp)))
+                        .frame(width: 4, height: barHeight(index, timestamp: timestamp))
+                }
             }
         }
         .opacity(isActive ? 1 : 0.28)
     }
 
-    private func barHeight(_ index: Int) -> CGFloat {
+    private func barHeight(_ index: Int, timestamp: TimeInterval) -> CGFloat {
         let phase = abs(Double(index) - Double(bars - 1) / 2.0)
         let shape = 1.0 - min(phase / Double(bars), 0.65)
-        let base = isActive ? min(max(level, 0), 1) : 0
-        return CGFloat(4 + (base * shape * 18))
+        let clampedLevel = isActive ? min(max(level, 0), 1) : 0
+        let localPulse = (sin(timestamp * 14.0 + Double(index) * 0.72) + 1.0) / 2.0
+        let shimmer = 0.74 + (localPulse * 0.30)
+        let idleMotion = isActive ? 1.2 + (localPulse * 2.4) : 0
+        return CGFloat(4 + idleMotion + (clampedLevel * shape * shimmer * 18))
     }
 
-    private func opacity(for index: Int) -> Double {
+    private func opacity(for index: Int, timestamp: TimeInterval) -> Double {
         guard isActive else {
             return 0.20
         }
-        let threshold = Int((min(max(level, 0), 1) * Double(bars)).rounded(.up))
-        return index < threshold ? 0.78 : 0.16
+        let clampedLevel = min(max(level, 0), 1)
+        let threshold = Int((clampedLevel * Double(bars)).rounded(.up))
+        let localPulse = (sin(timestamp * 12.0 + Double(index) * 0.62) + 1.0) / 2.0
+        return index < max(1, threshold) ? 0.58 + (localPulse * 0.22) : 0.12 + (localPulse * 0.08)
     }
 }
 
@@ -7347,7 +7397,6 @@ final class MenuBarModel: ObservableObject {
     @Published var totalTranslatedWordCount = 0
     @Published var lastWordsPerMinute = 0
     @Published var inputLevel = 0.0
-    @Published var capturedFrameCount = 0
     @Published var lastRecordingURL: URL?
     @Published var partialChunkCount = 0
     @Published var lastLatencyMS: Int?
@@ -7456,6 +7505,7 @@ final class MenuBarModel: ObservableObject {
     private var voiceNoteNoiseFloorRMS = 0.006
     private var trainingFrameCount = 0
     private var teachingFrameCount = 0
+    private var capturedFrameCount = 0
     private var voiceNoteFrameCount = 0
     private var lastTrainingAudioURL: URL?
     private var voiceNoteAudioPlayer: AVAudioPlayer?
@@ -7467,6 +7517,10 @@ final class MenuBarModel: ObservableObject {
     private var streamingTranscriptionSession: StreamingAudioTranscriptionSession?
     private var pendingStreamingChunks: [WavAudioChunk] = []
     private var activeTranscriptionOptions = AudioTranscriptionOptions.none
+    private var lastListeningUIUpdateAt = Date.distantPast
+    private var lastListeningOverlayUpdateAt = Date.distantPast
+    private var lastVoiceNoteOverlayUpdateAt = Date.distantPast
+    private var lastVoiceNoteUIUpdateAt = Date.distantPast
     private var hotKeyController: CarbonHotKeyController?
     private var functionKeyMonitor: FunctionKeyToggleMonitor?
     private var typingReminderMonitor: TypingReminderMonitor?
@@ -7498,6 +7552,8 @@ final class MenuBarModel: ObservableObject {
     private static let maxReviewAudioFiles = 10
     private static let streamingTranscriptMinimumDuration = 8.0
     private static let minimumUsableRMS = 0.0015
+    private static let recordingUIRefreshInterval = 0.10
+    private static let recordingOverlayRefreshInterval = 0.10
 
     init() {
         calibrationSavedCount = UserDefaults.standard.integer(forKey: Self.calibrationSavedCountKey)
@@ -9160,6 +9216,11 @@ final class MenuBarModel: ObservableObject {
     }
 
     private func toggleFromHotKey() async {
+        if isVoiceNoteRecording || isVoiceNoteTranscribing {
+            statusMessage = isVoiceNoteRecording ? "Voice note recording" : "Voice note transcribing"
+            lastError = "Finish or cancel the voice note before starting dictation."
+            return
+        }
         if let lastHotKeyToggleAt, Date().timeIntervalSince(lastHotKeyToggleAt) < 0.45 {
             return
         }
@@ -9860,6 +9921,16 @@ final class MenuBarModel: ObservableObject {
     }
 
     func startRecording() async {
+        guard !isVoiceNoteRecording, !isVoiceNoteTranscribing else {
+            statusMessage = isVoiceNoteRecording ? "Voice note recording" : "Voice note transcribing"
+            lastError = "Finish or cancel the voice note before starting dictation."
+            return
+        }
+        guard !isTrainingRecording, !isTeachingRecording else {
+            statusMessage = "Recording in progress"
+            lastError = "Stop the current recording before starting dictation."
+            return
+        }
         guard await prepareForDictation() else {
             return
         }
@@ -9884,6 +9955,8 @@ final class MenuBarModel: ObservableObject {
         try? FileManager.default.removeItem(at: chunkDirectory)
         lastRecordingURL = nil
         recordingStartedAt = Date()
+        lastListeningUIUpdateAt = .distantPast
+        lastListeningOverlayUpdateAt = .distantPast
 
         let service = AVAudioCaptureService { [weak self] frame in
             await self?.record(frame)
@@ -9898,7 +9971,7 @@ final class MenuBarModel: ObservableObject {
             isRecording = true
             recordStartedSession()
             statusMessage = "Listening locally"
-            showListeningOverlay()
+            showListeningOverlay(force: true)
         } catch {
             captureService = nil
             recordingStartedAt = nil
@@ -9989,6 +10062,8 @@ final class MenuBarModel: ObservableObject {
         peakVoiceNoteInputRMS = 0
         voiceNoteNoiseFloorRMS = 0.006
         voiceNoteStartedAt = Date()
+        lastVoiceNoteOverlayUpdateAt = .distantPast
+        lastVoiceNoteUIUpdateAt = .distantPast
         lastError = nil
         statusMessage = "Recording voice note"
 
@@ -10003,7 +10078,7 @@ final class MenuBarModel: ObservableObject {
             microphonePermission = .granted
             updatePermissionsStartupStep()
             isVoiceNoteRecording = true
-            showVoiceNoteOverlay()
+            showVoiceNoteOverlay(force: true)
         } catch {
             voiceNoteCaptureService = nil
             voiceNoteStartedAt = nil
@@ -10054,6 +10129,9 @@ final class MenuBarModel: ObservableObject {
             voiceNoteStartedAt = nil
         }
 
+        if let voiceNoteStartedAt {
+            voiceNoteDuration = Date().timeIntervalSince(voiceNoteStartedAt)
+        }
         let duration = voiceNoteDuration
         guard voiceNoteFrameCount > 0 else {
             statusMessage = "No audio captured"
@@ -10130,23 +10208,25 @@ final class MenuBarModel: ObservableObject {
         voiceNoteFrameCount += 1
         voiceNoteSampleRate = frame.sampleRate
         voiceNoteSamples.append(contentsOf: frame.samples)
-        if let voiceNoteStartedAt {
-            voiceNoteDuration = Date().timeIntervalSince(voiceNoteStartedAt)
-        }
+        let elapsed = voiceNoteStartedAt.map { Date().timeIntervalSince($0) } ?? voiceNoteDuration
         let rms = sqrt(frame.samples.reduce(0.0) { partial, sample in
             partial + Double(sample * sample)
         } / Double(max(frame.samples.count, 1)))
         peakVoiceNoteInputRMS = max(peakVoiceNoteInputRMS, rms)
         voiceNoteNoiseFloorRMS = Self.updatedNoiseFloor(currentFloor: voiceNoteNoiseFloorRMS, rms: rms)
-        voiceNoteInputLevel = Self.displayLevel(rms: rms, noiseFloor: voiceNoteNoiseFloorRMS, previous: voiceNoteInputLevel)
+        let displayLevel = Self.displayLevel(rms: rms, noiseFloor: voiceNoteNoiseFloorRMS, previous: voiceNoteInputLevel)
 
-        if voiceNoteDuration >= Self.maxDictationDurationSeconds && isVoiceNoteRecording {
+        if elapsed >= Self.maxDictationDurationSeconds && isVoiceNoteRecording {
+            voiceNoteDuration = elapsed
+            voiceNoteInputLevel = displayLevel
             statusMessage = "5 minute note limit reached"
             await stopVoiceNoteRecording()
             return
         }
 
-        if isVoiceNoteRecording {
+        if shouldRefreshRecordingUI(&lastVoiceNoteUIUpdateAt, interval: Self.recordingUIRefreshInterval) {
+            voiceNoteDuration = elapsed
+            voiceNoteInputLevel = displayLevel
             showVoiceNoteOverlay()
         }
     }
@@ -10155,7 +10235,10 @@ final class MenuBarModel: ObservableObject {
         "\(String(format: "%.1f", voiceNoteDuration))s · Esc cancels"
     }
 
-    private func showVoiceNoteOverlay() {
+    private func showVoiceNoteOverlay(force: Bool = false) {
+        guard shouldRefreshRecordingUI(&lastVoiceNoteOverlayUpdateAt, interval: Self.recordingOverlayRefreshInterval, force: force) else {
+            return
+        }
         overlayController.show(
             state: .voiceNote,
             level: voiceNoteInputLevel,
@@ -10489,6 +10572,9 @@ final class MenuBarModel: ObservableObject {
         captureService?.stop()
         captureService = nil
         isRecording = false
+        if let recordingStartedAt {
+            recordingDuration = Date().timeIntervalSince(recordingStartedAt)
+        }
         lastDictationDuration = recordingDuration
         overlayController.show(state: .processing)
 
@@ -10576,16 +10662,14 @@ final class MenuBarModel: ObservableObject {
         capturedFrameCount += 1
         recordingSampleRate = frame.sampleRate
         recordedSamples.append(contentsOf: frame.samples)
-        if let recordingStartedAt {
-            recordingDuration = Date().timeIntervalSince(recordingStartedAt)
-        }
+        let elapsed = recordingStartedAt.map { Date().timeIntervalSince($0) } ?? recordingDuration
         let rms = sqrt(frame.samples.reduce(0.0) { partial, sample in
             partial + Double(sample * sample)
         } / Double(max(frame.samples.count, 1)))
         peakInputRMS = max(peakInputRMS, rms)
         inputNoiseFloorRMS = Self.updatedNoiseFloor(currentFloor: inputNoiseFloorRMS, rms: rms)
-        inputLevel = Self.displayLevel(rms: rms, noiseFloor: inputNoiseFloorRMS, previous: inputLevel)
-        peakInputLevel = max(peakInputLevel, inputLevel)
+        let displayLevel = Self.displayLevel(rms: rms, noiseFloor: inputNoiseFloorRMS, previous: inputLevel)
+        peakInputLevel = max(peakInputLevel, displayLevel)
 
         do {
             let chunks = try chunker.append(frame, outputDirectory: chunkDirectory)
@@ -10601,12 +10685,16 @@ final class MenuBarModel: ObservableObject {
         }
 
         if chunker.reachedMaxDuration && isRecording {
+            recordingDuration = elapsed
+            inputLevel = displayLevel
             statusMessage = "5 minute limit reached"
             await stopRecording()
             return
         }
 
-        if isRecording {
+        if isRecording, shouldRefreshRecordingUI(&lastListeningUIUpdateAt, interval: Self.recordingUIRefreshInterval) {
+            recordingDuration = elapsed
+            inputLevel = displayLevel
             showListeningOverlay()
         }
     }
@@ -10639,7 +10727,23 @@ final class MenuBarModel: ObservableObject {
         return smoothed < 0.035 ? 0 : min(smoothed, 1)
     }
 
-    private func showListeningOverlay() {
+    private func shouldRefreshRecordingUI(
+        _ lastRefresh: inout Date,
+        interval: TimeInterval,
+        force: Bool = false
+    ) -> Bool {
+        let now = Date()
+        guard force || now.timeIntervalSince(lastRefresh) >= interval else {
+            return false
+        }
+        lastRefresh = now
+        return true
+    }
+
+    private func showListeningOverlay(force: Bool = false) {
+        guard shouldRefreshRecordingUI(&lastListeningOverlayUpdateAt, interval: Self.recordingOverlayRefreshInterval, force: force) else {
+            return
+        }
         overlayController.show(
             state: .listening,
             level: inputLevel,
