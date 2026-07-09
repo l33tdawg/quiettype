@@ -604,11 +604,6 @@
       margin-top: 22px;
     }
 
-    .download-metrics img {
-      display: block;
-      height: 26px;
-    }
-
     .download-metrics a {
       color: var(--ink);
       font-size: 14px;
@@ -616,6 +611,17 @@
       text-decoration: underline;
       text-decoration-thickness: 1px;
       text-underline-offset: 4px;
+    }
+
+    .download-metrics .release-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border-radius: 4px;
+      background: var(--black);
+      color: var(--white);
+      text-decoration: none;
     }
 
     footer {
@@ -965,9 +971,10 @@
         <div>
           <h2>Public beta now available.</h2>
           <p>QuietType 1.0.0 beta 21 is signed and ready for Apple Silicon Macs. Download the DMG from GitHub, drag QuietType into Applications and start local dictation.</p>
-          <div class="download-metrics" aria-label="GitHub release download metrics">
-            <img src="https://img.shields.io/github/downloads/l33tdawg/quiettype/total?style=flat-square&label=Total%20downloads&color=111111" alt="Total QuietType GitHub release downloads">
-            <a href="https://github.com/l33tdawg/quiettype/releases">View releases</a>
+          <div class="download-metrics" aria-label="GitHub release links">
+            <a class="release-pill" href="https://github.com/l33tdawg/quiettype/releases/tag/v1.0.0-beta.21">Beta 21 release</a>
+            <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-beta.21/QuietType-1.0.0-beta.21-macOS-arm64.dmg">Download DMG</a>
+            <a href="https://github.com/l33tdawg/quiettype/releases">All releases</a>
           </div>
         </div>
         <div class="release-card">
