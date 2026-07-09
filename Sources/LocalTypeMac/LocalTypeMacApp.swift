@@ -2221,12 +2221,13 @@ struct TesterView: View {
     }
 
     private var metricsGrid: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14), count: 4), spacing: 14) {
+        HStack(spacing: 14) {
             MetricTile(icon: "text.bubble", value: "\(model.sessionsToday)", label: "Sessions today", tooltip: "Completed dictation sessions recorded today on this Mac.")
             MetricTile(icon: "speedometer", value: model.currentWordsPerMinuteLabel, label: "Speaking pace", tooltip: "Words per minute from the current or most recent dictation session.")
             MetricTile(icon: "brain.head.profile", value: "\(model.sageLessonCount)", label: "Reviews", tooltip: "Correction and review memories available through local SAGE.")
             MetricTile(icon: "checklist.checked", value: "\(model.transcriptNoteCount)", label: "Transcriptions", tooltip: "Transcript review notes QuietType can use for correction and inspection.")
         }
+        .frame(maxWidth: .infinity)
         .anchorPreference(key: GuideSpotlightPreferenceKey.self, value: .bounds) { anchor in
             [.privacy: anchor]
         }
