@@ -457,7 +457,101 @@ final class DictationPipelineTests: XCTestCase {
         XCTAssertFalse(result.text.contains("\n1. "))
         XCTAssertEqual(
             result.text,
-            "I think. We should detect instead for the utterance of the word like number followed by the numeral because I think that's probably what's a better indicator right so when I say I want to yeah it's obvious after that the next couple of items would probably be the items on the list right I mean that's kind of logical makes sense to me."
+            "I think we should detect instead for the utterance of the word like number followed by the numeral because I think that's probably what's a better indicator right so when I say I want to yeah it's obvious after that the next couple of items would probably be the items on the list right I mean that's kind of logical makes sense to me."
+        )
+    }
+
+    func testDoesNotSplitMaybeWeShouldIntoStandaloneSentence() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Slack", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "did we address the review section and the fact that on the main page that box doesn't really make sense question mark maybe we should replace it with something else or remove it altogether",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertFalse(result.text.contains("Maybe."))
+        XCTAssertFalse(result.text.contains("\n\nWe should"))
+        XCTAssertEqual(
+            result.text,
+            "Did we address the review section and the fact that on the main page that box doesn't really make sense? Maybe we should replace it with something else or remove it altogether."
+        )
+    }
+
+    func testDoesNotInferSentenceBoundaryBeforeInlinePlease() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Slack", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "before you merge the update can you please check the release notes and make sure the download links point to beta nineteen",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "Before you merge the update can you please check the release notes and make sure the download links point to beta nineteen."
+        )
+    }
+
+    func testDoesNotCreateParagraphsWithoutTopicShiftCues() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Slack", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "the review number on the overview page is confusing because users do not know whether it means edits corrections or transcript notes and the label does not explain why it matters so maybe we should remove that card or replace it with something clearer like sessions today or words saved this week",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertFalse(result.text.contains("\n\n"))
+        XCTAssertFalse(result.text.contains("Maybe."))
+        XCTAssertEqual(
+            result.text,
+            "The review number on the overview page is confusing because users do not know whether it means edits corrections or transcript notes and the label does not explain why it matters so maybe we should remove that card or replace it with something clearer like sessions today or words saved this week."
+        )
+    }
+
+    func testRuleEditorDoesNotGuessContextualASRConfusion() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Slack", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "let's do a deep dive into the heuristics and see how we can improve this paragraph baking stuff and the logical sentence boundaries for long prose",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "Let's do a deep dive into the heuristics and see how we can improve this paragraph baking stuff and the logical sentence boundaries for long prose."
+        )
+    }
+
+    func testKeepsRealBakingWhenContextIsFood() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "we should improve the baking process for sourdough and write down the oven temperature after each test",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "We should improve the baking process for sourdough and write down the oven temperature after each test."
         )
     }
 

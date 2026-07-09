@@ -4,14 +4,14 @@ public struct OllamaSemanticEditor: SemanticEditor {
     private let endpoint: URL
     private let model: String
     private let timeoutSeconds: TimeInterval
-    private let promptBuilder: PromptBuilder
+    private let promptBuilder: EditorPromptBuilding
     private let fallback: SemanticEditor?
 
     public init(
         endpoint: URL = URL(string: "http://127.0.0.1:11434/api/generate")!,
         model: String,
         timeoutSeconds: TimeInterval = 2.0,
-        promptBuilder: PromptBuilder = PromptBuilder(),
+        promptBuilder: EditorPromptBuilding = PromptBuilder(),
         fallback: SemanticEditor? = RuleBasedSemanticEditor()
     ) {
         self.endpoint = endpoint

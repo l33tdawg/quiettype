@@ -12271,7 +12271,7 @@ final class MenuBarModel: ObservableObject {
         var label: String {
             switch self {
             case .ruleBased: "Rule"
-            case .ollama: "Ollama"
+            case .ollama: "Rule + LLM"
             }
         }
 
@@ -12280,7 +12280,14 @@ final class MenuBarModel: ObservableObject {
             case .ruleBased:
                 return RuleBasedSemanticEditor()
             case .ollama:
-                return OllamaSemanticEditor(model: model, fallback: RuleBasedSemanticEditor())
+                return SanityCheckingSemanticEditor(
+                    primary: RuleBasedSemanticEditor(),
+                    sanityEditor: OllamaSemanticEditor(
+                        model: model,
+                        promptBuilder: SanityPromptBuilder(),
+                        fallback: nil
+                    )
+                )
             }
         }
     }

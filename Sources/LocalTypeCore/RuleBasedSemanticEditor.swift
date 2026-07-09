@@ -202,9 +202,79 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             return result
         }
 
-        let breakPattern = #"(?i)(?<![.!?])\s+(the main issue is|the key problem is|the next step is|separately|finally|please|i will|we should|for the [a-z ]{3,40} section|on the [a-z ]{3,40} side)\b"#
-        result = result.replacingOccurrences(of: breakPattern, with: ". $1", options: [.regularExpression])
+        guard let regex = try? NSRegularExpression(pattern: inferredBoundaryPattern, options: [.caseInsensitive]) else {
+            return result
+        }
+
+        let range = NSRange(result.startIndex..<result.endIndex, in: result)
+        let matches = regex.matches(in: result, range: range)
+        for match in matches.reversed() {
+            guard let matchRange = Range(match.range, in: result),
+                  let cueRange = Range(match.range(at: 1), in: result),
+                  shouldInferSentenceBoundary(before: matchRange, cue: String(result[cueRange]), in: result) else {
+                continue
+            }
+            result.replaceSubrange(matchRange, with: ". \(result[cueRange])")
+        }
         return normalizeWhitespacePreservingParagraphs(result)
+    }
+
+    private var inferredBoundaryPattern: String {
+        #"(?<![.!?])\s+(the main issue is|the key problem is|the next step is|separately|finally|for the [a-z ]{3,40} section|on the [a-z ]{3,40} side)\b"#
+    }
+
+    private func shouldInferSentenceBoundary(before matchRange: Range<String.Index>, cue: String, in text: String) -> Bool {
+        let prior = inferredBoundaryPriorText(before: matchRange.lowerBound, in: text)
+        guard wordCount(in: prior) >= 6 else {
+            return false
+        }
+        guard !endsWithOpenConnector(prior) else {
+            return false
+        }
+
+        let normalizedCue = normalizeWhitespace(cue).lowercased()
+        if normalizedCue == "separately" || normalizedCue == "finally" {
+            return wordCount(in: prior) >= 8
+        }
+        return true
+    }
+
+    private func inferredBoundaryPriorText(before index: String.Index, in text: String) -> String {
+        var start = index
+        while start > text.startIndex {
+            let previous = text.index(before: start)
+            if ".!?".contains(text[previous]) {
+                break
+            }
+            start = previous
+        }
+        return normalizeWhitespace(String(text[start..<index]))
+    }
+
+    private func endsWithOpenConnector(_ text: String) -> Bool {
+        let lower = normalizeWhitespace(text).lowercased()
+        let suffixes = [
+            " and",
+            " or",
+            " but",
+            " so",
+            " because",
+            " that",
+            " to",
+            " for",
+            " with",
+            " if",
+            " when",
+            " while",
+            " where",
+            " maybe",
+            " probably",
+            " i think",
+            " i guess",
+            " it seems",
+            " not sure"
+        ]
+        return suffixes.contains { lower == String($0.dropFirst()) || lower.hasSuffix($0) }
     }
 
     private func splitSentences(in text: String) -> [String] {
@@ -305,9 +375,8 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             return groupEmailSentences(sentences)
         }
 
-        let totalLength = sentences.joined(separator: " ").count
         let hasCueParagraph = sentences.dropFirst().contains(where: shouldStartNewParagraph)
-        guard totalLength >= 220 || sentences.count >= 4 || hasCueParagraph else {
+        guard hasCueParagraph else {
             return [sentences]
         }
 
@@ -315,9 +384,6 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         var current: [String] = []
         for sentence in sentences {
             if shouldStartNewParagraph(with: sentence), !current.isEmpty {
-                paragraphs.append(current)
-                current = [sentence]
-            } else if current.count >= 2 {
                 paragraphs.append(current)
                 current = [sentence]
             } else {
@@ -394,6 +460,10 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             || lower.hasPrefix("finally")
             || lower.hasPrefix("for the ")
             || lower.hasPrefix("on the ")
+    }
+
+    private func wordCount(in text: String) -> Int {
+        text.split { !$0.isLetter && !$0.isNumber }.count
     }
 
     private func listCandidate(from text: String, profile: AppProfile) -> ListCandidate? {
