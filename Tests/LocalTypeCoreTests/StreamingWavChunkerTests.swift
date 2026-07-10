@@ -30,4 +30,27 @@ final class StreamingWavChunkerTests: XCTestCase {
 
         XCTAssertTrue(chunker.reachedMaxDuration)
     }
+
+    func testOverlapsChunksAndReportsOnlyNewCoverage() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        var chunker = StreamingWavChunker(
+            sampleRate: 4,
+            chunkDurationSeconds: 1,
+            overlapDurationSeconds: 0.25,
+            maxDurationSeconds: 60
+        )
+        let chunks = try chunker.append(
+            AudioFrame(samples: Array(repeating: 0.1, count: 9), sampleRate: 4, timestamp: 0),
+            outputDirectory: directory
+        )
+        let final = try chunker.flush(outputDirectory: directory)
+
+        XCTAssertEqual(chunks.map { $0.sampleCount }, [4, 4])
+        XCTAssertEqual(chunks.map { $0.coveredSampleCount }, [4, 3])
+        XCTAssertEqual(final?.sampleCount, 3)
+        XCTAssertEqual(final?.coveredSampleCount, 2)
+        XCTAssertEqual(chunks.reduce(0) { $0 + $1.coveredSampleCount } + (final?.coveredSampleCount ?? 0), 9)
+    }
 }

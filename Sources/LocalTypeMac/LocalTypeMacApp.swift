@@ -7699,6 +7699,8 @@ final class MenuBarModel: ObservableObject {
     private let chunkDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("quiettype-stream")
     private var streamingTranscriptionSession: StreamingAudioTranscriptionSession?
     private var pendingStreamingChunks: [WavAudioChunk] = []
+    private var streamingTranscriptPreview = ""
+    private var streamingPreviewTask: Task<Void, Never>?
     private var activeTranscriptionOptions = AudioTranscriptionOptions.none
     private var lastListeningUIUpdateAt = Date.distantPast
     private var lastListeningOverlayUpdateAt = Date.distantPast
@@ -7733,7 +7735,9 @@ final class MenuBarModel: ObservableObject {
     private static let maxDictationDurationSeconds = 300.0
     private static let maxTrainingPairCount = 10
     private static let maxReviewAudioFiles = 10
-    private static let streamingTranscriptMinimumDuration = 8.0
+    private static let streamingChunkDuration = 1.6
+    private static let streamingChunkOverlap = 0.4
+    private static let streamingTranscriptMinimumDuration = 1.5
     private static let minimumUsableRMS = 0.0015
     private static let recordingUIRefreshInterval = 0.10
     private static let recordingOverlayRefreshInterval = 0.10
@@ -10129,10 +10133,18 @@ final class MenuBarModel: ObservableObject {
         recordingDuration = 0
         recordedSamples = []
         recordingSampleRate = 16_000
-        chunker = StreamingWavChunker(sampleRate: recordingSampleRate, chunkDurationSeconds: 4.0, maxDurationSeconds: Self.maxDictationDurationSeconds)
+        chunker = StreamingWavChunker(
+            sampleRate: recordingSampleRate,
+            chunkDurationSeconds: Self.streamingChunkDuration,
+            overlapDurationSeconds: Self.streamingChunkOverlap,
+            maxDurationSeconds: Self.maxDictationDurationSeconds
+        )
         activeTranscriptionOptions = currentTranscriptionOptions()
+        streamingPreviewTask?.cancel()
+        streamingPreviewTask = nil
         streamingTranscriptionSession = nil
         pendingStreamingChunks = []
+        streamingTranscriptPreview = ""
         try? FileManager.default.removeItem(at: chunkDirectory)
         lastRecordingURL = nil
         recordingStartedAt = Date()
@@ -10173,10 +10185,13 @@ final class MenuBarModel: ObservableObject {
         captureService?.stop()
         captureService = nil
         isRecording = false
+        streamingPreviewTask?.cancel()
+        streamingPreviewTask = nil
         lastDictationDuration = recordingDuration
         await streamingTranscriptionSession?.cancel()
         streamingTranscriptionSession = nil
         pendingStreamingChunks = []
+        streamingTranscriptPreview = ""
         recordedSamples = []
         capturedFrameCount = 0
         partialChunkCount = 0
@@ -10753,6 +10768,8 @@ final class MenuBarModel: ObservableObject {
         captureService?.stop()
         captureService = nil
         isRecording = false
+        streamingPreviewTask?.cancel()
+        streamingPreviewTask = nil
         if let recordingStartedAt {
             recordingDuration = Date().timeIntervalSince(recordingStartedAt)
         }
@@ -10929,6 +10946,7 @@ final class MenuBarModel: ObservableObject {
             state: .listening,
             level: inputLevel,
             detail: listeningOverlayDetail,
+            transcript: streamingTranscriptPreview,
             onCancel: { [weak self] in
                 Task { @MainActor [weak self] in
                     await self?.cancelRecording()
@@ -10945,8 +10963,9 @@ final class MenuBarModel: ObservableObject {
         if streamingTranscriptionSession == nil {
             streamingTranscriptionSession = StreamingAudioTranscriptionSession(
                 transcriber: WhisperKitServerTranscriber(timeoutSeconds: WhisperKitServerTranscriber.streamingTimeoutSeconds),
-                options: .none
+                options: activeTranscriptionOptions
             )
+            startStreamingPreviewUpdates()
         }
 
         guard let streamingTranscriptionSession else {
@@ -10958,6 +10977,37 @@ final class MenuBarModel: ObservableObject {
         for chunk in chunks {
             await streamingTranscriptionSession.enqueue(chunk)
         }
+    }
+
+    private func startStreamingPreviewUpdates() {
+        guard let session = streamingTranscriptionSession else {
+            return
+        }
+
+        streamingPreviewTask?.cancel()
+        streamingPreviewTask = Task { [weak self, session] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                guard !Task.isCancelled else {
+                    return
+                }
+                await self?.refreshStreamingTranscriptPreview(from: session)
+            }
+        }
+    }
+
+    private func refreshStreamingTranscriptPreview(from session: StreamingAudioTranscriptionSession?) async {
+        guard isRecording, let session else {
+            return
+        }
+
+        let preview = await session.latestTranscript()
+        guard preview != streamingTranscriptPreview else {
+            return
+        }
+
+        streamingTranscriptPreview = preview
+        showListeningOverlay(force: true)
     }
 
     private func transcribeAndProcess(_ audioURL: URL, streamingSession: StreamingAudioTranscriptionSession? = nil) async {

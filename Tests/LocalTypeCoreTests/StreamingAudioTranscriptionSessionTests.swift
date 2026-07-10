@@ -74,6 +74,37 @@ final class StreamingAudioTranscriptionSessionTests: XCTestCase {
         XCTAssertEqual(prompts, ["Vocabulary: CometBFT."])
     }
 
+    func testMergesOverlappedChunkTextWithoutDoubleCountingCoverage() async throws {
+        let transcriber = StubAudioTranscriber(outputs: [
+            "chunk-0000.wav": "we need apples and",
+            "chunk-0001.wav": "apples and bananas"
+        ])
+        let session = StreamingAudioTranscriptionSession(transcriber: transcriber)
+
+        await session.enqueue(WavAudioChunk(sequence: 0, url: URL(fileURLWithPath: "/tmp/chunk-0000.wav"), sampleRate: 4, sampleCount: 4, coveredSampleCount: 4))
+        await session.enqueue(WavAudioChunk(sequence: 1, url: URL(fileURLWithPath: "/tmp/chunk-0001.wav"), sampleRate: 4, sampleCount: 4, coveredSampleCount: 3))
+
+        let result = await session.finish()
+
+        XCTAssertEqual(result.text, "we need apples and bananas")
+        XCTAssertEqual(result.coveredDurationSeconds, 1.75, accuracy: 0.001)
+    }
+
+    func testDoesNotDeduplicateWordsWhenChunksDoNotOverlap() async throws {
+        let transcriber = StubAudioTranscriber(outputs: [
+            "chunk-0000.wav": "go",
+            "chunk-0001.wav": "go home"
+        ])
+        let session = StreamingAudioTranscriptionSession(transcriber: transcriber)
+
+        await session.enqueue(WavAudioChunk(sequence: 0, url: URL(fileURLWithPath: "/tmp/chunk-0000.wav"), sampleRate: 4, sampleCount: 4))
+        await session.enqueue(WavAudioChunk(sequence: 1, url: URL(fileURLWithPath: "/tmp/chunk-0001.wav"), sampleRate: 4, sampleCount: 4))
+
+        let result = await session.finish()
+
+        XCTAssertEqual(result.text, "go go home")
+    }
+
     func testCancelDiscardsQueuedAndInFlightTranscript() async throws {
         let transcriber = SlowStubAudioTranscriber(output: "should not survive")
         let session = StreamingAudioTranscriptionSession(transcriber: transcriber)

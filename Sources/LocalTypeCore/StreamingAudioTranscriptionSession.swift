@@ -6,6 +6,7 @@ public actor StreamingAudioTranscriptionSession {
     private var queue: [WavAudioChunk] = []
     private var transcripts: [Int: String] = [:]
     private var transcriptDurations: [Int: Double] = [:]
+    private var transcriptHasOverlap: [Int: Bool] = [:]
     private var errors: [String] = []
     private var isProcessing = false
     private var isCancelled = false
@@ -44,11 +45,16 @@ public actor StreamingAudioTranscriptionSession {
         )
     }
 
+    public func latestTranscript() -> String {
+        mergedTranscript()
+    }
+
     public func cancel() {
         isCancelled = true
         queue.removeAll(keepingCapacity: false)
         transcripts.removeAll(keepingCapacity: false)
         transcriptDurations.removeAll(keepingCapacity: false)
+        transcriptHasOverlap.removeAll(keepingCapacity: false)
         errors.removeAll(keepingCapacity: false)
     }
 
@@ -63,7 +69,8 @@ public actor StreamingAudioTranscriptionSession {
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     transcripts[chunk.sequence] = trimmed
-                    transcriptDurations[chunk.sequence] = chunk.durationSeconds
+                    transcriptDurations[chunk.sequence] = chunk.coveredDurationSeconds
+                    transcriptHasOverlap[chunk.sequence] = chunk.coveredSampleCount < chunk.sampleCount
                 }
             } catch {
                 if !isCancelled {
@@ -89,15 +96,56 @@ public actor StreamingAudioTranscriptionSession {
     }
 
     private func mergedTranscript() -> String {
-        transcripts
+        let orderedTranscripts: [(text: String, hasOverlap: Bool)] = transcripts
             .keys
             .sorted()
-            .compactMap { transcripts[$0] }
-            .joined(separator: " ")
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .compactMap { sequence -> (text: String, hasOverlap: Bool)? in
+                guard let text = transcripts[sequence] else {
+                    return nil
+                }
+                return (text: text, hasOverlap: transcriptHasOverlap[sequence] ?? false)
+            }
+
+        return Self.mergeOverlappingTranscripts(orderedTranscripts)
+    }
+
+    static func mergeOverlappingTranscripts(_ transcripts: [(text: String, hasOverlap: Bool)]) -> String {
+        transcripts.reduce("") { merged, chunk in
+            let trimmedNext = chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedNext.isEmpty else {
+                return merged
+            }
+            guard !merged.isEmpty else {
+                return trimmedNext
+            }
+            guard chunk.hasOverlap else {
+                return "\(merged) \(trimmedNext)"
+            }
+
+            let existingWords = merged.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            let nextWords = trimmedNext.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            let maximumOverlap = min(12, existingWords.count, nextWords.count)
+            var overlapCount = 0
+
+            if maximumOverlap > 0 {
+                for count in stride(from: maximumOverlap, through: 1, by: -1) {
+                    let existingSuffix = existingWords.suffix(count).map(Self.normalizedWord)
+                    let nextPrefix = nextWords.prefix(count).map(Self.normalizedWord)
+                    if existingSuffix == nextPrefix, !existingSuffix.allSatisfy({ $0.isEmpty }) {
+                        overlapCount = count
+                        break
+                    }
+                }
+            }
+
+            let suffix = nextWords.dropFirst(overlapCount).joined(separator: " ")
+            return suffix.isEmpty ? merged : "\(merged) \(suffix)"
+        }
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func normalizedWord(_ word: String) -> String {
+        word.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
     }
 }
 
