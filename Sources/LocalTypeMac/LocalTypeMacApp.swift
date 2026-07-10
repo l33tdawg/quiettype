@@ -6705,6 +6705,33 @@ enum StartupStepState: Equatable {
     case failed
 }
 
+@MainActor
+private final class NativeSpeechLaunchSignal {
+    private var isResolved = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isResolved else {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func resolve() {
+        guard !isResolved else {
+            return
+        }
+
+        isResolved = true
+        let pendingContinuations = continuations
+        continuations.removeAll()
+        pendingContinuations.forEach { $0.resume() }
+    }
+}
+
 private struct StatusPill: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
     var icon: String
@@ -7542,6 +7569,7 @@ final class MenuBarModel: ObservableObject {
     private var nativeInferencePrewarmed = false
     private var didStartAppServices = false
     private var nativeSpeechStartupTask: Task<Void, Never>?
+    private var nativeSpeechLaunchSignal: NativeSpeechLaunchSignal?
     private var updateCheckTask: Task<Void, Never>?
     private var dictionarySearchTask: Task<Void, Never>?
     private var dictationFinalizationTask: Task<Void, Never>?
@@ -8888,16 +8916,21 @@ final class MenuBarModel: ObservableObject {
         discardPlaintextDictationAudio()
         discardPlaintextVoiceNoteAudio()
 
+        // Native speech has the largest cold-start cost after an upgrade. Start
+        // it before SAGE, permissions, and the rest of app setup so the model is
+        // already warming while those independent services initialise.
+        refreshSpeechEngineStatus()
+
         Task {
+            defer { isBooting = false }
+            await startNativeSpeechWarmup()
             refreshSageStatus()
             await refreshLocalMemories()
             await registerSageAgentIfAvailable()
             await refreshPermissions(promptForAccessibility: false)
-            refreshSpeechEngineStatus()
             registerGlobalHotKey()
             registerCancelKeyMonitor()
             configureTypingReminderMonitor()
-            startNativeSpeechWarmup()
             startBackgroundUpdateChecks()
             repairSensitiveStoragePermissions()
             refreshStorageSnapshot()
@@ -9188,6 +9221,8 @@ final class MenuBarModel: ObservableObject {
         overlayController.hide()
         nativeSpeechStartupTask?.cancel()
         nativeSpeechStartupTask = nil
+        nativeSpeechLaunchSignal?.resolve()
+        nativeSpeechLaunchSignal = nil
         updateCheckTask?.cancel()
         updateCheckTask = nil
         whisperKitSupervisor?.stop()
@@ -9204,7 +9239,9 @@ final class MenuBarModel: ObservableObject {
         registerGlobalHotKey()
         registerCancelKeyMonitor()
         configureTypingReminderMonitor()
-        startNativeSpeechWarmup()
+        Task {
+            await startNativeSpeechWarmup()
+        }
         startBackgroundUpdateChecks()
     }
 
@@ -9235,6 +9272,8 @@ final class MenuBarModel: ObservableObject {
         overlayController.hide()
         nativeSpeechStartupTask?.cancel()
         nativeSpeechStartupTask = nil
+        nativeSpeechLaunchSignal?.resolve()
+        nativeSpeechLaunchSignal = nil
         updateCheckTask?.cancel()
         updateCheckTask = nil
         whisperKitSupervisor?.stop()
@@ -9988,20 +10027,39 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
-    private func startNativeSpeechWarmup() {
+    private func startNativeSpeechWarmup() async {
+        if let nativeSpeechLaunchSignal {
+            await nativeSpeechLaunchSignal.wait()
+            return
+        }
+
         guard nativeSpeechStartupTask == nil else {
             return
         }
 
-        nativeSpeechStartupTask = Task { [weak self] in
+        let launchSignal = NativeSpeechLaunchSignal()
+        nativeSpeechLaunchSignal = launchSignal
+        nativeSpeechStartupTask = Task { [weak self, launchSignal] in
             guard let self else {
+                launchSignal.resolve()
                 return
             }
-            await self.warmNativeSpeechServerOnLaunch()
+            await self.warmNativeSpeechServerOnLaunch(launchSignal: launchSignal)
+            launchSignal.resolve()
+            if self.nativeSpeechLaunchSignal === launchSignal {
+                self.nativeSpeechLaunchSignal = nil
+                self.nativeSpeechStartupTask = nil
+            }
         }
+        await launchSignal.wait()
     }
 
-    private func warmNativeSpeechServerOnLaunch() async {
+    private func warmNativeSpeechServerOnLaunch(launchSignal: NativeSpeechLaunchSignal) async {
+        defer { launchSignal.resolve() }
+        guard !Task.isCancelled else {
+            return
+        }
+
         guard let executableURL = WhisperKitServerBundleLocator.bundledExecutable(),
               FileManager.default.isExecutableFile(atPath: executableURL.path) else {
             nativeSpeechServerReady = false
@@ -10011,7 +10069,6 @@ final class MenuBarModel: ObservableObject {
                 state: .warning
             )
             refreshSpeechEngineStatus()
-            isBooting = false
             return
         }
 
@@ -10027,10 +10084,17 @@ final class MenuBarModel: ObservableObject {
         speechEngineStatus = "Native speech starting"
 
         do {
-            if await whisperKitSupervisor?.isServerHealthy() == true {
+            let serverIsHealthy = await whisperKitSupervisor?.isServerHealthy() == true
+            guard !Task.isCancelled else {
+                return
+            }
+            if serverIsHealthy {
+                launchSignal.resolve()
                 let didPrewarm = await warmNativeSpeechInferenceIfNeeded()
+                guard !Task.isCancelled else {
+                    return
+                }
                 nativeSpeechServerReady = true
-                isBooting = false
                 updateStartupStep(
                     id: "nativeSpeech",
                     detail: didPrewarm ? "Apple Silicon transcription server is ready for first dictation." : "Apple Silicon transcription server is reachable. First dictation may finish warming it.",
@@ -10042,12 +10106,19 @@ final class MenuBarModel: ObservableObject {
             }
 
             try whisperKitSupervisor?.startWarming()
-            isBooting = false
+            launchSignal.resolve()
 
             let startedAt = Date()
             while !Task.isCancelled {
-                if await whisperKitSupervisor?.isServerHealthy() == true {
+                let serverIsHealthy = await whisperKitSupervisor?.isServerHealthy() == true
+                guard !Task.isCancelled else {
+                    return
+                }
+                if serverIsHealthy {
                     let didPrewarm = await warmNativeSpeechInferenceIfNeeded()
+                    guard !Task.isCancelled else {
+                        return
+                    }
                     nativeSpeechServerReady = true
                     updateStartupStep(
                         id: "nativeSpeech",
@@ -10073,6 +10144,9 @@ final class MenuBarModel: ObservableObject {
                 try await Task.sleep(nanoseconds: 1_000_000_000)
             }
         } catch {
+            guard !Task.isCancelled else {
+                return
+            }
             nativeSpeechServerReady = false
             let detail = String(describing: error)
             updateStartupStep(
@@ -10084,7 +10158,6 @@ final class MenuBarModel: ObservableObject {
         }
 
         refreshSpeechEngineStatus()
-        isBooting = false
     }
 
     @discardableResult
@@ -11521,7 +11594,7 @@ final class MenuBarModel: ObservableObject {
         nativeSpeechServerReady = false
         nativeInferencePrewarmed = false
         refreshSpeechEngineStatus()
-        startNativeSpeechWarmup()
+        await startNativeSpeechWarmup()
     }
 
     private func ensureNativeSpeechServerReadyForTranscription() async -> Bool {

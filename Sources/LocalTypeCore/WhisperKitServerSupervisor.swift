@@ -25,6 +25,7 @@ public final class WhisperKitServerSupervisor: @unchecked Sendable {
     private let modelPath: URL?
     private let startupTimeoutSeconds: TimeInterval
     private let logURL: URL
+    private let stateLock = NSLock()
     private var process: Process?
     private var logSink: FileHandle?
 
@@ -83,20 +84,29 @@ public final class WhisperKitServerSupervisor: @unchecked Sendable {
     }
 
     public var isProcessRunning: Bool {
-        process?.isRunning == true
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return process?.isRunning == true
     }
 
     public func stop() {
-        guard let process else { return }
-        if process.isRunning {
-            process.terminate()
-        }
+        stateLock.lock()
+        let runningProcess = process
+        let activeLogSink = logSink
         self.process = nil
-        try? logSink?.close()
         logSink = nil
+        stateLock.unlock()
+
+        if runningProcess?.isRunning == true {
+            runningProcess?.terminate()
+        }
+        try? activeLogSink?.close()
     }
 
     private func startIfNeeded() throws {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
         if let process, process.isRunning {
             return
         }
@@ -127,14 +137,20 @@ public final class WhisperKitServerSupervisor: @unchecked Sendable {
         ]
         arguments.append(contentsOf: ["--model-path", modelPath.path])
         process.arguments = arguments
-        let logSink = try Self.openLogSink(at: logURL)
+        try? logSink?.close()
+        let newLogSink = try Self.openLogSink(at: logURL)
         let commandLine = ([executableURL.path] + arguments).joined(separator: " ")
-        logSink.writeString("\n\n[\(Date())] Starting native ASR server\n\(commandLine)\n")
-        process.standardOutput = logSink
-        process.standardError = logSink
-        try process.run()
+        newLogSink.writeString("\n\n[\(Date())] Starting native ASR server\n\(commandLine)\n")
+        process.standardOutput = newLogSink
+        process.standardError = newLogSink
+        do {
+            try process.run()
+        } catch {
+            try? newLogSink.close()
+            throw error
+        }
         self.process = process
-        self.logSink = logSink
+        self.logSink = newLogSink
     }
 
     private func isHealthy() async -> Bool {
