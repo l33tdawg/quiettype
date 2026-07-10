@@ -14,6 +14,7 @@ SIGN_OPTIONS="${QUIETTYPE_CODESIGN_OPTIONS:---options runtime}"
 ENTITLEMENTS="${QUIETTYPE_ENTITLEMENTS:-$ROOT/resources/LocalTypeMac/QuietType.entitlements}"
 BUNDLE_MODELS="${QUIETTYPE_BUNDLE_MODELS:-1}"
 BUNDLE_SAGE="${QUIETTYPE_BUNDLE_SAGE:-1}"
+REQUIRE_ASR_ASSETS="${QUIETTYPE_REQUIRE_ASR_ASSETS:-0}"
 WHISPERKIT_MODEL_SOURCE="${QUIETTYPE_WHISPERKIT_MODEL_SOURCE:-$DEFAULT_WHISPERKIT_MODEL}"
 SAGE_APP_SOURCE="${QUIETTYPE_SAGE_APP_SOURCE:-$DEFAULT_SAGE_APP}"
 APP_VERSION="${QUIETTYPE_VERSION:-}"
@@ -97,18 +98,32 @@ fi
 cp "$BIN" "$APP/Contents/MacOS/LocalTypeMac"
 if [[ -x "$SERVER_BIN" ]]; then
   cp "$SERVER_BIN" "$APP/Contents/MacOS/argmax-cli"
+elif [[ "$REQUIRE_ASR_ASSETS" == "1" || "$REQUIRE_ASR_ASSETS" == "true" ]]; then
+  echo "Required native ASR helper is missing: $SERVER_BIN" >&2
+  exit 1
 fi
 if [[ -x "$WHISPER_CPP_BIN" ]]; then
   cp "$WHISPER_CPP_BIN" "$APP/Contents/MacOS/whisper-cli"
+elif [[ "$REQUIRE_ASR_ASSETS" == "1" || "$REQUIRE_ASR_ASSETS" == "true" ]]; then
+  echo "Required fallback ASR helper is missing: $WHISPER_CPP_BIN" >&2
+  exit 1
 fi
 cp "$ROOT/resources/QuietTypeIcon.svg" "$APP/Contents/Resources/QuietTypeIcon.svg"
 if [[ -f "$ROOT/resources/QuietTypeIcon.icns" ]]; then
   cp "$ROOT/resources/QuietTypeIcon.icns" "$APP/Contents/Resources/QuietTypeIcon.icns"
 fi
+if [[ "$REQUIRE_ASR_ASSETS" == "1" || "$REQUIRE_ASR_ASSETS" == "true" ]] \
+  && [[ "$BUNDLE_MODELS" == "0" || "$BUNDLE_MODELS" == "false" ]]; then
+  echo "Release packaging requires the bundled WhisperKit model." >&2
+  exit 1
+fi
 if [[ "$BUNDLE_MODELS" != "0" && "$BUNDLE_MODELS" != "false" ]]; then
   if [[ -d "$WHISPERKIT_MODEL_SOURCE" ]]; then
     mkdir -p "$APP/Contents/Resources/WhisperKit"
     cp -R "$WHISPERKIT_MODEL_SOURCE" "$APP/Contents/Resources/WhisperKit/"
+  elif [[ "$REQUIRE_ASR_ASSETS" == "1" || "$REQUIRE_ASR_ASSETS" == "true" ]]; then
+    echo "Required WhisperKit model is missing: $WHISPERKIT_MODEL_SOURCE" >&2
+    exit 1
   else
     echo "WARN  WhisperKit model not bundled; missing $WHISPERKIT_MODEL_SOURCE" >&2
   fi

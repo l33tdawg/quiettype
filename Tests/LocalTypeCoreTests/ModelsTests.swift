@@ -22,4 +22,20 @@ final class ModelsTests: XCTestCase {
         XCTAssertEqual(profile.spellingPreference, .system)
         XCTAssertTrue(profile.profanityFilterEnabled)
     }
+
+    func testDecodesLegacyAppContextWithoutApplicationIdentity() throws {
+        let json = """
+        {
+          "appName": "Notes",
+          "profile": "notes",
+          "isSecureInput": false
+        }
+        """
+
+        let context = try JSONDecoder().decode(AppContext.self, from: Data(json.utf8))
+
+        XCTAssertEqual(context.appName, "Notes")
+        XCTAssertNil(context.bundleIdentifier)
+        XCTAssertNil(context.processIdentifier)
+    }
 }

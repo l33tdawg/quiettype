@@ -15,7 +15,7 @@ on:
       build:
         description: "Beta build number"
         required: true
-        default: "21"
+        default: "24"
 
 permissions:
   contents: write
@@ -31,7 +31,7 @@ jobs:
       QUIETTYPE_NOTARY_PROFILE: "QUIETTYPE_NOTARY"
       QUIETTYPE_NOTARIZE: "1"
       QUIETTYPE_WHISPERKIT_MODEL_REVISION: "97a5bf9bbc74c7d9c12c755d04dea59e672e3808"
-      SAGE_RELEASE_TAG: "v11.0.2"
+      SAGE_RELEASE_TAG: "v11.4.11"
       QUIETTYPE_FORCE_SAGE_DOWNLOAD: "1"
 
     steps:
@@ -175,4 +175,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --prerelease \
             --title "QuietType ${QUIETTYPE_VERSION} beta ${QUIETTYPE_BUILD}" \
-            --notes "Private beta for macOS Apple Silicon. Fast local voice input for coding agents, local memory, no cloud transcription."
+            --notes "Public beta for macOS Apple Silicon. Fast local voice input for coding agents, local memory, no cloud transcription."

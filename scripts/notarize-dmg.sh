@@ -38,6 +38,9 @@ xcrun stapler staple "$DMG"
 echo "Verifying Gatekeeper acceptance..."
 spctl -a -t open --context context:primary-signature -v "$DMG"
 
-shasum -a 256 "$DMG" > "$DMG.sha256"
+(
+  cd "$(dirname "$DMG")"
+  shasum -a 256 "$(basename "$DMG")"
+) > "$DMG.sha256"
 echo "$DMG"
 echo "$DMG.sha256"

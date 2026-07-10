@@ -13,8 +13,8 @@ with no cloud processing path for normal dictation.
 ![QuietType home dashboard](docs/screenshots/quiettype-home.png)
 
 <p align="center">
-  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-beta.23/QuietType-1.0.0-beta.23-macOS-arm64.dmg">
-    <img alt="Download QuietType 1.0.0 beta 23 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.0%20beta%2023-black?style=for-the-badge&logo=apple">
+  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-beta.24/QuietType-1.0.0-beta.24-macOS-arm64.dmg">
+    <img alt="Download QuietType 1.0.0 beta 24 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.0%20beta%2024-black?style=for-the-badge&logo=apple">
   </a>
 </p>
 
@@ -123,6 +123,7 @@ user's machine.
 - microphone and Accessibility setup guidance
 - setup progress and local activity status
 - SAGE memory search/review UI for corrections, vocabulary and review notes
+- optional encrypted review-audio retention, off by default
 - encrypted Voice Notes with playback, transcript editing and optional SAGE transcript copies
 - bundled SAGE GUI for first-run governed memory setup
 - signed update checks with visible download/install status and restart flow
@@ -135,7 +136,7 @@ should not leave the Mac.
 
 | Area | Default |
 | --- | --- |
-| Voice audio | Local only |
+| Voice audio | Transient local capture; deleted after transcription by default |
 | Voice note audio | Encrypted local file |
 | Voice training samples | Local only |
 | Raw transcript text | Local only |

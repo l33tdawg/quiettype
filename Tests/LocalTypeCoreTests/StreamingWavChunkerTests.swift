@@ -53,4 +53,18 @@ final class StreamingWavChunkerTests: XCTestCase {
         XCTAssertEqual(final?.coveredSampleCount, 2)
         XCTAssertEqual(chunks.reduce(0) { $0 + $1.coveredSampleCount } + (final?.coveredSampleCount ?? 0), 9)
     }
+
+    func testDoesNotTouchOutputDirectoryUntilAChunkIsReady() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        var chunker = StreamingWavChunker(sampleRate: 4, chunkDurationSeconds: 1, maxDurationSeconds: 60)
+        let chunks = try chunker.append(
+            AudioFrame(samples: Array(repeating: 0.1, count: 3), sampleRate: 4, timestamp: 0),
+            outputDirectory: directory
+        )
+
+        XCTAssertTrue(chunks.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+    }
 }

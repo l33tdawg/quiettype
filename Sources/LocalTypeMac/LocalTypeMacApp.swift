@@ -2,7 +2,6 @@ import LocalTypeCore
 import AppKit
 import AVFoundation
 import CryptoKit
-import Darwin
 import Foundation
 import Security
 import SwiftUI
@@ -17,8 +16,7 @@ struct LocalTypeMacApp: App {
         WindowGroup("QuietType") {
             TesterView(model: model)
         }
-        .defaultSize(width: 1360, height: 900)
-        .windowResizability(.contentSize)
+        .defaultSize(width: 1180, height: 820)
         .commands {
             CommandGroup(replacing: .appTermination) {
                 Button("Quit QuietType") {
@@ -346,6 +344,20 @@ struct OverlayState {
         tint: .primary
     )
 
+    static let readyToCopy = OverlayState(
+        title: "Ready to copy",
+        subtitle: "Insertion was skipped",
+        icon: "doc.on.doc.fill",
+        tint: .primary
+    )
+
+    static let failed = OverlayState(
+        title: "Needs attention",
+        subtitle: "Your transcript is still available",
+        icon: "exclamationmark.circle.fill",
+        tint: .secondary
+    )
+
     static let saved = OverlayState(
         title: "Saved",
         subtitle: "Encrypted locally",
@@ -366,6 +378,45 @@ struct OverlayState {
         icon: "keyboard",
         tint: .white
     )
+}
+
+private enum QuietTypeDictationState: Equatable {
+    case idle
+    case preparing
+    case listening
+    case finalizing
+    case inserting
+    case cancelling
+    case succeeded
+    case failed
+    case cancelled
+
+    var isProcessing: Bool {
+        switch self {
+        case .preparing, .finalizing, .inserting, .cancelling:
+            return true
+        case .idle, .listening, .succeeded, .failed, .cancelled:
+            return false
+        }
+    }
+
+    var canStart: Bool {
+        switch self {
+        case .idle, .succeeded, .failed, .cancelled:
+            return true
+        case .preparing, .listening, .finalizing, .inserting, .cancelling:
+            return false
+        }
+    }
+
+    var canCancel: Bool {
+        switch self {
+        case .listening, .finalizing:
+            return true
+        case .idle, .preparing, .inserting, .cancelling, .succeeded, .failed, .cancelled:
+            return false
+        }
+    }
 }
 
 private struct MacVisualEffectBlur: NSViewRepresentable {
@@ -417,6 +468,20 @@ private struct DictationOverlayView: View {
 
     private var cleanedTranscript: String {
         (transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isVoiceNoteOverlay: Bool {
+        state.title == OverlayState.voiceNote.title
+    }
+
+    private var cancelAccessibilityLabel: String {
+        isVoiceNoteOverlay ? "Cancel voice note" : "Cancel dictation"
+    }
+
+    private var cancelAccessibilityHint: String {
+        isVoiceNoteOverlay
+            ? "Discards the current voice-note recording."
+            : "Discards the current dictation without inserting text."
     }
 
     private var glassTintOpacity: Double {
@@ -514,7 +579,9 @@ private struct DictationOverlayView: View {
                             .overlay(Circle().stroke(Color.white.opacity(0.22), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
-                    .quickTooltip("Cancel this dictation without inserting text.")
+                    .accessibilityLabel(cancelAccessibilityLabel)
+                    .accessibilityHint(cancelAccessibilityHint)
+                    .quickTooltip(isVoiceNoteOverlay ? "Cancel and discard this voice note." : "Cancel this dictation without inserting text.")
                 }
             }
 
@@ -632,6 +699,12 @@ private struct DictationOverlayView: View {
         )
         .compositingGroup()
         .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.26 : 0.12), radius: 22, y: 10)
+        .onChange(of: cleanedTranscript) { _ in
+            copiedTranscript = false
+        }
+        .onChange(of: state.title) { _ in
+            copiedTranscript = false
+        }
     }
 
     private func copyOverlayTranscript(_ text: String) -> Bool {
@@ -642,13 +715,14 @@ private struct DictationOverlayView: View {
 }
 
 private struct OverlayWaveform: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var level: Double
     var isActive: Bool
 
     private let bars = 18
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 36.0, paused: !isActive)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 36.0, paused: !isActive || reduceMotion)) { timeline in
             let timestamp = timeline.date.timeIntervalSinceReferenceDate
             HStack(alignment: .center, spacing: 3) {
                 ForEach(0..<bars, id: \.self) { index in
@@ -684,6 +758,7 @@ private struct OverlayWaveform: View {
 
 struct TesterView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var model: MenuBarModel
     @AppStorage("quiettype.hasSeenGuide") private var hasSeenGuide = false
     @AppStorage("quiettype.firstRunAssistantComplete") private var firstRunAssistantComplete = false
@@ -698,10 +773,6 @@ struct TesterView: View {
     @State private var pendingReviewDeleteMemory: DictionaryMemoryItem?
     @State private var isDeletingReviewMemory = false
     @State private var guideStep: QuietTypeGuideStep?
-    @State private var launchHeroMessageIndex = QuietTypeHeroMessage.randomIndex()
-    @State private var launchHeroTextVisible = true
-    private let permissionTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
-    private let heroMessageTimer = Timer.publish(every: 90, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Group {
@@ -736,10 +807,17 @@ struct TesterView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .preferredColorScheme(appearanceChoice.colorScheme)
         .environment(\.quietTypeTypeDelta, textSizeChoice.pointDelta)
-        .frame(width: 1360, height: 900)
-        .animation(.easeInOut(duration: 0.22), value: selectedSection)
-        .animation(.easeInOut(duration: 0.18), value: guideStep)
-        .animation(.easeInOut(duration: 0.22), value: model.setupComplete)
+        .frame(
+            minWidth: 960,
+            idealWidth: 1180,
+            maxWidth: .infinity,
+            minHeight: 680,
+            idealHeight: 820,
+            maxHeight: .infinity
+        )
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: selectedSection)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: guideStep)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: model.setupComplete)
         .sheet(isPresented: $showingTeachSheet) {
             TeachQuietTypeSheet(model: model)
         }
@@ -757,15 +835,6 @@ struct TesterView: View {
                 firstRunAssistantComplete = true
             }
         }
-        .onReceive(permissionTimer) { _ in
-            Task {
-                model.refreshSystemMetrics()
-                await model.refreshPermissions()
-            }
-        }
-        .onReceive(heroMessageTimer) { _ in
-            rotateLaunchHeroMessage()
-        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task {
                 await model.refreshPermissions(verifyMicrophoneAccess: true)
@@ -778,25 +847,6 @@ struct TesterView: View {
             sidebar
             Divider()
             mainContent
-        }
-    }
-
-    private var launchHeroMessage: QuietTypeHeroMessage {
-        QuietTypeHeroMessage.message(at: launchHeroMessageIndex)
-    }
-
-    private func rotateLaunchHeroMessage() {
-        guard QuietTypeHeroMessage.all.count > 1 else {
-            return
-        }
-        withAnimation(.easeInOut(duration: 0.42)) {
-            launchHeroTextVisible = false
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.46) {
-            launchHeroMessageIndex = QuietTypeHeroMessage.nextIndex(after: launchHeroMessageIndex)
-            withAnimation(.easeInOut(duration: 0.48)) {
-                launchHeroTextVisible = true
-            }
         }
     }
 
@@ -855,12 +905,12 @@ struct TesterView: View {
                         SidebarItem(icon: section.icon, title: section.title, selected: selectedSection == section)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(section.title)
+                    .accessibilityAddTraits(selectedSection == section ? .isSelected : [])
                 }
             }
 
             Spacer()
-
-            sidebarDisplayControls
 
             Button {
                 selectedSection = .settings
@@ -868,6 +918,8 @@ struct TesterView: View {
                 SidebarItem(icon: QuietTypeSection.settings.icon, title: QuietTypeSection.settings.title, selected: selectedSection == .settings)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(QuietTypeSection.settings.title)
+            .accessibilityAddTraits(selectedSection == .settings ? .isSelected : [])
 
             Button {
                 selectedSection = .help
@@ -875,6 +927,8 @@ struct TesterView: View {
                 SidebarItem(icon: QuietTypeSection.help.icon, title: QuietTypeSection.help.title, selected: selectedSection == .help)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(QuietTypeSection.help.title)
+            .accessibilityAddTraits(selectedSection == .help ? .isSelected : [])
             .padding(.bottom, 20)
         }
         .padding(.horizontal, 18)
@@ -896,56 +950,6 @@ struct TesterView: View {
             Image(systemName: "waveform.circle.fill")
                 .font(.system(size: 30, weight: .semibold))
         }
-    }
-
-    private var sidebarDisplayControls: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("Display")
-                .font(.system(size: 10 + textSizeChoice.pointDelta, weight: .semibold, design: .rounded))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 2) {
-                    ForEach(QuietTypeAppearanceChoice.allCases) { choice in
-                        SidebarIconToggle(
-                            label: choice.label,
-                            selected: appearanceChoice == choice
-                        ) {
-                            Image(systemName: choice.sidebarSymbol)
-                                .font(.system(size: 13, weight: .semibold))
-                        } action: {
-                            appearanceChoiceRaw = choice.rawValue
-                        }
-                    }
-                }
-                .padding(2)
-                .frame(maxWidth: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor).opacity(0.48))
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.primary.opacity(0.05), lineWidth: 1))
-
-                HStack(spacing: 2) {
-                    ForEach(QuietTypeTextSizeChoice.allCases) { choice in
-                        SidebarIconToggle(
-                            label: choice.label,
-                            selected: textSizeChoice == choice
-                        ) {
-                            Text("A")
-                                .font(.system(size: choice.sidebarGlyphSize, weight: .semibold, design: .rounded))
-                        } action: {
-                            textSizeChoiceRaw = choice.rawValue
-                        }
-                    }
-                }
-                .padding(2)
-                .frame(maxWidth: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor).opacity(0.48))
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.primary.opacity(0.05), lineWidth: 1))
-            }
-        }
-        .padding(.bottom, 4)
     }
 
     private var sidebarPrimarySections: [QuietTypeSection] {
@@ -1038,19 +1042,36 @@ struct TesterView: View {
         VStack(spacing: 0) {
             firstRunTopBar
             Divider()
-            HStack(spacing: 0) {
-                firstRunActionColumn
-                    .frame(width: 610)
-                    .padding(.horizontal, 56)
-                    .padding(.vertical, 48)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 0) {
+                    firstRunActionColumn
+                        .frame(width: 520)
+                        .padding(.horizontal, 32)
+                        .padding(.vertical, 38)
 
-                Rectangle()
-                    .fill(Color.primary.opacity(0.05))
-                    .frame(width: 1)
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.05))
+                        .frame(width: 1)
 
-                firstRunIllustrationColumn
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.38))
+                    firstRunIllustrationColumn
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(nsColor: .controlBackgroundColor).opacity(0.38))
+                }
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        firstRunActionColumn
+                            .frame(maxWidth: 680)
+                            .padding(32)
+
+                        Divider()
+
+                        firstRunIllustrationColumn
+                            .frame(maxWidth: .infinity)
+                            .background(Color(nsColor: .controlBackgroundColor).opacity(0.38))
+                    }
+                    .frame(maxWidth: .infinity)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1115,7 +1136,7 @@ struct TesterView: View {
             Spacer()
 
             HStack {
-                Label("SAGE memory required", systemImage: "lock.fill")
+                Label("Private memory required", systemImage: "lock.fill")
                     .font(.system(size: 13 + textSizeChoice.pointDelta, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -1132,8 +1153,8 @@ struct TesterView: View {
         case .sage:
             return [
                 FirstRunActionItem(
-                    title: model.sageReady ? "SAGE memory is ready" : "Set up SAGE governed memory",
-                    detail: model.sageReady ? "quiettype-agent is registered. Continue to permissions, speech, and voice training." : model.sageDetected ? "SAGE is installed. Complete SAGE setup, unlock it if needed, then connect quiettype-agent." : "QuietType uses SAGE as its local governed memory layer. Install SAGE before dictation starts.",
+                    title: model.sageReady ? "Private memory is ready" : "Set up private memory",
+                    detail: model.sageReady ? "QuietType is connected. Continue to permissions, local speech, and optional voice training." : model.sageDetected ? "SAGE is installed. Finish its local setup or unlock it, then connect QuietType." : "QuietType uses SAGE to keep corrections and vocabulary private on this Mac.",
                     status: model.sageReady ? "Continue" : model.sageDetected ? "Connect" : "Install",
                     isComplete: false,
                     action: {
@@ -1333,14 +1354,22 @@ struct TesterView: View {
                     setupNudgePanel
                 }
                 metricsGrid
-                HStack(alignment: .top, spacing: 22) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 22) {
+                        VStack(alignment: .leading, spacing: 16) {
+                            dictationPanel
+                            outputPanel
+                        }
+                        .frame(minWidth: 470, maxWidth: .infinity)
+                        securityPanel
+                            .frame(width: 330)
+                    }
+
                     VStack(alignment: .leading, spacing: 16) {
                         dictationPanel
                         outputPanel
+                        securityPanel
                     }
-                    .frame(maxWidth: .infinity)
-                    securityPanel
-                        .frame(width: 430)
                 }
                 if !model.permissionsReady {
                     permissionsPanel
@@ -1402,12 +1431,12 @@ struct TesterView: View {
         .onAppear {
             selectedSetupTab = guideStep == .memory ? .training : suggestedSetupTab
         }
-        .animation(.easeInOut(duration: 0.18), value: selectedSetupTab)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: selectedSetupTab)
     }
 
     private var setupOverviewPanel: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 12) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
                 CompactStatPill(title: "Setup", value: model.personalizationLabel)
                 CompactStatPill(title: "Training sets", value: model.trainingProgressLabel)
                 CompactStatPill(title: "Samples", value: "\(model.trainingPairCount)")
@@ -1435,9 +1464,9 @@ struct TesterView: View {
                 .font(.title2)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 4) {
-                Text(model.setupComplete ? "QuietType is ready" : "Finish the next setup step")
+                Text(model.setupComplete ? "QuietType is ready" : model.coreDictationReady ? "Optional voice training" : "Finish the next setup step")
                     .font(.system(size: 18, weight: .semibold))
-                Text(model.setupComplete ? "You can add more voice samples later when a term is missed." : "QuietType works best after permissions, engine warmup, and three short voice samples.")
+                Text(model.setupComplete ? "You can add more voice samples later when a term is missed." : model.coreDictationReady ? "You can dictate now and add three short samples whenever you want better name and term recognition." : "QuietType needs private memory, permissions, and the local speech engine before dictation starts.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -1459,7 +1488,7 @@ struct TesterView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("First-time setup")
                         .font(.system(size: 18, weight: .semibold))
-                    Text("Four short steps. QuietType starts only after SAGE, permissions, speech, and training are ready.")
+                    Text("QuietType can dictate after the first three steps. Voice training is an optional accuracy boost.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -1472,18 +1501,18 @@ struct TesterView: View {
             }
 
             if model.setupComplete {
-                HStack(spacing: 10) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
                     SetupCompletePill(number: "1", title: "SAGE", detail: "Connected")
                     SetupCompletePill(number: "2", title: "Access", detail: "Allowed")
                     SetupCompletePill(number: "3", title: "Engine", detail: "Warm")
                     SetupCompletePill(number: "4", title: "Training", detail: "\(model.trainingProgressLabel) sets")
                 }
             } else {
-                HStack(spacing: 12) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 12)], spacing: 12) {
                     SetupStepCard(
                         number: "1",
-                        title: "Enable SAGE",
-                        detail: "Install SAGE and complete its setup so quiettype-agent can register.",
+                        title: "Enable private memory",
+                        detail: "Install the bundled SAGE app and connect QuietType locally.",
                         state: model.sageReady ? .done : .action,
                         actionTitle: model.sageDetected ? "Connect" : "Install"
                     ) {
@@ -1525,7 +1554,7 @@ struct TesterView: View {
 
                     SetupStepCard(
                         number: "4",
-                        title: "Train your voice",
+                        title: "Improve accuracy",
                         detail: "Read short scripts so names and technical terms are preserved.",
                         state: model.trainingComplete ? .done : .action,
                         actionTitle: "Train"
@@ -1719,7 +1748,7 @@ struct TesterView: View {
                         )
                     }
                     .buttonStyle(QuietButtonStyle(prominence: .primary))
-                    .disabled(model.isVoiceNoteTranscribing || model.isRecording || model.isTrainingRecording || model.isTeachingRecording)
+                    .disabled(model.isVoiceNoteTranscribing || model.isRecording || model.isRunning || model.isTrainingRecording || model.isTeachingRecording)
                     .quickTooltip(model.isVoiceNoteRecording ? "Stop recording and transcribe this voice note locally." : "Record a long-form note. Audio is encrypted on this Mac after capture.")
                 }
 
@@ -2189,17 +2218,14 @@ struct TesterView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(launchHeroMessage.title)
+                Text("Speak freely. Transcribe locally.")
                     .font(.system(size: 40, weight: .bold))
                     .lineLimit(2)
                     .minimumScaleFactor(0.82)
-                Text(launchHeroMessage.subtitle)
+                Text("Private dictation for every app on your Mac.")
                     .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(.secondary)
             }
-            .id(launchHeroMessage.id)
-            .opacity(launchHeroTextVisible ? 1 : 0)
-            .animation(.easeInOut(duration: 0.48), value: launchHeroTextVisible)
             Spacer()
             VStack(alignment: .trailing, spacing: 8) {
                 HStack(spacing: 6) {
@@ -2221,11 +2247,10 @@ struct TesterView: View {
     }
 
     private var metricsGrid: some View {
-        HStack(spacing: 14) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 14)], spacing: 14) {
             MetricTile(icon: "text.bubble", value: "\(model.sessionsToday)", label: "Sessions today", tooltip: "Completed dictation sessions recorded today on this Mac.")
             MetricTile(icon: "speedometer", value: model.currentWordsPerMinuteLabel, label: "Speaking pace", tooltip: "Words per minute from the current or most recent dictation session.")
-            MetricTile(icon: "brain.head.profile", value: "\(model.sageLessonCount)", label: "Reviews", tooltip: "Correction and review memories available through local SAGE.")
-            MetricTile(icon: "checklist.checked", value: "\(model.transcriptNoteCount)", label: "Transcriptions", tooltip: "Transcript review notes QuietType can use for correction and inspection.")
+            MetricTile(icon: "bolt", value: model.lastLatencyMS.map { "\($0) ms" } ?? "Ready", label: "Release to text", tooltip: "Actual time from stopping dictation until polished text is inserted or ready to copy.")
         }
         .frame(maxWidth: .infinity)
         .anchorPreference(key: GuideSpotlightPreferenceKey.self, value: .bounds) { anchor in
@@ -2244,7 +2269,7 @@ struct TesterView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Finish setup for better transcription")
+                Text(model.coreDictationReady ? "Improve recognition with voice training" : "Finish setup for private dictation")
                     .font(.system(size: 20, weight: .semibold))
                 Text(model.setupNudgeText)
                     .font(.callout)
@@ -2337,8 +2362,9 @@ struct TesterView: View {
     private var generalSettingsLayout: some View {
         VStack(alignment: .leading, spacing: 18) {
             dictationControlsPanel
+            appearancePanel
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 3), spacing: 16) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 16)], spacing: 16) {
                 setupStatusPanel
                 memoryBackendPanel
                 quickUpdatePanel
@@ -2361,7 +2387,7 @@ struct TesterView: View {
         VStack(alignment: .leading, spacing: 18) {
             privacyNetworkPanel
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 2), spacing: 16) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
                 storageOverviewPanel
                 storageCleanupPanel
             }
@@ -2375,7 +2401,11 @@ struct TesterView: View {
     private var dictationControlsPanel: some View {
         settingsSection(title: "Dictation controls") {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 18) {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: 2),
+                    alignment: .leading,
+                    spacing: 10
+                ) {
                     Toggle("Insert polished text automatically", isOn: Binding(
                         get: { !model.previewOnly },
                         set: { model.previewOnly = !$0 }
@@ -2392,6 +2422,23 @@ struct TesterView: View {
                     .tint(.primary)
                     .quickTooltip("When on, new voice notes also send a transcript copy to SAGE. Audio remains encrypted on this Mac, and local transcript edits stay in QuietType's encrypted memory store.")
 
+                    Toggle("Save transcript review history", isOn: Binding(
+                        get: { model.historyReviewEnabled },
+                        set: { model.setHistoryReviewEnabled($0) }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .tint(.primary)
+                    .quickTooltip("Keep the raw and polished transcript text in local review history so you can correct it later. This does not retain microphone audio.")
+
+                    Toggle("Keep review audio", isOn: Binding(
+                        get: { model.keepReviewAudio },
+                        set: { model.setKeepReviewAudio($0) }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .tint(.primary)
+                    .disabled(!model.historyReviewEnabled)
+                    .quickTooltip("Retain up to ten encrypted review clips. Off by default; when off, dictation audio is deleted after transcription.")
+
                     Toggle("Filter profanity", isOn: Binding(
                         get: { model.profanityFilterEnabled },
                         set: { model.setProfanityFilterEnabled($0) }
@@ -2400,7 +2447,7 @@ struct TesterView: View {
                     .tint(.primary)
                     .quickTooltip("Masks common explicit words in polished output. Turn this off when you want QuietType to preserve exactly what you said.")
 
-                    Toggle("Keyboard reminders", isOn: Binding(
+                    Toggle("Keyboard reminders (opt-in)", isOn: Binding(
                         get: { model.typingReminderEnabled },
                         set: { model.setTypingReminderEnabled($0) }
                     ))
@@ -2408,7 +2455,6 @@ struct TesterView: View {
                     .tint(.primary)
                     .quickTooltip("When you type four words with the keyboard, QuietType can occasionally show a local overlay reminding you to press Fn and speak. It is capped at 3 reminders per week with at least 48 hours between reminders.")
 
-                    Spacer(minLength: 0)
                 }
 
                 QuietSegmentedControl(
@@ -2700,7 +2746,7 @@ struct TesterView: View {
                             Label("Review audio", systemImage: "waveform.slash")
                         }
                         .buttonStyle(QuietButtonStyle())
-                        .quickTooltip("Remove temporary review audio cache files. This does not delete encrypted voice notes or SAGE memory.")
+                        .quickTooltip("Remove encrypted review audio files. This does not delete voice notes or SAGE memory.")
 
                         Button {
                             model.cleanupTrainingSamples()
@@ -3140,15 +3186,27 @@ struct TesterView: View {
                     Circle()
                         .stroke(model.isRecording ? Color.red.opacity(0.34) : (isDarkAppearance ? Color.white.opacity(0.55) : Color.black.opacity(0.10)), lineWidth: 13)
                         .frame(width: 190, height: 190)
-                    Image(systemName: model.isRecording ? "stop.fill" : "mic.fill")
+                    Image(systemName: model.dictationButtonSymbol)
                         .font(.system(size: 56, weight: .semibold))
                         .foregroundStyle(model.isRecording ? .white : (isDarkAppearance ? Color.black.opacity(0.70) : Color.secondary))
                 }
                 .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .disabled(model.isRunning && !model.isRecording)
-            .quickTooltip(model.isRecording ? "Stop listening, polish the transcript, and insert the result according to your settings." : "Start local dictation. QuietType listens only while this session is active.")
+            .accessibilityLabel(model.primaryButtonTitle)
+            .accessibilityHint(model.helperText)
+            .disabled(model.isRunning && !model.canCancelDictation)
+            .quickTooltip(
+                model.isRecording
+                    ? "Stop listening, polish the transcript, and insert the result according to your settings."
+                    : model.canCancelDictation
+                        ? "Cancel the current local transcription. Captured audio and pending output will be discarded."
+                        : model.isCancellingDictation
+                            ? "QuietType is deleting this session's temporary audio before another dictation can start."
+                            : model.isInsertingDictation
+                                ? "QuietType is completing insertion into the app where dictation started."
+                        : "Start local dictation. QuietType listens only while this session is active."
+            )
             .anchorPreference(key: GuideSpotlightPreferenceKey.self, value: .bounds) { anchor in
                 [.dictate: anchor]
             }
@@ -3173,31 +3231,23 @@ struct TesterView: View {
     private var securityPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("Review signals")
+                Text("Local readiness")
                     .font(.title3.weight(.semibold))
                 Spacer()
-                StatusPill(icon: "lock.fill", text: "SAGE", tint: .secondary)
+                StatusPill(icon: "lock.fill", text: "Private", tint: .secondary)
             }
 
             VStack(spacing: 10) {
-                ActivityRow(icon: "timer", title: "Current dictation", value: model.lastDictationDurationLabel)
-                    .quickTooltip("Duration of the current or most recent dictation session.")
-                ActivityRow(icon: "textformat.abc", title: "Current words", value: "\(model.currentSessionWordCount)")
-                    .quickTooltip("Words captured in the active session before cleanup and insertion.")
-                ActivityRow(icon: "speedometer", title: "Speaking pace", value: model.currentWordsPerMinuteLabel)
-                    .quickTooltip("Estimated words per minute for the current or most recent session.")
-                ActivityRow(icon: "text.bubble", title: "Sessions today", value: "\(model.sessionsToday)")
-                    .quickTooltip("How many dictation sessions QuietType has completed today.")
-                ActivityRow(icon: "brain.head.profile", title: "Reviews", value: "\(model.sageLessonCount)")
-                    .quickTooltip("SAGE-backed correction and review memories available to QuietType.")
-                ActivityRow(icon: "checklist.checked", title: "Transcriptions", value: "\(model.transcriptNoteCount)")
-                    .quickTooltip("Transcript notes available for review and correction.")
-                ActivityRow(icon: "wand.and.stars", title: "Correction signal", value: model.correctionSignalLabel)
-                    .quickTooltip("A compact status for whether QuietType has useful correction memory to apply.")
-                ActivityRow(icon: "textformat.abc", title: "Words translated", value: model.wordsProcessedLabel)
-                    .quickTooltip("Total words processed through QuietType's local pipeline.")
-                ActivityMeterRow(icon: "speedometer", title: "Local CPU", value: "\(model.cpuUsagePercent)%", progress: Double(model.cpuUsagePercent) / 100.0)
-                    .quickTooltip("Approximate local CPU usage sampled by QuietType while the app is open.")
+                ActivityRow(icon: "waveform", title: "Speech engine", value: model.speechEngineReady ? "Ready" : "Starting")
+                    .quickTooltip("The bundled Apple Silicon speech engine runs locally on this Mac.")
+                ActivityRow(icon: "brain.head.profile", title: "Private memory", value: model.sageReady ? "Connected" : "Setup")
+                    .quickTooltip("SAGE keeps approved corrections and vocabulary in governed local memory.")
+                ActivityRow(icon: "mic", title: "Microphone", value: model.microphonePermission == .granted ? "Allowed" : "Needed")
+                    .quickTooltip("Microphone access is used only while a recording session is active.")
+                ActivityRow(icon: "cursorarrow.click", title: "Text insertion", value: model.accessibilityPermission == .granted ? "Allowed" : "Needed")
+                    .quickTooltip("Accessibility lets QuietType return text to the app where dictation started.")
+                ActivityRow(icon: "text.bubble", title: "Review history", value: model.historyReviewEnabled ? "\(model.transcriptNoteCount) saved" : "Off")
+                    .quickTooltip("Transcript review history is local and can be turned off in Settings.")
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -3210,14 +3260,14 @@ struct TesterView: View {
     private var outputPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 10) {
-                Text("Polished text")
+                Text(model.outputPanelTitle)
                     .font(.title3.weight(.semibold))
                 Spacer()
                 if model.didInsert {
                     Label("Inserted", systemImage: "checkmark.circle.fill")
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(.secondary)
-                } else if !model.output.isEmpty {
+                } else if model.hasCopyableOutput {
                     Label("Ready", systemImage: "doc.text")
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(.secondary)
@@ -3229,7 +3279,7 @@ struct TesterView: View {
                     Label("Copy", systemImage: "doc.on.doc")
                 }
                 .buttonStyle(QuietButtonStyle())
-                .disabled(model.output.isEmpty)
+                .disabled(!model.hasCopyableOutput)
                 .quickTooltip("Copy the latest polished output without inserting it into another app.")
 
                 if !model.output.isEmpty {
@@ -3506,80 +3556,6 @@ private enum QuietTypeSection: String, CaseIterable, Identifiable {
     }
 }
 
-private struct QuietTypeHeroMessage: Identifiable {
-    var id: String { title }
-    var title: String
-    var subtitle: String
-
-    static let all: [QuietTypeHeroMessage] = [
-        QuietTypeHeroMessage(
-            title: "Speak freely. Transcribe locally.",
-            subtitle: "Nothing leaves your Mac."
-        ),
-        QuietTypeHeroMessage(
-            title: "Your voice stays on your Mac.",
-            subtitle: "Private dictation, local cleanup, no cloud handoff."
-        ),
-        QuietTypeHeroMessage(
-            title: "Dictate without sending it away.",
-            subtitle: "QuietType listens locally and keeps review notes in SAGE."
-        ),
-        QuietTypeHeroMessage(
-            title: "Say it once. Keep it private.",
-            subtitle: "Local speech, local memory, local control."
-        ),
-        QuietTypeHeroMessage(
-            title: "Fast words. Private by design.",
-            subtitle: "Built for Apple Silicon and governed local memory."
-        ),
-        QuietTypeHeroMessage(
-            title: "Voice input for secure work.",
-            subtitle: "Transcribe, polish, and insert without cloud dictation."
-        ),
-        QuietTypeHeroMessage(
-            title: "Think out loud. Keep it local.",
-            subtitle: "Long agent prompts become clean text on your Mac."
-        ),
-        QuietTypeHeroMessage(
-            title: "More context. Less typing.",
-            subtitle: "Give Codex and Claude the full brief without uploading speech."
-        ),
-        QuietTypeHeroMessage(
-            title: "Your prompt, not their server.",
-            subtitle: "Local transcription for source paths, bugs, names, and plans."
-        ),
-        QuietTypeHeroMessage(
-            title: "Talk like a person. Paste like a pro.",
-            subtitle: "QuietType turns messy speech into usable instructions."
-        ),
-        QuietTypeHeroMessage(
-            title: "Private words for real work.",
-            subtitle: "Built for terminals, editors, agents, notes, and Slack."
-        )
-    ]
-
-    static func message(at index: Int) -> QuietTypeHeroMessage {
-        guard !all.isEmpty else {
-            return QuietTypeHeroMessage(title: "Speak freely. Transcribe locally.", subtitle: "Nothing leaves your Mac.")
-        }
-        return all[index % all.count]
-    }
-
-    static func randomIndex() -> Int {
-        guard !all.isEmpty else {
-            return 0
-        }
-        return Int.random(in: 0..<all.count)
-    }
-
-    static func nextIndex(after index: Int) -> Int {
-        guard !all.isEmpty else {
-            return 0
-        }
-        return (index + 1) % all.count
-    }
-}
-
 private enum QuietTypeAppearanceChoice: String, CaseIterable, Identifiable {
     case system
     case light
@@ -3592,22 +3568,6 @@ private enum QuietTypeAppearanceChoice: String, CaseIterable, Identifiable {
         case .system: "System"
         case .light: "Light"
         case .dark: "Dark"
-        }
-    }
-
-    var shortLabel: String {
-        switch self {
-        case .system: "Auto"
-        case .light: "Light"
-        case .dark: "Dark"
-        }
-    }
-
-    var sidebarSymbol: String {
-        switch self {
-        case .system: "circle.lefthalf.filled"
-        case .light: "sun.max.fill"
-        case .dark: "moon.fill"
         }
     }
 
@@ -3635,27 +3595,11 @@ private enum QuietTypeTextSizeChoice: String, CaseIterable, Identifiable {
         }
     }
 
-    var shortLabel: String {
-        switch self {
-        case .standard: "A"
-        case .large: "A+"
-        case .larger: "A++"
-        }
-    }
-
-    var sidebarGlyphSize: CGFloat {
-        switch self {
-        case .standard: 12
-        case .large: 14
-        case .larger: 16
-        }
-    }
-
     var pointDelta: CGFloat {
         switch self {
         case .standard: 0
-        case .large: 1
-        case .larger: 2
+        case .large: 2
+        case .larger: 4
         }
     }
 }
@@ -3743,7 +3687,7 @@ private enum QuietTypeFirstRunStage: String, CaseIterable, Identifiable {
 
     var topLabel: String {
         switch self {
-        case .sage: "SAGE"
+        case .sage: "Private memory"
         case .access: "Set up"
         case .training: "Train"
         case .experience: "Experience it"
@@ -3752,7 +3696,7 @@ private enum QuietTypeFirstRunStage: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .sage: "Set up SAGE memory"
+        case .sage: "Set up private memory"
         case .access: "Set up QuietType on your Mac"
         case .training: "Train QuietType for your voice"
         case .experience: "Start dictating"
@@ -3762,7 +3706,7 @@ private enum QuietTypeFirstRunStage: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .sage:
-            "QuietType uses SAGE as its governed local memory. Install it, finish SAGE setup, then connect quiettype-agent."
+            "QuietType uses the bundled SAGE app to keep approved spellings and corrections private on this Mac."
         case .access:
             "Allow paste access and microphone access. QuietType only listens when you activate dictation."
         case .training:
@@ -3774,7 +3718,7 @@ private enum QuietTypeFirstRunStage: String, CaseIterable, Identifiable {
 
     var calloutTitle: String {
         switch self {
-        case .sage: "Private memory, locally governed"
+        case .sage: "Private memory on your Mac"
         case .access: "macOS stays in control"
         case .training: "A few samples go a long way"
         case .experience: "Speak naturally"
@@ -3784,7 +3728,7 @@ private enum QuietTypeFirstRunStage: String, CaseIterable, Identifiable {
     var calloutDetail: String {
         switch self {
         case .sage:
-            "Your spellings, corrections, and review notes are committed to local SAGE memory under quiettype-agent."
+            "Your spellings, corrections, and review notes stay in your local SAGE memory."
         case .access:
             "Microphone and Accessibility permissions are requested through standard macOS prompts."
         case .training:
@@ -4016,7 +3960,7 @@ private extension QuietTypeFirstRunStage {
     func promptTitle(model: MenuBarModel) -> String {
         switch self {
         case .sage:
-            return model.sageDetected ? "Connect quiettype-agent" : "Install local SAGE"
+            return model.sageDetected ? "Connect QuietType" : "Install private memory"
         case .access:
             return "QuietType would like access"
         case .training:
@@ -4030,7 +3974,7 @@ private extension QuietTypeFirstRunStage {
     func promptDetail(model: MenuBarModel) -> String {
         switch self {
         case .sage:
-            return "SAGE stores transcription lessons as governed local memory."
+            return "SAGE stores approved transcription lessons locally."
         case .access:
             return "Use microphone for local audio and Accessibility for insertion."
         case .training:
@@ -4158,6 +4102,7 @@ private struct SetupStepCard: View {
 
 private struct HelpActionCard: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
     var icon: String
     var title: String
@@ -4187,13 +4132,14 @@ private struct HelpActionCard: View {
         .background(isHovering ? Color(nsColor: .windowBackgroundColor) : Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(isHovering ? 0.16 : 0.06), lineWidth: 1))
-        .animation(.easeOut(duration: 0.14), value: isHovering)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovering)
         .onHover { isHovering = $0 }
     }
 }
 
 private struct HelpInfoCard: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
     var icon: String
     var title: String
@@ -4220,13 +4166,14 @@ private struct HelpInfoCard: View {
         .background(isHovering ? Color(nsColor: .windowBackgroundColor) : Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(isHovering ? 0.16 : 0.06), lineWidth: 1))
-        .animation(.easeOut(duration: 0.14), value: isHovering)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovering)
         .onHover { isHovering = $0 }
     }
 }
 
 private struct HelpFAQRow: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
     var question: String
     var answer: String
@@ -4247,7 +4194,7 @@ private struct HelpFAQRow: View {
         .background(isHovering ? Color.primary.opacity(0.04) : Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 7))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.primary.opacity(isHovering ? 0.12 : 0.05), lineWidth: 1))
-        .animation(.easeOut(duration: 0.14), value: isHovering)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovering)
         .onHover { isHovering = $0 }
     }
 }
@@ -4395,6 +4342,7 @@ private struct CompactStatPill: View {
 
 private struct TrainingMeter: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var level: Double
     var isRecording: Bool
     var isAnalyzing: Bool
@@ -4418,7 +4366,7 @@ private struct TrainingMeter: View {
                     )
                     .rotationEffect(.degrees(-90))
                     .frame(width: 104, height: 104)
-                    .animation(.easeOut(duration: 0.12), value: clampedLevel)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: clampedLevel)
                 Image(systemName: isAnalyzing ? "checkmark" : (isRecording ? "waveform" : "mic"))
                     .font(.system(size: 34, weight: .semibold))
                     .foregroundStyle(isRecording || isAnalyzing ? Color.primary : Color.secondary)
@@ -4440,6 +4388,7 @@ private struct TrainingMeter: View {
 }
 
 private struct SegmentedLevelMeter: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var level: Double
     var isActive: Bool
 
@@ -4465,7 +4414,7 @@ private struct SegmentedLevelMeter: View {
             }
         }
         .opacity(isActive ? 1 : 0.42)
-        .animation(.easeOut(duration: 0.10), value: activeCount)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.10), value: activeCount)
         .accessibilityLabel("Input level")
         .accessibilityValue(activeCount == 0 ? "Silent" : "\(Int(clampedLevel * 100)) percent")
     }
@@ -4745,6 +4694,7 @@ private actor EncryptedVoiceNoteAudioStore {
     private static let encryptedFilePrefix = Data("QTVA1".utf8)
     private static let keychainService = "QuietType.VoiceNotes"
     private static let keychainAccount = "quiettype-voice-notes-aes-gcm-key"
+    private static let keyLock = NSLock()
 
     private let directory: URL
 
@@ -4752,7 +4702,11 @@ private actor EncryptedVoiceNoteAudioStore {
         self.directory = directory
     }
 
-    func saveWAVData(_ data: Data, date: Date = Date()) throws -> URL {
+    func saveWAVData(
+        _ data: Data,
+        date: Date = Date(),
+        filenamePrefix: String = "voice-note"
+    ) throws -> URL {
         try OwnerOnlyFileSecurity.prepareDirectory(directory)
         let sealed = try AES.GCM.seal(data, using: Self.audioKey())
         guard let combined = sealed.combined else {
@@ -4762,11 +4716,28 @@ private actor EncryptedVoiceNoteAudioStore {
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let filename = "voice-note-\(formatter.string(from: date))-\(UUID().uuidString.prefix(8)).qtvoice"
+        let filename = "\(filenamePrefix)-\(formatter.string(from: date))-\(UUID().uuidString.prefix(8)).qtvoice"
         let url = directory.appendingPathComponent(filename)
-        try (Self.encryptedFilePrefix + combined).write(to: url, options: [.atomic])
-        try OwnerOnlyFileSecurity.protectFile(url)
-        return url
+        do {
+            try (Self.encryptedFilePrefix + combined).write(to: url, options: [.atomic])
+            try OwnerOnlyFileSecurity.protectFile(url)
+            return url
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            throw error
+        }
+    }
+
+    func saveWAV(
+        at sourceURL: URL,
+        date: Date = Date(),
+        filenamePrefix: String = "voice-note"
+    ) throws -> URL {
+        try saveWAVData(
+            Data(contentsOf: sourceURL),
+            date: date,
+            filenamePrefix: filenamePrefix
+        )
     }
 
     func decryptAudio(at url: URL) throws -> Data {
@@ -4780,12 +4751,15 @@ private actor EncryptedVoiceNoteAudioStore {
     }
 
     private static func audioKey() throws -> SymmetricKey {
+        keyLock.lock()
+        defer { keyLock.unlock() }
+
         if let data = try keychainKeyData() {
             return SymmetricKey(data: data)
         }
         let data = Data((0..<32).map { _ in UInt8.random(in: UInt8.min...UInt8.max) })
-        try saveKeyDataToKeychain(data)
-        return SymmetricKey(data: data)
+        let persistedData = try addKeyDataToKeychain(data)
+        return SymmetricKey(data: persistedData)
     }
 
     private static func keychainKeyData() throws -> Data? {
@@ -4808,7 +4782,7 @@ private actor EncryptedVoiceNoteAudioStore {
         return data
     }
 
-    private static func saveKeyDataToKeychain(_ data: Data) throws {
+    private static func addKeyDataToKeychain(_ data: Data) throws -> Data {
         guard data.count == 32 else {
             throw MemoryStoreError.encryptionFailed
         }
@@ -4818,23 +4792,18 @@ private actor EncryptedVoiceNoteAudioStore {
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount
         ]
-        let attributes: [String: Any] = [kSecValueData as String: data]
-
-        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if updateStatus == errSecSuccess {
-            return
-        }
-        guard updateStatus == errSecItemNotFound else {
-            throw MemoryStoreError.encryptionFailed
-        }
-
         var item = query
         item[kSecValueData as String] = data
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let addStatus = SecItemAdd(item as CFDictionary, nil)
-        guard addStatus == errSecSuccess || addStatus == errSecDuplicateItem else {
-            throw MemoryStoreError.encryptionFailed
+        if addStatus == errSecSuccess {
+            return data
         }
+        if addStatus == errSecDuplicateItem,
+           let existingData = try keychainKeyData() {
+            return existingData
+        }
+        throw MemoryStoreError.encryptionFailed
     }
 }
 
@@ -5157,7 +5126,7 @@ private struct VoiceNotesIntroPanel: View {
                 }
                 .frame(minWidth: 210)
                 .buttonStyle(QuietButtonStyle(prominence: .primary))
-                .disabled(model.isVoiceNoteTranscribing || model.isRecording || model.isTrainingRecording || model.isTeachingRecording)
+                .disabled(model.isVoiceNoteTranscribing || model.isRecording || model.isRunning || model.isTrainingRecording || model.isTeachingRecording)
                 .quickTooltip(model.isVoiceNoteRecording ? "Stop recording and transcribe this voice note locally." : "Start an encrypted local voice note. Transcript copies go to SAGE only when that setting is on.")
             }
             .padding(.top, 8)
@@ -6559,23 +6528,23 @@ private struct MetricTile: View {
     }
 
     private var cardColor: Color {
-        isDark ? Color.white.opacity(0.92) : Color.black
+        isDark ? Color(nsColor: .controlBackgroundColor) : Color.black
     }
 
     private var foregroundColor: Color {
-        isDark ? .black : .white
+        isDark ? .primary : .white
     }
 
     private var secondaryColor: Color {
-        isDark ? Color.black.opacity(0.58) : Color.white.opacity(0.68)
+        isDark ? .secondary : Color.white.opacity(0.68)
     }
 
     private var iconColor: Color {
-        isDark ? Color.black.opacity(0.50) : Color.white.opacity(0.62)
+        isDark ? .secondary : Color.white.opacity(0.62)
     }
 
     private var borderColor: Color {
-        isDark ? Color.white.opacity(0.16) : Color.black.opacity(0.08)
+        isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.08)
     }
 }
 
@@ -6596,36 +6565,6 @@ private struct ActivityRow: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
-    }
-}
-
-private struct ActivityMeterRow: View {
-    var icon: String
-    var title: String
-    var value: String
-    var progress: Double
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
-            Text(title)
-                .font(.system(size: 16, weight: .medium))
-            Spacer()
-            ProgressView(value: min(max(progress, 0), 1))
-                .progressViewStyle(.linear)
-                .tint(.secondary)
-                .frame(width: 82)
-            Text(value)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 42, alignment: .trailing)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -6745,41 +6684,6 @@ private struct StartupStepRow: View {
     }
 }
 
-private struct CPUUsageSampler {
-    private var previous: host_cpu_load_info_data_t?
-
-    mutating func sample() -> Int {
-        var info = host_cpu_load_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.stride / MemoryLayout<integer_t>.stride)
-        let result = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
-                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, rebound, &count)
-            }
-        }
-
-        guard result == KERN_SUCCESS else {
-            return 0
-        }
-
-        defer {
-            previous = info
-        }
-
-        guard let previous else {
-            return 0
-        }
-
-        let user = Double(info.cpu_ticks.0 - previous.cpu_ticks.0)
-        let system = Double(info.cpu_ticks.1 - previous.cpu_ticks.1)
-        let idle = Double(info.cpu_ticks.2 - previous.cpu_ticks.2)
-        let nice = Double(info.cpu_ticks.3 - previous.cpu_ticks.3)
-        let total = max(user + system + idle + nice, 1)
-        let busy = user + system + nice
-
-        return min(100, max(0, Int((busy / total) * 100.0)))
-    }
-}
-
 struct StartupStep: Identifiable, Equatable {
     var id: String
     var title: String
@@ -6818,31 +6722,9 @@ private struct StatusPill: View {
     }
 }
 
-private struct SidebarIconToggle<Content: View>: View {
-    var label: String
-    var selected: Bool
-    @ViewBuilder var content: () -> Content
-    var action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            content()
-                .foregroundStyle(selected ? Color(nsColor: .controlBackgroundColor) : .secondary)
-                .frame(maxWidth: .infinity, minHeight: 28)
-                .background(selected ? Color.primary : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .contentShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity)
-        .quickTooltip(label)
-        .accessibilityLabel(label)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-}
-
 private struct QuietButtonStyle: ButtonStyle {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     enum Prominence {
         case primary
@@ -6867,7 +6749,7 @@ private struct QuietButtonStyle: ButtonStyle {
             )
             .opacity(configuration.isPressed ? 0.72 : 1)
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 
     private var foreground: Color {
@@ -6931,6 +6813,8 @@ private struct QuietSegmentedControl<Option: Identifiable & Hashable>: View {
                             .clipShape(RoundedRectangle(cornerRadius: 7))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(label(option))
+                    .accessibilityAddTraits(selection == option ? .isSelected : [])
                 }
             }
             .padding(3)
@@ -7558,6 +7442,7 @@ struct CalibrationSet: Identifiable, Equatable {
 final class MenuBarModel: ObservableObject {
     @Published var transcript = "the sage benchmark needs to rerun the comet b f t latency numbers"
     @Published var output = ""
+    @Published private(set) var hasCopyableOutput = false
     @Published var sageStatus = "SAGE unchecked"
     @Published var sageDetected = false
     @Published var sageAgentID = ""
@@ -7572,7 +7457,7 @@ final class MenuBarModel: ObservableObject {
     @Published var fallbackSpeechReady = false
     @Published var startupSteps = StartupStep.defaults
     @Published var isBooting = false
-    @Published var isRunning = false
+    @Published private var dictationState = QuietTypeDictationState.idle
     @Published var isRecording = false
     @Published var recordingDuration = 0.0
     @Published var lastDictationDuration = 0.0
@@ -7587,12 +7472,13 @@ final class MenuBarModel: ObservableObject {
     @Published var previewOnly = false
     @Published var didInsert = false
     @Published var historyReviewEnabled = true
+    @Published var keepReviewAudio = false
     @Published var selectedProfile = ProfileChoice.messaging
     @Published var editorMode = EditorMode.ruleBased
     @Published var ollamaModel = "qwen3:4b"
     @Published var spellingPreference = SpellingPreference.system
     @Published var profanityFilterEnabled = true
-    @Published var typingReminderEnabled = true
+    @Published var typingReminderEnabled = false
     @Published var teachRaw = ""
     @Published var teachCorrected = ""
     @Published var teachingKind = TeachingKind.correction
@@ -7631,7 +7517,6 @@ final class MenuBarModel: ObservableObject {
     @Published var functionKeySystemUse = FunctionKeySystemUse.current
     @Published var microphonePermission: PermissionState = .unknown
     @Published var accessibilityPermission: PermissionState = .unknown
-    @Published var cpuUsagePercent = 0
     @Published var isCheckingForUpdates = false
     @Published var updateStatus = ""
     @Published var availableUpdate: QuietTypeUpdateAvailability?
@@ -7659,12 +7544,20 @@ final class MenuBarModel: ObservableObject {
     private var nativeSpeechStartupTask: Task<Void, Never>?
     private var updateCheckTask: Task<Void, Never>?
     private var dictionarySearchTask: Task<Void, Never>?
+    private var dictationFinalizationTask: Task<Void, Never>?
+    private var transcriptPersistenceTask: Task<Void, Never>?
+    private var sageTranscriptSyncInFlightIDs: Set<String> = []
     private var terminationObserver: NSObjectProtocol?
+    private var workspaceActivationObserver: NSObjectProtocol?
     private var captureService: AVAudioCaptureService?
     private var trainingCaptureService: AVAudioCaptureService?
     private var teachingCaptureService: AVAudioCaptureService?
     private var voiceNoteCaptureService: AVAudioCaptureService?
     private var recordingStartedAt: Date?
+    private var dictationReleasedAt: Date?
+    private var activeDictationAudioURL: URL?
+    private var activeDictationContext: AppContext?
+    private var lastExternalApplication: NSRunningApplication?
     private var trainingStartedAt: Date?
     private var teachingStartedAt: Date?
     private var voiceNoteStartedAt: Date?
@@ -7695,6 +7588,7 @@ final class MenuBarModel: ObservableObject {
     private var voiceNotePlaybackTimer: Timer?
     private var voiceNotePlaybackTempURL: URL?
     private lazy var voiceNoteAudioStore = EncryptedVoiceNoteAudioStore(directory: voiceNoteAudioDirectory)
+    private lazy var reviewAudioStore = EncryptedVoiceNoteAudioStore(directory: reviewAudioDirectory)
     private var chunker = StreamingWavChunker()
     private let chunkDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("quiettype-stream")
     private var streamingTranscriptionSession: StreamingAudioTranscriptionSession?
@@ -7712,12 +7606,13 @@ final class MenuBarModel: ObservableObject {
     private var cancelKeyLocalMonitor: Any?
     private var lastHotKeyToggleAt: Date?
     private let overlayController = DictationOverlayController()
-    private var cpuSampler = CPUUsageSampler()
     private var microphoneAccessVerified = false
     private static let hotKeyChoiceKey = "quiettype.hotKeyChoice"
     private static let spellingPreferenceKey = "quiettype.spellingPreference"
     private static let profanityFilterEnabledKey = "quiettype.profanityFilterEnabled"
     private static let typingReminderEnabledKey = "quiettype.typingReminderEnabled"
+    private static let typingReminderOptInMigrationKey = "quiettype.typingReminderOptInMigrationVersion"
+    private static let typingReminderOptInMigrationVersion = 1
     private static let calibrationSavedCountKey = "quiettype.calibrationSavedCount"
     private static let trainingPairCountKey = "quiettype.trainingPairCount"
     private static let sessionsTodayKey = "quiettype.sessionsToday"
@@ -7725,6 +7620,7 @@ final class MenuBarModel: ObservableObject {
     private static let totalTranslatedWordCountKey = "quiettype.totalTranslatedWordCount"
     private static let lastWordsPerMinuteKey = "quiettype.lastWordsPerMinute"
     private static let historyReviewEnabledKey = "quiettype.historyReviewEnabled"
+    private static let keepReviewAudioKey = "quiettype.keepReviewAudio"
     private static let saveVoiceNotesToSageKey = "quiettype.saveVoiceNotesToSage"
     private static let hiddenReviewMemoryIDsKey = "quiettype.hiddenReviewMemoryIDs"
     private static let availableUpdateKey = "quiettype.availableUpdate"
@@ -7739,8 +7635,8 @@ final class MenuBarModel: ObservableObject {
     private static let streamingChunkOverlap = 0.25
     private static let streamingTranscriptMinimumDuration = 0.9
     private static let minimumUsableRMS = 0.0015
-    private static let recordingUIRefreshInterval = 0.10
-    private static let recordingOverlayRefreshInterval = 0.10
+    private static let recordingUIRefreshInterval = 0.15
+    private static let recordingOverlayRefreshInterval = 0.15
 
     init() {
         calibrationSavedCount = UserDefaults.standard.integer(forKey: Self.calibrationSavedCountKey)
@@ -7751,13 +7647,18 @@ final class MenuBarModel: ObservableObject {
         availableUpdate = Self.loadAvailableUpdate()
         hiddenReviewMemoryIDs = Set(UserDefaults.standard.stringArray(forKey: Self.hiddenReviewMemoryIDsKey) ?? [])
         historyReviewEnabled = storedBool(forKey: Self.historyReviewEnabledKey, defaultValue: true)
+        keepReviewAudio = storedBool(forKey: Self.keepReviewAudioKey, defaultValue: false)
         saveVoiceNotesToSage = storedBool(forKey: Self.saveVoiceNotesToSageKey, defaultValue: true)
         if let storedSpelling = UserDefaults.standard.string(forKey: Self.spellingPreferenceKey),
            let preference = SpellingPreference(rawValue: storedSpelling) {
             spellingPreference = preference
         }
         profanityFilterEnabled = storedBool(forKey: Self.profanityFilterEnabledKey, defaultValue: true)
-        typingReminderEnabled = storedBool(forKey: Self.typingReminderEnabledKey, defaultValue: true)
+        if UserDefaults.standard.integer(forKey: Self.typingReminderOptInMigrationKey) < Self.typingReminderOptInMigrationVersion {
+            UserDefaults.standard.set(false, forKey: Self.typingReminderEnabledKey)
+            UserDefaults.standard.set(Self.typingReminderOptInMigrationVersion, forKey: Self.typingReminderOptInMigrationKey)
+        }
+        typingReminderEnabled = storedBool(forKey: Self.typingReminderEnabledKey, defaultValue: false)
         if let storedHotKey = UserDefaults.standard.string(forKey: Self.hotKeyChoiceKey),
            let choice = HotKeyChoice(rawValue: storedHotKey) {
             hotKeyChoice = choice
@@ -7776,6 +7677,24 @@ final class MenuBarModel: ObservableObject {
             }
         }
 
+        if let frontmostApplication = NSWorkspace.shared.frontmostApplication,
+           frontmostApplication.bundleIdentifier != Bundle.main.bundleIdentifier {
+            lastExternalApplication = frontmostApplication
+        }
+        workspaceActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  application.bundleIdentifier != Bundle.main.bundleIdentifier else {
+                return
+            }
+            Task { @MainActor [weak self] in
+                self?.lastExternalApplication = application
+            }
+        }
+
         Task { @MainActor [weak self] in
             self?.startAppServices()
         }
@@ -7791,13 +7710,53 @@ final class MenuBarModel: ObservableObject {
 
     deinit {
         dictionarySearchTask?.cancel()
+        dictationFinalizationTask?.cancel()
+        transcriptPersistenceTask?.cancel()
         if let terminationObserver {
             NotificationCenter.default.removeObserver(terminationObserver)
+        }
+        if let workspaceActivationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(workspaceActivationObserver)
+        }
+    }
+
+    var isRunning: Bool {
+        dictationState.isProcessing
+    }
+
+    var isFinalizingDictation: Bool {
+        dictationState == .finalizing || dictationState == .inserting || dictationState == .cancelling
+    }
+
+    var isCancellingDictation: Bool {
+        dictationState == .cancelling
+    }
+
+    var isInsertingDictation: Bool {
+        dictationState == .inserting
+    }
+
+    var canCancelDictation: Bool {
+        dictationState.canCancel
+    }
+
+    var dictationButtonSymbol: String {
+        switch dictationState {
+        case .listening:
+            return "stop.fill"
+        case .finalizing:
+            return "xmark"
+        case .inserting:
+            return "arrow.up.forward.app.fill"
+        case .preparing, .cancelling:
+            return "ellipsis"
+        case .idle, .succeeded, .failed, .cancelled:
+            return "mic.fill"
         }
     }
 
     var statusIcon: String {
-        isRunning ? "waveform" : "mic"
+        isRunning || isRecording ? "waveform" : "mic"
     }
 
     var appVersionLabel: String {
@@ -7816,11 +7775,22 @@ final class MenuBarModel: ObservableObject {
         if !permissionsReady {
             return "Click the mic to finish setup"
         }
+        switch dictationState {
+        case .preparing:
+            return "Preparing local dictation..."
+        case .listening:
+            return "Listening... \(String(format: "%.1f", recordingDuration))s"
+        case .finalizing:
+            return "Transcribing locally..."
+        case .inserting:
+            return "Inserting polished text..."
+        case .cancelling:
+            return "Cancelling dictation..."
+        case .idle, .succeeded, .failed, .cancelled:
+            break
+        }
         if !trainingComplete {
             return "Click the mic to dictate"
-        }
-        if isRecording {
-            return "Listening... \(String(format: "%.1f", recordingDuration))s"
         }
         return "Press \(hotKeyLabel) or click the mic"
     }
@@ -7829,8 +7799,20 @@ final class MenuBarModel: ObservableObject {
         if !sageReady {
             return sageDetected ? "Connect SAGE" : "Install SAGE"
         }
-        if isRecording {
+        if dictationState == .listening {
             return "Stop"
+        }
+        if dictationState == .preparing {
+            return "Preparing"
+        }
+        if dictationState == .finalizing {
+            return "Cancel"
+        }
+        if dictationState == .inserting {
+            return "Inserting"
+        }
+        if dictationState == .cancelling {
+            return "Cancelling"
         }
         if microphonePermission != .granted {
             return "Allow Microphone"
@@ -7850,11 +7832,22 @@ final class MenuBarModel: ObservableObject {
         if !permissionsReady {
             return "QuietType will ask macOS for the permissions it needs."
         }
-        if !trainingComplete {
-            return "Voice training is still open. You can dictate now, but training improves names, acronyms, and technical terms."
-        }
-        if isRecording {
+        switch dictationState {
+        case .preparing:
+            return "Checking local services and the target app."
+        case .listening:
             return "Speak naturally, then press \(hotKeyLabel) or click the mic again to insert. Press Esc or X to cancel."
+        case .finalizing:
+            return "Resolving the final words locally. Press Esc or click X to cancel."
+        case .inserting:
+            return "Sending the polished text to the app where dictation started."
+        case .cancelling:
+            return "Stopping local processing and deleting this session's temporary audio."
+        case .idle, .succeeded, .failed, .cancelled:
+            break
+        }
+        if !trainingComplete {
+            return "Voice training is optional. Add samples later to improve names, acronyms, and technical terms."
         }
         if nativeSpeechServerReady {
             return "Ready for private Apple Silicon dictation. Text inserts automatically."
@@ -7920,8 +7913,12 @@ final class MenuBarModel: ObservableObject {
         calibrationSavedCount >= Self.requiredCalibrationSets
     }
 
+    var coreDictationReady: Bool {
+        sageReady && permissionsReady && speechEngineReady
+    }
+
     var setupComplete: Bool {
-        sageReady && permissionsReady && speechEngineReady && trainingComplete
+        coreDictationReady && trainingComplete
     }
 
     var trainingProgressLabel: String {
@@ -7959,8 +7956,15 @@ final class MenuBarModel: ObservableObject {
     }
 
     var currentSessionWordCount: Int {
+        guard hasCopyableOutput else {
+            return 0
+        }
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? 0 : wordCount(trimmed)
+    }
+
+    var outputPanelTitle: String {
+        output.isEmpty || hasCopyableOutput ? "Polished text" : "Dictation status"
     }
 
     var currentWordsPerMinuteLabel: String {
@@ -8133,6 +8137,41 @@ final class MenuBarModel: ObservableObject {
     private var reviewAudioDirectory: URL {
         quietTypeApplicationSupportDirectory
             .appendingPathComponent("ReviewAudio", isDirectory: true)
+    }
+
+    private var temporaryDictationAudioDirectory: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("QuietType/Dictation", isDirectory: true)
+    }
+
+    private var temporaryVoiceNoteAudioDirectory: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("QuietType/VoiceNotes", isDirectory: true)
+    }
+
+    private func discardPlaintextDictationAudio() {
+        if let activeDictationAudioURL {
+            try? FileManager.default.removeItem(at: activeDictationAudioURL)
+        }
+        try? FileManager.default.removeItem(at: temporaryDictationAudioDirectory)
+        try? FileManager.default.removeItem(at: chunkDirectory)
+        activeDictationAudioURL = nil
+        recordedSamples.removeAll(keepingCapacity: false)
+    }
+
+    private func discardPlaintextVoiceNoteAudio() {
+        try? FileManager.default.removeItem(at: temporaryVoiceNoteAudioDirectory)
+        if let legacyFiles = try? FileManager.default.contentsOfDirectory(
+            at: FileManager.default.temporaryDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            for url in legacyFiles where url.lastPathComponent.hasPrefix("quiettype-voice-note-")
+                && url.pathExtension.lowercased() == "wav" {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        voiceNoteSamples.removeAll(keepingCapacity: false)
     }
 
     private var voiceNoteAudioDirectory: URL {
@@ -8558,6 +8597,17 @@ final class MenuBarModel: ObservableObject {
     func setHistoryReviewEnabled(_ enabled: Bool) {
         historyReviewEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: Self.historyReviewEnabledKey)
+        if !enabled, keepReviewAudio {
+            setKeepReviewAudio(false)
+        }
+    }
+
+    func setKeepReviewAudio(_ enabled: Bool) {
+        keepReviewAudio = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.keepReviewAudioKey)
+        if !enabled {
+            cleanupReviewAudioCache()
+        }
     }
 
     func refreshSageStatus() {
@@ -8626,10 +8676,6 @@ final class MenuBarModel: ObservableObject {
         }
         accessibilityPermission = snapshot.accessibility
         updatePermissionsStartupStep()
-    }
-
-    func refreshSystemMetrics() {
-        cpuUsagePercent = cpuSampler.sample()
     }
 
     private func startBackgroundUpdateChecks() {
@@ -8839,9 +8885,10 @@ final class MenuBarModel: ObservableObject {
         }
         didStartAppServices = true
         isBooting = true
+        discardPlaintextDictationAudio()
+        discardPlaintextVoiceNoteAudio()
 
         Task {
-            refreshSystemMetrics()
             refreshSageStatus()
             await refreshLocalMemories()
             await registerSageAgentIfAvailable()
@@ -8849,7 +8896,7 @@ final class MenuBarModel: ObservableObject {
             refreshSpeechEngineStatus()
             registerGlobalHotKey()
             registerCancelKeyMonitor()
-            registerTypingReminderMonitor()
+            configureTypingReminderMonitor()
             startNativeSpeechWarmup()
             startBackgroundUpdateChecks()
             repairSensitiveStoragePermissions()
@@ -8863,6 +8910,18 @@ final class MenuBarModel: ObservableObject {
             voiceNoteAudioDirectory,
             trainingDirectory()
         ]
+        let reviewAudioDirectory = reviewAudioDirectory
+        let shouldPurgeReviewAudio = !keepReviewAudio
+        if let files = try? FileManager.default.contentsOfDirectory(
+            at: reviewAudioDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            for url in files where url.pathExtension.lowercased() == "wav"
+                || (shouldPurgeReviewAudio && url.pathExtension.lowercased() == "qtvoice") {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
         Task.detached(priority: .utility) {
             for directory in directories {
                 Self.repairOwnerOnlyStorage(at: directory)
@@ -8885,8 +8944,8 @@ final class MenuBarModel: ObservableObject {
                 let entries = [
                     Self.storageEntry(
                         id: "review-audio",
-                        title: "Review audio cache",
-                        detail: "Plain WAV review clips, capped at \(maxReviewAudioFiles) recent dictations.",
+                        title: "Encrypted review audio",
+                        detail: "Encrypted .qtvoice clips, capped at \(maxReviewAudioFiles) recent dictations.",
                         urls: [reviewAudioDirectory]
                     ),
                     Self.storageEntry(
@@ -8928,7 +8987,9 @@ final class MenuBarModel: ObservableObject {
 
     func cleanupReviewAudioCache() {
         do {
-            try removeFiles(in: reviewAudioDirectory) { $0.pathExtension.lowercased() == "wav" }
+            try removeFiles(in: reviewAudioDirectory) {
+                ["wav", "qtvoice"].contains($0.pathExtension.lowercased())
+            }
             storageCleanupStatus = "Review audio cache cleared."
         } catch {
             storageCleanupStatus = "Could not clear review audio: \(error.localizedDescription)"
@@ -9090,8 +9151,8 @@ final class MenuBarModel: ObservableObject {
     }
 
     private func suspendAppForUpdateInstall() async {
-        if isRecording {
-            await cancelRecording()
+        if canCancelDictation {
+            await cancelActiveDictation()
         }
         if isVoiceNoteRecording {
             voiceNoteCaptureService?.stop()
@@ -9142,12 +9203,23 @@ final class MenuBarModel: ObservableObject {
         }
         registerGlobalHotKey()
         registerCancelKeyMonitor()
-        registerTypingReminderMonitor()
+        configureTypingReminderMonitor()
         startNativeSpeechWarmup()
         startBackgroundUpdateChecks()
     }
 
     func shutdownAppServices() {
+        dictationFinalizationTask?.cancel()
+        dictationFinalizationTask = nil
+        transcriptPersistenceTask?.cancel()
+        transcriptPersistenceTask = nil
+        captureService?.stop()
+        captureService = nil
+        isRecording = false
+        streamingTranscriptionSession = nil
+        pendingStreamingChunks = []
+        discardPlaintextDictationAudio()
+        discardPlaintextVoiceNoteAudio()
         voiceNoteCaptureService?.stop()
         voiceNoteCaptureService = nil
         stopVoiceNotePlayback()
@@ -9197,7 +9269,11 @@ final class MenuBarModel: ObservableObject {
         typingReminderEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: Self.typingReminderEnabledKey)
         if enabled && !wasEnabled {
+            configureTypingReminderMonitor()
             typingReminderMonitor?.resetReminderHistory()
+        } else if !enabled {
+            typingReminderMonitor?.unregister()
+            typingReminderMonitor = nil
         }
     }
 
@@ -9306,7 +9382,7 @@ final class MenuBarModel: ObservableObject {
             guard event.keyCode == 53 else {
                 return false
             }
-            let shouldCancel = self?.isRecording == true || self?.isVoiceNoteRecording == true
+            let shouldCancel = self?.canCancelDictation == true || self?.isVoiceNoteRecording == true
             guard shouldCancel else {
                 return false
             }
@@ -9314,8 +9390,8 @@ final class MenuBarModel: ObservableObject {
                 guard let self else {
                     return
                 }
-                if self.isRecording {
-                    await self.cancelRecording()
+                if self.canCancelDictation {
+                    await self.cancelActiveDictation()
                 } else if self.isVoiceNoteRecording {
                     await self.cancelVoiceNoteRecording()
                 }
@@ -9342,7 +9418,13 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
-    private func registerTypingReminderMonitor() {
+    private func configureTypingReminderMonitor() {
+        guard typingReminderEnabled else {
+            typingReminderMonitor?.unregister()
+            typingReminderMonitor = nil
+            return
+        }
+
         guard typingReminderMonitor == nil else {
             typingReminderMonitor?.shortcutLabel = hotKeyLabel
             return
@@ -9404,6 +9486,10 @@ final class MenuBarModel: ObservableObject {
         if isVoiceNoteRecording || isVoiceNoteTranscribing {
             statusMessage = isVoiceNoteRecording ? "Voice note recording" : "Voice note transcribing"
             lastError = "Finish or cancel the voice note before starting dictation."
+            return
+        }
+        guard !isFinalizingDictation, dictationState != .preparing else {
+            statusMessage = "Finishing current dictation"
             return
         }
         if let lastHotKeyToggleAt, Date().timeIntervalSince(lastHotKeyToggleAt) < 0.45 {
@@ -9812,9 +9898,16 @@ final class MenuBarModel: ObservableObject {
         await searchSageMemories()
     }
 
-    private func flushPendingSageTranscriptNotes(using client: SageDirectClient) async {
+    private func flushPendingSageTranscriptNotes(
+        using client: SageDirectClient,
+        reportsStatus: Bool = true
+    ) async {
         let pending = localMemories.filter { memory in
             guard memory.type == .transcriptNote else {
+                return false
+            }
+            guard let memoryID = memory.id,
+                  !sageTranscriptSyncInFlightIDs.contains(memoryID) else {
                 return false
             }
             return memory.payload["sage_sync_status"] != "synced"
@@ -9825,7 +9918,8 @@ final class MenuBarModel: ObservableObject {
 
         var syncedCount = 0
         for memory in pending {
-            guard let localID = memory.id else {
+            guard let localID = memory.id,
+                  sageTranscriptSyncInFlightIDs.insert(localID).inserted else {
                 continue
             }
             let content = sageTranscriptContent(from: memory)
@@ -9883,9 +9977,10 @@ final class MenuBarModel: ObservableObject {
                     }
                 }
             }
+            sageTranscriptSyncInFlightIDs.remove(localID)
         }
 
-        if syncedCount > 0 {
+        if reportsStatus, syncedCount > 0 {
             statusMessage = syncedCount == 1 ? "Synced 1 review note to SAGE" : "Synced \(syncedCount) review notes to SAGE"
             if lastError?.hasPrefix("SAGE transcript note sync failed") == true {
                 lastError = nil
@@ -10041,6 +10136,7 @@ final class MenuBarModel: ObservableObject {
         transcript = sample.transcript
         selectedProfile = sample.profile
         output = ""
+        hasCopyableOutput = false
         lastLatencyMS = nil
         lastError = nil
         didInsert = false
@@ -10087,11 +10183,13 @@ final class MenuBarModel: ObservableObject {
             return
         }
 
-        isRunning = true
+        guard dictationState.canStart else {
+            return
+        }
+        dictationState = .finalizing
         lastError = nil
         didInsert = false
         statusMessage = ""
-        defer { isRunning = false }
 
         await processTranscript(transcript)
         statusMessage = editorMode == .ollama ? "Ollama mode, loopback only" : "Rule editor"
@@ -10100,12 +10198,18 @@ final class MenuBarModel: ObservableObject {
     func toggleDictation() async {
         if isRecording {
             await stopRecording()
+        } else if dictationState.canCancel {
+            await cancelActiveDictation()
         } else {
             await startRecording()
         }
     }
 
     func startRecording() async {
+        guard dictationState.canStart else {
+            statusMessage = isFinalizingDictation ? "Finishing current dictation" : "Dictation is already active"
+            return
+        }
         guard !isVoiceNoteRecording, !isVoiceNoteTranscribing else {
             statusMessage = isVoiceNoteRecording ? "Voice note recording" : "Voice note transcribing"
             lastError = "Finish or cancel the voice note before starting dictation."
@@ -10116,12 +10220,17 @@ final class MenuBarModel: ObservableObject {
             lastError = "Stop the current recording before starting dictation."
             return
         }
+        dictationState = .preparing
+        activeDictationContext = await captureDictationContext()
         guard await prepareForDictation() else {
+            dictationState = .failed
+            activeDictationContext = nil
             return
         }
         refreshSpeechEngineStatus()
 
         output = ""
+        hasCopyableOutput = false
         lastError = nil
         statusMessage = ""
         capturedFrameCount = 0
@@ -10139,13 +10248,15 @@ final class MenuBarModel: ObservableObject {
             overlapDurationSeconds: Self.streamingChunkOverlap,
             maxDurationSeconds: Self.maxDictationDurationSeconds
         )
-        activeTranscriptionOptions = currentTranscriptionOptions()
+        activeTranscriptionOptions = currentTranscriptionOptions(appName: activeDictationContext?.appName)
         streamingTranscriptionSession = nil
         pendingStreamingChunks = []
         streamingTranscriptPreview = ""
         try? FileManager.default.removeItem(at: chunkDirectory)
         lastRecordingURL = nil
         recordingStartedAt = Date()
+        dictationReleasedAt = nil
+        activeDictationAudioURL = nil
         lastListeningUIUpdateAt = .distantPast
         lastListeningOverlayUpdateAt = .distantPast
 
@@ -10160,6 +10271,7 @@ final class MenuBarModel: ObservableObject {
             microphonePermission = .granted
             updatePermissionsStartupStep()
             isRecording = true
+            dictationState = .listening
             recordStartedSession()
             statusMessage = "Listening locally"
             showListeningOverlay(force: true)
@@ -10167,6 +10279,7 @@ final class MenuBarModel: ObservableObject {
             captureService = nil
             recordingStartedAt = nil
             isRecording = false
+            dictationState = .failed
             microphoneAccessVerified = false
             microphonePermission = .denied
             updatePermissionsStartupStep()
@@ -10183,21 +10296,23 @@ final class MenuBarModel: ObservableObject {
         captureService?.stop()
         captureService = nil
         isRecording = false
+        dictationState = .cancelled
         lastDictationDuration = recordingDuration
         await streamingTranscriptionSession?.cancel()
         streamingTranscriptionSession = nil
         pendingStreamingChunks = []
         streamingTranscriptPreview = ""
-        recordedSamples = []
+        discardPlaintextDictationAudio()
         capturedFrameCount = 0
         partialChunkCount = 0
         lastRecordingURL = nil
         recordingStartedAt = nil
+        dictationReleasedAt = nil
+        activeDictationContext = nil
         inputLevel = 0
         peakInputLevel = 0
         peakInputRMS = 0
         inputNoiseFloorRMS = 0.006
-        try? FileManager.default.removeItem(at: chunkDirectory)
         statusMessage = "Dictation cancelled"
         lastError = nil
         overlayController.show(state: .cancelled, detail: "Discarded locally")
@@ -10223,8 +10338,10 @@ final class MenuBarModel: ObservableObject {
     }
 
     private func startVoiceNoteRecording() async {
-        guard !isRecording, !isTrainingRecording, !isTeachingRecording else {
-            lastError = "Stop the current recording before starting a voice note."
+        guard !isRecording, !isRunning, !isTrainingRecording, !isTeachingRecording else {
+            lastError = isRunning
+                ? "Wait for the current dictation to finish before starting a voice note."
+                : "Stop the current recording before starting a voice note."
             return
         }
         guard !isVoiceNoteTranscribing else {
@@ -10345,8 +10462,9 @@ final class MenuBarModel: ObservableObject {
         do {
             statusMessage = "Transcribing voice note"
             activeTranscriptionOptions = currentTranscriptionOptions(appName: "Voice Notes")
-            let tempURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("quiettype-voice-note-\(UUID().uuidString).wav")
+            let tempURL = temporaryVoiceNoteAudioDirectory
+                .appendingPathComponent("voice-note-\(UUID().uuidString).wav")
+            try OwnerOnlyFileSecurity.prepareDirectory(temporaryVoiceNoteAudioDirectory)
             try WavFileWriter.writeMonoPCM16(samples: voiceNoteSamples, sampleRate: voiceNoteSampleRate, to: tempURL)
             defer {
                 try? FileManager.default.removeItem(at: tempURL)
@@ -10697,6 +10815,38 @@ final class MenuBarModel: ObservableObject {
         selectedVoiceNoteID = notes.first?.id
     }
 
+    private func captureDictationContext() async -> AppContext {
+        let frontmostApplication = NSWorkspace.shared.frontmostApplication
+        let targetApplication: NSRunningApplication?
+        if let frontmostApplication,
+           frontmostApplication.bundleIdentifier != Bundle.main.bundleIdentifier {
+            targetApplication = frontmostApplication
+            lastExternalApplication = frontmostApplication
+        } else {
+            targetApplication = lastExternalApplication
+        }
+
+        guard let targetApplication else {
+            return AppContext(
+                appName: selectedProfile.appName,
+                profile: selectedProfile.appProfile
+            )
+        }
+
+        let collector = AccessibilityContextCollector(
+            appName: targetApplication.localizedName,
+            bundleIdentifier: targetApplication.bundleIdentifier,
+            processIdentifier: targetApplication.processIdentifier
+        )
+        if let context = try? await collector.currentContext() {
+            return context
+        }
+        return AppContext(
+            appName: selectedProfile.appName,
+            profile: selectedProfile.appProfile
+        )
+    }
+
     private func prepareForDictation() async -> Bool {
         lastError = nil
         statusMessage = "Checking setup"
@@ -10724,6 +10874,12 @@ final class MenuBarModel: ObservableObject {
         guard accessibilityPermission == .granted else {
             statusMessage = "Waiting for macOS permissions"
             lastError = "Allow Accessibility so QuietType can insert polished text into the active app."
+            return false
+        }
+
+        if let activeDictationContext, activeDictationContext.isSecureInput {
+            statusMessage = "Secure field detected"
+            lastError = "QuietType will not capture or insert dictation while secure keyboard input is active."
             return false
         }
 
@@ -10761,6 +10917,11 @@ final class MenuBarModel: ObservableObject {
     }
 
     func stopRecording() async {
+        guard isRecording else {
+            return
+        }
+        dictationReleasedAt = Date()
+        dictationState = .finalizing
         captureService?.stop()
         captureService = nil
         isRecording = false
@@ -10768,34 +10929,49 @@ final class MenuBarModel: ObservableObject {
             recordingDuration = Date().timeIntervalSince(recordingStartedAt)
         }
         lastDictationDuration = recordingDuration
-        overlayController.show(state: .processing)
+        showProcessingOverlay(detail: "Transcribing locally")
 
         let durationText = String(format: "%.1f", recordingDuration)
         if capturedFrameCount == 0 {
+            await streamingTranscriptionSession?.cancel()
+            streamingTranscriptionSession = nil
+            pendingStreamingChunks = []
+            streamingTranscriptPreview = ""
+            discardPlaintextDictationAudio()
             output = "I could not detect microphone audio. Check your input device and microphone permission."
             statusMessage = "No audio captured"
+            dictationState = .failed
+            activeDictationContext = nil
             overlayController.hide()
             return
         }
         if peakInputRMS < Self.minimumUsableRMS {
+            await streamingTranscriptionSession?.cancel()
+            streamingTranscriptionSession = nil
+            pendingStreamingChunks = []
+            streamingTranscriptPreview = ""
+            discardPlaintextDictationAudio()
             output = "QuietType could open the microphone, but the input signal was too low to transcribe."
             statusMessage = "No usable microphone signal"
             lastError = "Check the selected input device in macOS Sound settings, then try again."
+            dictationState = .failed
+            activeDictationContext = nil
             overlayController.hide()
             return
         }
 
         do {
-            let url = reviewAudioURL()
+            let shouldRetainAudio = historyReviewEnabled && keepReviewAudio
+            let url = temporaryDictationAudioURL()
+            activeDictationAudioURL = url
             try OwnerOnlyFileSecurity.prepareDirectory(url.deletingLastPathComponent())
             try WavFileWriter.writeMonoPCM16(samples: recordedSamples, sampleRate: recordingSampleRate, to: url)
-            pruneReviewAudioCache(keeping: url)
-            lastRecordingURL = url
+            recordedSamples.removeAll(keepingCapacity: false)
+            lastRecordingURL = nil
             output = "Captured \(durationText)s of local audio. Looking for the local speech engine..."
             if let finalChunk = try chunker.flush(outputDirectory: chunkDirectory) {
                 partialChunkCount += 1
                 statusMessage = "Saved \(partialChunkCount) chunks"
-                lastRecordingURL = finalChunk.url
                 pendingStreamingChunks.append(finalChunk)
                 await activateStreamingIfUseful()
             } else {
@@ -10803,23 +10979,41 @@ final class MenuBarModel: ObservableObject {
             }
             lastError = nil
             let session = recordingDuration >= Self.streamingTranscriptMinimumDuration ? streamingTranscriptionSession : nil
-            await transcribeAndProcess(url, streamingSession: session)
+            dictationFinalizationTask?.cancel()
+            dictationFinalizationTask = Task { @MainActor [weak self] in
+                guard let self else {
+                    return
+                }
+                await self.transcribeAndProcess(
+                    url,
+                    retainReviewAudio: shouldRetainAudio,
+                    streamingSession: session
+                )
+                self.streamingTranscriptionSession = nil
+                self.pendingStreamingChunks = []
+                self.dictationFinalizationTask = nil
+            }
+        } catch {
+            await streamingTranscriptionSession?.cancel()
             streamingTranscriptionSession = nil
             pendingStreamingChunks = []
-        } catch {
+            streamingTranscriptPreview = ""
             output = "Captured \(durationText)s of local audio, but could not save the WAV file."
             lastError = String(describing: error)
+            dictationState = .failed
+            discardPlaintextDictationAudio()
+            activeDictationContext = nil
             overlayController.hide(after: 1.1)
         }
     }
 
-    private func reviewAudioURL(date: Date = Date()) -> URL {
+    private func temporaryDictationAudioURL(date: Date = Date()) -> URL {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let filename = "dictation-\(formatter.string(from: date))-\(UUID().uuidString.prefix(8)).wav"
-        return reviewAudioDirectory.appendingPathComponent(filename)
+        return temporaryDictationAudioDirectory.appendingPathComponent(filename)
     }
 
     private func pruneReviewAudioCache(keeping keptURL: URL? = nil) {
@@ -10833,8 +11027,10 @@ final class MenuBarModel: ObservableObject {
         }
 
         let keptPath = keptURL?.path
-        let wavFiles = files.filter { $0.pathExtension.lowercased() == "wav" }
-        let sorted = wavFiles.sorted { lhs, rhs in
+        let reviewAudioFiles = files.filter {
+            ["wav", "qtvoice"].contains($0.pathExtension.lowercased())
+        }
+        let sorted = reviewAudioFiles.sorted { lhs, rhs in
             let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             return lhsDate > rhsDate
@@ -10867,7 +11063,6 @@ final class MenuBarModel: ObservableObject {
             let chunks = try chunker.append(frame, outputDirectory: chunkDirectory)
             partialChunkCount += chunks.count
             if let last = chunks.last {
-                lastRecordingURL = last.url
                 statusMessage = "Streaming chunk \(last.sequence + 1)"
             }
             pendingStreamingChunks.append(contentsOf: chunks)
@@ -10949,6 +11144,78 @@ final class MenuBarModel: ObservableObject {
         )
     }
 
+    private func showProcessingOverlay(detail: String, allowsCancellation: Bool = true) {
+        let cancelAction: (() -> Void)?
+        if allowsCancellation {
+            cancelAction = { [weak self] in
+                Task { @MainActor [weak self] in
+                    await self?.cancelActiveDictation()
+                }
+            }
+        } else {
+            cancelAction = nil
+        }
+        overlayController.show(
+            state: .processing,
+            detail: detail,
+            transcript: streamingTranscriptPreview,
+            onCancel: cancelAction
+        )
+    }
+
+    func cancelActiveDictation() async {
+        if isRecording {
+            await cancelRecording()
+            return
+        }
+
+        guard dictationState.canCancel else {
+            return
+        }
+
+        let finalizationTask = dictationFinalizationTask
+        dictationState = .cancelling
+        statusMessage = "Cancelling dictation"
+        overlayController.show(
+            state: .processing,
+            detail: "Deleting temporary audio",
+            transcript: streamingTranscriptPreview
+        )
+        finalizationTask?.cancel()
+        await streamingTranscriptionSession?.cancel()
+        streamingTranscriptionSession = nil
+        pendingStreamingChunks = []
+        streamingTranscriptPreview = ""
+        if let activeDictationAudioURL {
+            try? FileManager.default.removeItem(at: activeDictationAudioURL)
+        }
+        if let lastRecordingURL,
+           lastRecordingURL != activeDictationAudioURL {
+            try? FileManager.default.removeItem(at: lastRecordingURL)
+        }
+        activeDictationAudioURL = nil
+        lastRecordingURL = nil
+        recordedSamples = []
+        dictationReleasedAt = nil
+        activeDictationContext = nil
+        try? FileManager.default.removeItem(at: chunkDirectory)
+        await finalizationTask?.value
+        if let activeDictationAudioURL {
+            try? FileManager.default.removeItem(at: activeDictationAudioURL)
+        }
+        if let lastRecordingURL {
+            try? FileManager.default.removeItem(at: lastRecordingURL)
+        }
+        activeDictationAudioURL = nil
+        lastRecordingURL = nil
+        dictationFinalizationTask = nil
+        dictationState = .cancelled
+        statusMessage = "Dictation cancelled"
+        lastError = nil
+        overlayController.show(state: .cancelled, detail: "Discarded locally")
+        overlayController.hide(after: 0.9)
+    }
+
     private func activateStreamingIfUseful() async {
         guard nativeSpeechServerReady, recordingDuration >= Self.streamingTranscriptMinimumDuration else {
             return
@@ -10987,23 +11254,35 @@ final class MenuBarModel: ObservableObject {
         showListeningOverlay(force: true)
     }
 
-    private func transcribeAndProcess(_ audioURL: URL, streamingSession: StreamingAudioTranscriptionSession? = nil) async {
+    private func transcribeAndProcess(
+        _ audioURL: URL,
+        retainReviewAudio: Bool = false,
+        streamingSession: StreamingAudioTranscriptionSession? = nil
+    ) async {
+        defer {
+            try? FileManager.default.removeItem(at: audioURL)
+            try? FileManager.default.removeItem(at: chunkDirectory)
+            if activeDictationAudioURL == audioURL {
+                activeDictationAudioURL = nil
+            }
+        }
         do {
-            isRunning = true
+            dictationState = .finalizing
             guard await ensureNativeSpeechServerReadyForTranscription() else {
                 throw AudioTranscriberError.allBackendsFailed([
                     "Native WhisperKit is unavailable. QuietType is waiting for the Apple Silicon speech engine."
                 ])
             }
+            try Task.checkCancellation()
             statusMessage = "Transcribing locally"
-            overlayController.show(state: .processing)
+            showProcessingOverlay(detail: "Transcribing locally")
             output = """
             Transcribing local audio...
 
             QuietType captured \(String(format: "%.1f", recordingDuration))s of audio and is running \(speechEngineStatus.lowercased()).
             """
-            defer { isRunning = false }
-            let streamResult = await streamingSession?.finish()
+            let streamResult = await streamingSession?.stopAndSnapshot()
+            try Task.checkCancellation()
             let rawTranscript: String
             let wordTimings: [TranscribedWordTiming]
             do {
@@ -11011,6 +11290,7 @@ final class MenuBarModel: ObservableObject {
                     statusMessage = "Resolving full audio"
                 }
                 let timedResult = try await transcribeFullAudioWithTiming(audioURL)
+                try Task.checkCancellation()
                 let fullTranscript = timedResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !isLikelyNoiseTranscript(fullTranscript) else {
                     throw AudioTranscriberError.noiseOnlyTranscript(fullTranscript)
@@ -11035,10 +11315,50 @@ final class MenuBarModel: ObservableObject {
             guard !isLikelyNoiseTranscript(rawTranscript) else {
                 throw AudioTranscriberError.noiseOnlyTranscript(rawTranscript)
             }
+            try Task.checkCancellation()
+            var retainedReviewAudioURL: URL?
+            var reviewAudioWarning: String?
+            if retainReviewAudio && historyReviewEnabled && keepReviewAudio {
+                statusMessage = "Encrypting review audio"
+                var encryptedURL: URL?
+                do {
+                    let savedURL = try await reviewAudioStore.saveWAV(
+                        at: audioURL,
+                        filenamePrefix: "dictation"
+                    )
+                    encryptedURL = savedURL
+                    try Task.checkCancellation()
+                    if historyReviewEnabled && keepReviewAudio {
+                        pruneReviewAudioCache(keeping: savedURL)
+                        lastRecordingURL = savedURL
+                        retainedReviewAudioURL = savedURL
+                    } else {
+                        try? FileManager.default.removeItem(at: savedURL)
+                        lastRecordingURL = nil
+                    }
+                } catch {
+                    if error is CancellationError || Task.isCancelled {
+                        if let encryptedURL {
+                            try? FileManager.default.removeItem(at: encryptedURL)
+                        }
+                        throw CancellationError()
+                    }
+                    lastRecordingURL = nil
+                    reviewAudioWarning = "Review audio could not be encrypted and was not retained."
+                }
+            }
+            try Task.checkCancellation()
             transcript = rawTranscript
-            await processTranscript(rawTranscript, audioURL: audioURL, wordTimings: wordTimings)
+            await processTranscript(rawTranscript, audioURL: retainedReviewAudioURL, wordTimings: wordTimings)
+            if let reviewAudioWarning, lastError == nil {
+                lastError = reviewAudioWarning
+            }
         } catch {
-            isRunning = false
+            if error is CancellationError || Task.isCancelled {
+                return
+            }
+            dictationState = .failed
+            activeDictationContext = nil
             overlayController.hide(after: 1.1)
             refreshSpeechEngineStatus()
             if isLikelyNoiseOnlyFailure(error) {
@@ -11050,7 +11370,7 @@ final class MenuBarModel: ObservableObject {
                 statusMessage = "No transcript returned"
                 lastError = nil
             } else {
-                output = "Captured local audio at:\n\(audioURL.path)"
+                output = "QuietType captured audio, but local transcription could not finish."
                 statusMessage = speechEngineReady ? "Transcription failed" : "Speech engine unavailable"
                 lastError = String(describing: error)
             }
@@ -11270,7 +11590,8 @@ final class MenuBarModel: ObservableObject {
 
     private func processTranscript(_ rawTranscript: String, audioURL: URL? = nil, wordTimings: [TranscribedWordTiming] = []) async {
         do {
-            let context = AppContext(appName: selectedProfile.appName, profile: selectedProfile.appProfile)
+            let context = activeDictationContext
+                ?? AppContext(appName: selectedProfile.appName, profile: selectedProfile.appProfile)
             let bufferInserter = BufferingTextInserter()
             let editor: SemanticEditor = editorMode.makeEditor(model: ollamaModel)
             let controller = DictationSessionController(
@@ -11284,22 +11605,30 @@ final class MenuBarModel: ObservableObject {
 
             try await controller.begin()
             let result = try await controller.finishAndInsert()
+            try Task.checkCancellation()
             output = result.text
+            hasCopyableOutput = true
             didInsert = false
 
-            let insertStarted = Date()
             if !previewOnly {
+                dictationState = .inserting
+                showProcessingOverlay(detail: "Inserting into \(context.appName)", allowsCancellation: false)
                 do {
                     try await ClipboardTextInserter().insert(result.text, into: context)
+                    try Task.checkCancellation()
                     didInsert = true
                     lastError = nil
                 } catch {
+                    if error is CancellationError || Task.isCancelled {
+                        throw CancellationError()
+                    }
                     lastError = "Could not insert into the active app. Use Copy transcript."
                 }
             }
 
-            let insertLatency = Int(Date().timeIntervalSince(insertStarted) * 1000)
-            lastLatencyMS = result.timing.keyReleaseToInsertMS.map { $0 + insertLatency } ?? insertLatency
+            lastLatencyMS = dictationReleasedAt.map {
+                max(0, Int(Date().timeIntervalSince($0) * 1_000))
+            } ?? result.timing.keyReleaseToInsertMS
             let translatedWords = wordCount(result.text)
             if let measuredWPM = Self.wordsPerMinute(wordCount: translatedWords, duration: lastDictationDuration) {
                 lastWordsPerMinute = measuredWPM
@@ -11307,18 +11636,73 @@ final class MenuBarModel: ObservableObject {
             }
             totalTranslatedWordCount += translatedWords
             UserDefaults.standard.set(totalTranslatedWordCount, forKey: Self.totalTranslatedWordCountKey)
-            statusMessage = didInsert ? "Inserted or ready to copy" : "Ready to copy"
-            await saveTranscriptNote(rawTranscript: rawTranscript, polishedText: result.text, inserted: didInsert, latencyMS: result.timing.keyReleaseToInsertMS, audioURL: audioURL, wordTimings: wordTimings)
-            overlayController.show(state: .inserted, detail: "Ready to copy", transcript: result.text)
-            overlayController.hide(after: 3.0)
+            statusMessage = didInsert ? "Inserted into \(context.appName)" : "Ready to copy"
+            var reviewAudioURLForNote = audioURL
+            if reviewAudioURLForNote != nil,
+               (!historyReviewEnabled || !keepReviewAudio) {
+                if let reviewAudioURLForNote {
+                    try? FileManager.default.removeItem(at: reviewAudioURLForNote)
+                }
+                reviewAudioURLForNote = nil
+                lastRecordingURL = nil
+            }
+            let insertedForNote = didInsert
+            let latencyForNote = lastLatencyMS
+            if didInsert {
+                dictationState = .succeeded
+                overlayController.show(state: .inserted, detail: "Inserted into \(context.appName)", transcript: result.text)
+                overlayController.hide(after: 3.0)
+            } else if previewOnly {
+                dictationState = .succeeded
+                overlayController.show(state: .readyToCopy, detail: "Preview only", transcript: result.text)
+                overlayController.hide(after: 4.0)
+            } else {
+                dictationState = .failed
+                overlayController.show(state: .failed, detail: "Copy the transcript instead", transcript: result.text)
+            }
+            activeDictationContext = nil
+            if historyReviewEnabled {
+                let previousPersistenceTask = transcriptPersistenceTask
+                transcriptPersistenceTask = Task { @MainActor [weak self] in
+                    await previousPersistenceTask?.value
+                    guard !Task.isCancelled, let self else {
+                        return
+                    }
+                    await self.saveTranscriptNote(
+                        rawTranscript: rawTranscript,
+                        polishedText: result.text,
+                        inserted: insertedForNote,
+                        latencyMS: latencyForNote,
+                        audioURL: reviewAudioURLForNote,
+                        wordTimings: wordTimings,
+                        context: context,
+                        reportsStatus: false
+                    )
+                }
+            }
         } catch {
-            output = "Transcript: \(rawTranscript)"
+            if error is CancellationError || Task.isCancelled {
+                return
+            }
+            dictationState = .failed
+            activeDictationContext = nil
+            output = rawTranscript
+            hasCopyableOutput = true
             lastError = String(describing: error)
             overlayController.hide(after: 1.1)
         }
     }
 
-    private func saveTranscriptNote(rawTranscript: String, polishedText: String, inserted: Bool, latencyMS: Int?, audioURL: URL?, wordTimings: [TranscribedWordTiming]) async {
+    private func saveTranscriptNote(
+        rawTranscript: String,
+        polishedText: String,
+        inserted: Bool,
+        latencyMS: Int?,
+        audioURL: URL?,
+        wordTimings: [TranscribedWordTiming],
+        context: AppContext,
+        reportsStatus: Bool = true
+    ) async {
         guard historyReviewEnabled else {
             return
         }
@@ -11328,7 +11712,10 @@ final class MenuBarModel: ObservableObject {
             return
         }
 
-        let audioPath = audioURL?.path ?? ""
+        let retainedAudioURL = audioURL.flatMap { url in
+            keepReviewAudio && FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+        let audioPath = retainedAudioURL?.path ?? ""
         let wordTimingsJSON = encodedWordTimings(wordTimings)
         let createdAt = ISO8601DateFormatter().string(from: Date())
         let localID = UUID().uuidString
@@ -11338,8 +11725,8 @@ final class MenuBarModel: ObservableObject {
             payload: [
                 "raw_transcript": raw,
                 "polished_text": polished,
-                "app": selectedProfile.appName,
-                "style": selectedProfile.appProfile.rawValue,
+                "app": context.appName,
+                "style": context.profile.rawValue,
                 "inserted": inserted ? "true" : "false",
                 "audio_path": audioPath,
                 "audio_word_offsets": wordTimingsJSON.isEmpty ? "unavailable" : wordTimingsJSON,
@@ -11347,7 +11734,7 @@ final class MenuBarModel: ObservableObject {
                 "created_at": createdAt,
                 "sage_sync_status": "pending"
             ],
-            contexts: [selectedProfile.appName, selectedProfile.appProfile.rawValue, "dictation_review"],
+            contexts: [context.appName, context.profile.rawValue, "dictation_review"],
             source: "QuietType local review",
             confidence: 0.82
         )
@@ -11356,18 +11743,23 @@ final class MenuBarModel: ObservableObject {
             _ = try await memoryStore.put(memory)
             localMemories.insert(memory, at: 0)
         } catch {
-            lastError = "Local transcript note failed: \(error.localizedDescription)"
+            if reportsStatus {
+                lastError = "Local transcript note failed: \(error.localizedDescription)"
+            }
             return
         }
 
         guard let sageDirectClient else {
-            statusMessage = "Review saved locally"
-            lastError = nil
+            if reportsStatus {
+                statusMessage = "Review saved locally"
+                lastError = nil
+            }
             return
         }
 
-        await flushPendingSageTranscriptNotes(using: sageDirectClient)
-        if localMemories.first(where: { $0.id == localID })?.payload["sage_sync_status"] != "synced" {
+        await flushPendingSageTranscriptNotes(using: sageDirectClient, reportsStatus: reportsStatus)
+        if reportsStatus,
+           localMemories.first(where: { $0.id == localID })?.payload["sage_sync_status"] != "synced" {
             statusMessage = "Review saved locally"
         }
     }
@@ -12277,6 +12669,9 @@ final class MenuBarModel: ObservableObject {
     }
 
     func copyOutput() {
+        guard hasCopyableOutput else {
+            return
+        }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(output, forType: .string)
         statusMessage = "Copied output"
@@ -12284,6 +12679,7 @@ final class MenuBarModel: ObservableObject {
 
     func clearOutput() {
         output = ""
+        hasCopyableOutput = false
         transcript = ""
         didInsert = false
         lastError = nil

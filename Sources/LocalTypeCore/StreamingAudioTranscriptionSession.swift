@@ -13,6 +13,7 @@ public actor StreamingAudioTranscriptionSession {
     private var errors: [String] = []
     private var isProcessing = false
     private var isCancelled = false
+    private var processingTask: Task<Void, Never>?
 
     public init(
         transcriber: AudioFileTranscribing,
@@ -35,7 +36,7 @@ public actor StreamingAudioTranscriptionSession {
         }
 
         isProcessing = true
-        Task {
+        processingTask = Task {
             await processQueue()
         }
     }
@@ -45,12 +46,19 @@ public actor StreamingAudioTranscriptionSession {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
 
-        return StreamingTranscriptionResult(
-            text: mergedTranscript(),
-            chunkCount: transcripts.count,
-            coveredDurationSeconds: transcriptDurations.values.reduce(0, +),
-            errors: errors
-        )
+        return currentResult()
+    }
+
+    /// Stops queued/in-flight preview work and returns only chunks that already
+    /// completed. The full-audio finalizer can then start immediately instead of
+    /// waiting for advisory streaming work to drain.
+    public func stopAndSnapshot() -> StreamingTranscriptionResult {
+        isCancelled = true
+        queue.removeAll(keepingCapacity: false)
+        processingTask?.cancel()
+        processingTask = nil
+        isProcessing = false
+        return currentResult()
     }
 
     public func latestTranscript() -> String {
@@ -59,6 +67,9 @@ public actor StreamingAudioTranscriptionSession {
 
     public func cancel() {
         isCancelled = true
+        processingTask?.cancel()
+        processingTask = nil
+        isProcessing = false
         queue.removeAll(keepingCapacity: false)
         transcripts.removeAll(keepingCapacity: false)
         transcriptDurations.removeAll(keepingCapacity: false)
@@ -67,7 +78,7 @@ public actor StreamingAudioTranscriptionSession {
     }
 
     private func processQueue() async {
-        while !queue.isEmpty && !isCancelled {
+        while !queue.isEmpty && !isCancelled && !Task.isCancelled {
             let chunk = queue.removeFirst()
             do {
                 let text = try await transcriber.transcribe(audioFile: chunk.url, options: options)
@@ -82,13 +93,14 @@ public actor StreamingAudioTranscriptionSession {
                     await onTranscriptUpdate?(mergedTranscript())
                 }
             } catch {
-                if !isCancelled {
+                if !isCancelled && !Task.isCancelled {
                     errors.append("chunk \(chunk.sequence): \(String(describing: error))")
                 }
             }
         }
 
         isProcessing = false
+        processingTask = nil
         if !queue.isEmpty && !isCancelled {
             enqueuePlaceholderPump()
         }
@@ -99,9 +111,18 @@ public actor StreamingAudioTranscriptionSession {
             return
         }
         isProcessing = true
-        Task {
+        processingTask = Task {
             await processQueue()
         }
+    }
+
+    private func currentResult() -> StreamingTranscriptionResult {
+        StreamingTranscriptionResult(
+            text: mergedTranscript(),
+            chunkCount: transcripts.count,
+            coveredDurationSeconds: transcriptDurations.values.reduce(0, +),
+            errors: errors
+        )
     }
 
     private func mergedTranscript() -> String {

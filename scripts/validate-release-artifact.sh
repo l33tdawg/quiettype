@@ -2,6 +2,7 @@
 set -euo pipefail
 
 DMG="${1:-}"
+REQUIRE_ASR_ASSETS="${QUIETTYPE_REQUIRE_ASR_ASSETS:-1}"
 if [[ -z "$DMG" ]]; then
   echo "Usage: scripts/validate-release-artifact.sh path/to/QuietType.dmg" >&2
   exit 2
@@ -54,8 +55,19 @@ for helper in argmax-cli whisper-cli; do
     fi
     echo "Verifying helper signature: $helper"
     codesign --verify --strict --verbose=4 "$helper_path"
+  elif [[ "$REQUIRE_ASR_ASSETS" == "1" || "$REQUIRE_ASR_ASSETS" == "true" ]]; then
+    echo "Required ASR helper is missing: $helper_path" >&2
+    exit 1
   fi
 done
+
+WHISPERKIT_ROOT="$APP/Contents/Resources/WhisperKit"
+if [[ "$REQUIRE_ASR_ASSETS" == "1" || "$REQUIRE_ASR_ASSETS" == "true" ]]; then
+  if [[ ! -d "$WHISPERKIT_ROOT" || -z "$(find "$WHISPERKIT_ROOT" -type f -print -quit)" ]]; then
+    echo "Required bundled WhisperKit model is missing or empty: $WHISPERKIT_ROOT" >&2
+    exit 1
+  fi
+fi
 
 SAGE_APP="$APP/Contents/Resources/SAGE.app"
 if [[ -d "$SAGE_APP" ]]; then

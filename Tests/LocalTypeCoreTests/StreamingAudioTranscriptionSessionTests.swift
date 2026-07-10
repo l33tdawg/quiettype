@@ -139,6 +139,40 @@ final class StreamingAudioTranscriptionSessionTests: XCTestCase {
         XCTAssertEqual(result.chunkCount, 0)
         XCTAssertTrue(result.errors.isEmpty)
     }
+
+    func testStopAndSnapshotKeepsCompletedPreviewWithoutDrainingMoreWork() async throws {
+        let transcriber = StubAudioTranscriber(outputs: [
+            "chunk-0000.wav": "hello"
+        ])
+        let session = StreamingAudioTranscriptionSession(transcriber: transcriber)
+
+        await session.enqueue(WavAudioChunk(sequence: 0, url: URL(fileURLWithPath: "/tmp/chunk-0000.wav"), sampleRate: 16_000, sampleCount: 16_000))
+        _ = await session.finish()
+
+        let result = await session.stopAndSnapshot()
+
+        XCTAssertEqual(result.text, "hello")
+        XCTAssertEqual(result.chunkCount, 1)
+        XCTAssertEqual(result.coveredDurationSeconds, 1.0, accuracy: 0.001)
+    }
+
+    func testStopAndSnapshotCancelsInFlightWorkAndDropsQueuedChunks() async {
+        let transcriber = BlockingAudioTranscriber()
+        let session = StreamingAudioTranscriptionSession(transcriber: transcriber)
+        await session.enqueue(WavAudioChunk(sequence: 0, url: URL(fileURLWithPath: "/tmp/chunk-0000.wav"), sampleRate: 16_000, sampleCount: 16_000))
+        await session.enqueue(WavAudioChunk(sequence: 1, url: URL(fileURLWithPath: "/tmp/chunk-0001.wav"), sampleRate: 16_000, sampleCount: 16_000))
+        await transcriber.waitUntilStarted()
+
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        let result = await session.stopAndSnapshot()
+        let elapsed = startedAt.duration(to: clock.now)
+        let invocationCount = await transcriber.invocationCount()
+
+        XCTAssertEqual(result.chunkCount, 0)
+        XCTAssertEqual(invocationCount, 1)
+        XCTAssertLessThan(elapsed, .milliseconds(250))
+    }
 }
 
 private actor StubAudioTranscriber: AudioFileTranscribing {
@@ -159,6 +193,35 @@ private actor StubAudioTranscriber: AudioFileTranscribing {
 
     func recordedPrompts() -> [String?] {
         prompts
+    }
+}
+
+private actor BlockingAudioTranscriber: AudioFileTranscribing {
+    private var started = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var invocations = 0
+
+    func transcribe(audioFile: URL, options: AudioTranscriptionOptions) async throws -> String {
+        invocations += 1
+        started = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        try await Task.sleep(for: .seconds(30))
+        return audioFile.lastPathComponent
+    }
+
+    func waitUntilStarted() async {
+        if started {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func invocationCount() -> Int {
+        invocations
     }
 }
 

@@ -11,6 +11,8 @@ public enum AppProfile: String, Codable, Sendable {
 
 public struct AppContext: Codable, Equatable, Sendable {
     public var appName: String
+    public var bundleIdentifier: String?
+    public var processIdentifier: Int32?
     public var windowTitle: String?
     public var selectedText: String?
     public var nearbyText: String?
@@ -19,6 +21,8 @@ public struct AppContext: Codable, Equatable, Sendable {
 
     public init(
         appName: String,
+        bundleIdentifier: String? = nil,
+        processIdentifier: Int32? = nil,
         windowTitle: String? = nil,
         selectedText: String? = nil,
         nearbyText: String? = nil,
@@ -26,6 +30,8 @@ public struct AppContext: Codable, Equatable, Sendable {
         isSecureInput: Bool = false
     ) {
         self.appName = appName
+        self.bundleIdentifier = bundleIdentifier
+        self.processIdentifier = processIdentifier
         self.windowTitle = windowTitle
         self.selectedText = selectedText
         self.nearbyText = nearbyText

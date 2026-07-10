@@ -1,12 +1,16 @@
-# QuietType private beta release
+# QuietType public beta release
 
-This is the repeatable path for sharing a private beta DMG with trusted testers.
+This is the repeatable path for publishing a signed, notarized public beta DMG.
 
 ## 1. Build the beta DMG
 
 Use the installed Developer ID Application identity:
 
 ```bash
+QUIETTYPE_VERSION="1.0.0" \
+QUIETTYPE_BUILD="24" \
+QUIETTYPE_NOTARIZE="1" \
+SAGE_RELEASE_TAG="v11.4.11" \
 QUIETTYPE_CODESIGN_IDENTITY="Developer ID Application: Dhillon Kannabhiran (2N7GKZ8D8Z)" \
   bash scripts/beta-release.sh
 ```
@@ -16,7 +20,7 @@ This runs tests, builds the arm64 release binary, packages `dist/QuietType.app`,
 Run this script on Apple Silicon or an arm64 macOS CI runner. It invokes Swift
 under `arch -arm64` so tests and the app binary match the arm64-only beta DMG.
 
-By default the private beta package also bundles the local WhisperKit/Core ML ASR model from:
+By default the public beta package also bundles the local WhisperKit/Core ML ASR model from:
 
 ```text
 ~/Documents/huggingface/models/argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930_626MB
@@ -38,17 +42,17 @@ bash scripts/download-sage-gui.sh
 ```
 
 By default this script downloads the latest release from
-`https://github.com/l33tdawg/sage`. Current beta builds pin SAGE to `v11.0.2`
+`https://github.com/l33tdawg/sage`. Current beta builds pin SAGE to `v11.4.11`
 for reproducibility:
 
 ```bash
-SAGE_RELEASE_TAG="v11.0.2" bash scripts/download-sage-gui.sh
+SAGE_RELEASE_TAG="v11.4.11" bash scripts/download-sage-gui.sh
 ```
 
 For stricter release reproducibility, pass the expected release asset checksum:
 
 ```bash
-SAGE_RELEASE_TAG="v11.0.2" \
+SAGE_RELEASE_TAG="v11.4.11" \
 SAGE_ASSET_SHA256="EXPECTED_DMG_OR_ZIP_SHA256" \
   bash scripts/download-sage-gui.sh
 ```
@@ -59,14 +63,14 @@ an arm64 `sage-gui` executable, and can be re-signed inside QuietType before the
 DMG is built.
 
 To intentionally ship without bundled SAGE for a developer-only build, set
-`QUIETTYPE_BUNDLE_SAGE=0`. Public/private tester builds should keep SAGE
+`QUIETTYPE_BUNDLE_SAGE=0`. Public tester builds should keep SAGE
 bundled because QuietType requires SAGE governed local memory.
 
 Expected output:
 
 ```text
-dist/QuietType-1.0.0-beta.1-macOS-arm64.dmg
-dist/QuietType-1.0.0-beta.1-macOS-arm64.dmg.sha256
+dist/QuietType-1.0.0-beta.24-macOS-arm64.dmg
+dist/QuietType-1.0.0-beta.24-macOS-arm64.dmg.sha256
 ```
 
 ## 2. Validate the signed artifact
@@ -75,7 +79,7 @@ Before sharing a beta, validate the exact DMG artifact that testers will
 install:
 
 ```bash
-bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-beta.1-macOS-arm64.dmg
+bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-beta.24-macOS-arm64.dmg
 ```
 
 The validator mounts the DMG read-only, checks that `CFBundleExecutable` exists
@@ -85,12 +89,12 @@ app and the DMG. For clean-machine Launch Services validation, run the same
 command with:
 
 ```bash
-QUIETTYPE_VALIDATE_LAUNCH=1 bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-beta.1-macOS-arm64.dmg
+QUIETTYPE_VALIDATE_LAUNCH=1 bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-beta.24-macOS-arm64.dmg
 ```
 
 ## 3. Notarization
 
-For private testers, notarization is required for a normal double-click install experience. Without it, Gatekeeper rejects the DMG as `Unnotarized Developer ID`.
+For public testers, notarization is required for a normal double-click install experience. Without it, Gatekeeper rejects the DMG as `Unnotarized Developer ID`.
 
 Keep credentials out of the repository. Store them in Keychain or use an App Store Connect API key outside the repo.
 
@@ -115,22 +119,23 @@ Or run notarization as part of the build:
 QUIETTYPE_NOTARIZE=1 bash scripts/beta-release.sh
 ```
 
-## 4. Create a private GitHub release
+## 4. Create a public GitHub prerelease
 
-The repository is private, so a GitHub release is private to people with repo access.
+The repository is public, so the prerelease and its assets are visible to everyone.
 
 ```bash
-VERSION="v1.0.0-beta.1"
-DMG="dist/QuietType-1.0.0-beta.1-macOS-arm64.dmg"
+VERSION="v1.0.0-beta.24"
+DMG="dist/QuietType-1.0.0-beta.24-macOS-arm64.dmg"
 
-git tag "$VERSION"
+git tag -a "$VERSION" -m "QuietType 1.0.0 beta 24"
 git push origin "$VERSION"
 
 gh release create "$VERSION" "$DMG" "$DMG.sha256" \
   --repo l33tdawg/quiettype \
+  --verify-tag \
   --prerelease \
-  --title "QuietType 1.0.0 beta 1" \
-  --notes "Private beta for macOS Apple Silicon. Local dictation, local memory, no cloud processing."
+  --title "QuietType 1.0.0 beta 24" \
+  --notes "Public beta for macOS Apple Silicon. Local dictation, local memory, no cloud processing."
 ```
 
 ## 5. Enable GitHub Pages
@@ -161,14 +166,12 @@ page engagement on GitHub Pages only; the macOS app does not call home. Release
 download counts remain on GitHub Releases and are surfaced on the landing page
 with the GitHub downloads badge.
 
-GitHub rejected Pages enablement while the repository is private on the current
-plan. The `/docs` site is ready; enable Pages when the repo becomes public for
-the 1.0 beta launch, or upgrade to a plan that supports private Pages.
+GitHub Pages is enabled from `main:/docs` and deploys after pushes to `main`.
 
-## 5. GitHub Actions release automation
+## 6. GitHub Actions release automation
 
 The workflow at `.github/workflows/beta-release.yml` builds, signs, notarizes,
-staples and uploads a private beta DMG on pushes to `main`. When the push is a
+staples and uploads a public beta DMG on pushes to `main`. When the push is a
 tag like `v1.0.0-beta.1`, it also creates a GitHub prerelease.
 
 Required repository secrets:
@@ -196,18 +199,23 @@ argmaxinc/whisperkit-coreml@97a5bf9bbc74c7d9c12c755d04dea59e672e3808
 
 This keeps the model out of git while still making CI releases reproducible.
 It also downloads the SAGE GUI release into `vendor/SAGE.app` before packaging.
-`SAGE_RELEASE_TAG` is currently pinned to `v11.0.2` to avoid version drift.
+`SAGE_RELEASE_TAG` is currently pinned to `v11.4.11` to avoid version drift.
 
-## 6. Tester note
+If these secrets are not configured, the workflow records a notice and skips
+the signed build, artifact upload and prerelease steps. In that case, use the
+local notarized build and manual `gh release create` flow above; a green skipped
+workflow is not proof that a release artifact was produced.
+
+## 7. Tester note
 
 Send testers:
 
 ```text
-QuietType private beta
+QuietType public beta
 
 Speak freely. Transcribe locally. Nothing leaves your Mac.
 
-Download the DMG from the private GitHub release, drag QuietType to Applications, then open it and follow the setup prompts for Microphone, Accessibility, and voice training.
+Download the DMG from the GitHub prerelease, drag QuietType to Applications, then open it and follow the setup prompts for Microphone and Accessibility. Voice training is optional.
 
 Contact: Dhillon "l33tdawg" Kannabhiran <dhillon@levelupctf.com>
 ```

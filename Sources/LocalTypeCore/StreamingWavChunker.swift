@@ -66,15 +66,18 @@ public struct StreamingWavChunker: Sendable {
         pendingSamples.append(contentsOf: frame.samples)
         totalSamples += frame.samples.count
 
-        try OwnerOnlyFileSecurity.prepareDirectory(outputDirectory)
-
-        var chunks: [WavAudioChunk] = []
         let chunkSampleCount = max(1, Int(Double(activeSampleRate) * chunkDurationSeconds))
         let overlapSampleCount = min(
             chunkSampleCount - 1,
             max(0, Int(Double(activeSampleRate) * overlapDurationSeconds))
         )
         let strideSampleCount = chunkSampleCount - overlapSampleCount
+        guard pendingSamples.count >= chunkSampleCount else {
+            return []
+        }
+
+        try OwnerOnlyFileSecurity.prepareDirectory(outputDirectory)
+        var chunks: [WavAudioChunk] = []
 
         while pendingSamples.count >= chunkSampleCount {
             let samples = Array(pendingSamples.prefix(chunkSampleCount))
