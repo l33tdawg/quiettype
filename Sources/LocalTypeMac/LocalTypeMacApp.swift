@@ -7700,7 +7700,6 @@ final class MenuBarModel: ObservableObject {
     private var streamingTranscriptionSession: StreamingAudioTranscriptionSession?
     private var pendingStreamingChunks: [WavAudioChunk] = []
     private var streamingTranscriptPreview = ""
-    private var streamingPreviewTask: Task<Void, Never>?
     private var activeTranscriptionOptions = AudioTranscriptionOptions.none
     private var lastListeningUIUpdateAt = Date.distantPast
     private var lastListeningOverlayUpdateAt = Date.distantPast
@@ -7735,9 +7734,10 @@ final class MenuBarModel: ObservableObject {
     private static let maxDictationDurationSeconds = 300.0
     private static let maxTrainingPairCount = 10
     private static let maxReviewAudioFiles = 10
-    private static let streamingChunkDuration = 1.6
-    private static let streamingChunkOverlap = 0.4
-    private static let streamingTranscriptMinimumDuration = 1.5
+    // The on-screen preview is advisory; the full recording remains authoritative on release.
+    private static let streamingChunkDuration = 1.0
+    private static let streamingChunkOverlap = 0.25
+    private static let streamingTranscriptMinimumDuration = 0.9
     private static let minimumUsableRMS = 0.0015
     private static let recordingUIRefreshInterval = 0.10
     private static let recordingOverlayRefreshInterval = 0.10
@@ -10140,8 +10140,6 @@ final class MenuBarModel: ObservableObject {
             maxDurationSeconds: Self.maxDictationDurationSeconds
         )
         activeTranscriptionOptions = currentTranscriptionOptions()
-        streamingPreviewTask?.cancel()
-        streamingPreviewTask = nil
         streamingTranscriptionSession = nil
         pendingStreamingChunks = []
         streamingTranscriptPreview = ""
@@ -10185,8 +10183,6 @@ final class MenuBarModel: ObservableObject {
         captureService?.stop()
         captureService = nil
         isRecording = false
-        streamingPreviewTask?.cancel()
-        streamingPreviewTask = nil
         lastDictationDuration = recordingDuration
         await streamingTranscriptionSession?.cancel()
         streamingTranscriptionSession = nil
@@ -10768,8 +10764,6 @@ final class MenuBarModel: ObservableObject {
         captureService?.stop()
         captureService = nil
         isRecording = false
-        streamingPreviewTask?.cancel()
-        streamingPreviewTask = nil
         if let recordingStartedAt {
             recordingDuration = Date().timeIntervalSince(recordingStartedAt)
         }
@@ -10963,9 +10957,11 @@ final class MenuBarModel: ObservableObject {
         if streamingTranscriptionSession == nil {
             streamingTranscriptionSession = StreamingAudioTranscriptionSession(
                 transcriber: WhisperKitServerTranscriber(timeoutSeconds: WhisperKitServerTranscriber.streamingTimeoutSeconds),
-                options: activeTranscriptionOptions
+                options: activeTranscriptionOptions,
+                onTranscriptUpdate: { [weak self] preview in
+                    await self?.updateStreamingTranscriptPreview(preview)
+                }
             )
-            startStreamingPreviewUpdates()
         }
 
         guard let streamingTranscriptionSession else {
@@ -10979,29 +10975,10 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
-    private func startStreamingPreviewUpdates() {
-        guard let session = streamingTranscriptionSession else {
+    private func updateStreamingTranscriptPreview(_ preview: String) {
+        guard isRecording else {
             return
         }
-
-        streamingPreviewTask?.cancel()
-        streamingPreviewTask = Task { [weak self, session] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 200_000_000)
-                guard !Task.isCancelled else {
-                    return
-                }
-                await self?.refreshStreamingTranscriptPreview(from: session)
-            }
-        }
-    }
-
-    private func refreshStreamingTranscriptPreview(from session: StreamingAudioTranscriptionSession?) async {
-        guard isRecording, let session else {
-            return
-        }
-
-        let preview = await session.latestTranscript()
         guard preview != streamingTranscriptPreview else {
             return
         }

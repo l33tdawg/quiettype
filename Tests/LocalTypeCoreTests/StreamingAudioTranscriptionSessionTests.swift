@@ -105,6 +105,27 @@ final class StreamingAudioTranscriptionSessionTests: XCTestCase {
         XCTAssertEqual(result.text, "go go home")
     }
 
+    func testPublishesMergedTextAfterEachSuccessfulChunk() async throws {
+        let transcriber = StubAudioTranscriber(outputs: [
+            "chunk-0000.wav": "hello",
+            "chunk-0001.wav": "world"
+        ])
+        let updates = TranscriptUpdateRecorder()
+        let session = StreamingAudioTranscriptionSession(
+            transcriber: transcriber,
+            onTranscriptUpdate: { text in
+                await updates.record(text)
+            }
+        )
+
+        await session.enqueue(WavAudioChunk(sequence: 0, url: URL(fileURLWithPath: "/tmp/chunk-0000.wav"), sampleRate: 4, sampleCount: 4))
+        await session.enqueue(WavAudioChunk(sequence: 1, url: URL(fileURLWithPath: "/tmp/chunk-0001.wav"), sampleRate: 4, sampleCount: 4))
+        _ = await session.finish()
+        let publishedUpdates = await updates.values()
+
+        XCTAssertEqual(publishedUpdates, ["hello", "hello world"])
+    }
+
     func testCancelDiscardsQueuedAndInFlightTranscript() async throws {
         let transcriber = SlowStubAudioTranscriber(output: "should not survive")
         let session = StreamingAudioTranscriptionSession(transcriber: transcriber)
@@ -151,5 +172,17 @@ private actor SlowStubAudioTranscriber: AudioFileTranscribing {
     func transcribe(audioFile: URL, options: AudioTranscriptionOptions) async throws -> String {
         try? await Task.sleep(nanoseconds: 25_000_000)
         return output
+    }
+}
+
+private actor TranscriptUpdateRecorder {
+    private var updates: [String] = []
+
+    func record(_ text: String) {
+        updates.append(text)
+    }
+
+    func values() -> [String] {
+        updates
     }
 }

@@ -1,8 +1,11 @@
 import Foundation
 
 public actor StreamingAudioTranscriptionSession {
+    public typealias TranscriptUpdateHandler = @Sendable (String) async -> Void
+
     private let transcriber: AudioFileTranscribing
     private let options: AudioTranscriptionOptions
+    private let onTranscriptUpdate: TranscriptUpdateHandler?
     private var queue: [WavAudioChunk] = []
     private var transcripts: [Int: String] = [:]
     private var transcriptDurations: [Int: Double] = [:]
@@ -11,9 +14,14 @@ public actor StreamingAudioTranscriptionSession {
     private var isProcessing = false
     private var isCancelled = false
 
-    public init(transcriber: AudioFileTranscribing, options: AudioTranscriptionOptions = .none) {
+    public init(
+        transcriber: AudioFileTranscribing,
+        options: AudioTranscriptionOptions = .none,
+        onTranscriptUpdate: TranscriptUpdateHandler? = nil
+    ) {
         self.transcriber = transcriber
         self.options = options
+        self.onTranscriptUpdate = onTranscriptUpdate
     }
 
     public func enqueue(_ chunk: WavAudioChunk) {
@@ -71,6 +79,7 @@ public actor StreamingAudioTranscriptionSession {
                     transcripts[chunk.sequence] = trimmed
                     transcriptDurations[chunk.sequence] = chunk.coveredDurationSeconds
                     transcriptHasOverlap[chunk.sequence] = chunk.coveredSampleCount < chunk.sampleCount
+                    await onTranscriptUpdate?(mergedTranscript())
                 }
             } catch {
                 if !isCancelled {
