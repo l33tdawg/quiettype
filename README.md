@@ -189,6 +189,12 @@ Run tests:
 swift test
 ```
 
+Capture the private local voice benchmark corpus:
+
+```bash
+scripts/run-voice-capture.sh
+```
+
 Try the core text pipeline:
 
 ```bash

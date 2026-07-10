@@ -23,7 +23,32 @@ steady-state latency measurement—without using a hosted speech service.
 Do not commit personal recordings or their reference transcripts. The
 `benchmarks/private/` and `benchmark-results/` directories are ignored by Git.
 
-## Build a private suite
+## Capture the guided private suite
+
+Launch the local capture app:
+
+```bash
+scripts/run-voice-capture.sh
+```
+
+macOS asks for microphone access the first time because the recorder has its
+own stable local bundle identity and microphone usage description. The app
+guides you through 25 purpose-written prompts covering clean speech, technical
+terms, corrections, pauses, delivery variation, background noise, numbers, and
+long form dictation. Existing recordings are detected, so the suite can be
+completed over multiple sessions or individual prompts can be recorded again.
+
+Recordings and their manifest are stored outside the repository at:
+
+```text
+~/Library/Application Support/QuietType/Benchmarks/
+```
+
+The directories use owner-only `0700` permissions; WAV files and the manifest
+use `0600`. The generated manifest creates paired baseline and short-keyword
+cases for vocabulary prompts while reusing the exact same local recording.
+
+## Build a private suite manually
 
 Copy `benchmarks/voice-flow.example.json` to
 `benchmarks/private/voice-flow.json`, then add local WAV recordings and edit the
@@ -58,9 +83,9 @@ Start QuietType so its native local speech engine is ready, then run:
 
 ```bash
 scripts/benchmark-voice-flow.sh \
-  benchmarks/private/voice-flow.json \
+  "$HOME/Library/Application Support/QuietType/Benchmarks/voice-flow.json" \
   --iterations 5 \
-  --output benchmark-results/voice-flow.json
+  --output benchmark-results/baseline.json
 ```
 
 The ordered samples retain iteration 1 separately from the steady-state median.
@@ -71,6 +96,34 @@ order when comparing builds because model warmup affects the earliest sample.
 The report file is created with owner-only permissions (`0600`). A non-zero exit
 means the local engine or at least one case failed; successful measurements are
 still written so failures can be diagnosed without rerunning the entire suite.
+
+## Compare a candidate
+
+Run the same manifest, hardware, microphone recordings, case order, and engine
+startup state for the candidate build:
+
+```bash
+scripts/benchmark-voice-flow.sh \
+  "$HOME/Library/Application Support/QuietType/Benchmarks/voice-flow.json" \
+  --iterations 5 \
+  --output benchmark-results/candidate.json
+```
+
+Then compare the two content-free reports:
+
+```bash
+scripts/benchmark-voice-flow.sh compare \
+  benchmark-results/baseline.json \
+  benchmark-results/candidate.json \
+  --output benchmark-results/comparison.json
+```
+
+The comparator exits non-zero if a case is missing, has insufficient data,
+changes iteration count, duration, or reference shape, adds failures, regresses
+WER by more than 0.5 percentage points, reduces required-term accuracy, or makes
+first-run, median, or p95 latency more than 5% slower. It labels a case improved
+when accuracy improves beyond tolerance or latency drops by at least 15%. The
+comparison report contains neutral IDs and numeric deltas only.
 
 ## Opt-in runtime flow metrics
 

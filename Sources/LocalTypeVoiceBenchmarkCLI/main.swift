@@ -5,15 +5,25 @@ import LocalTypeCore
 @main
 struct LocalTypeVoiceBenchmarkCLI {
     fileprivate static let usage = """
-    Usage: localtype-voice-benchmark <manifest.json> [--iterations N] [--output report.json]
+    Usage:
+      localtype-voice-benchmark <manifest.json> [--iterations N] [--output report.json]
+      localtype-voice-benchmark compare <baseline.json> <candidate.json> [--output comparison.json]
 
     Runs every WAV case against QuietType's loopback-only native speech engine.
-    Reports contain measurements only; transcript text and audio paths are omitted.
+    Compare applies the local accuracy and latency gates to two content-free reports.
+    All reports omit transcript text and audio paths.
     """
 
     static func main() async {
         do {
-            let arguments = try Arguments.parse(Array(CommandLine.arguments.dropFirst()))
+            let rawArguments = Array(CommandLine.arguments.dropFirst())
+            if rawArguments.first == "compare" {
+                let arguments = try ComparisonArguments.parse(Array(rawArguments.dropFirst()))
+                try compareReports(arguments)
+                return
+            }
+
+            let arguments = try Arguments.parse(rawArguments)
             if arguments.showHelp {
                 print(usage)
                 return
@@ -138,7 +148,56 @@ struct LocalTypeVoiceBenchmarkCLI {
         return results
     }
 
-    private static func encode(_ report: VoiceFlowBenchmarkReport) throws -> Data {
+    private static func compareReports(_ arguments: ComparisonArguments) throws {
+        if arguments.showHelp {
+            print(usage)
+            return
+        }
+        guard let baselinePath = arguments.baselinePath,
+              let candidatePath = arguments.candidatePath else {
+            throw CLIError.missingComparisonReports
+        }
+
+        let baseline = try loadBenchmarkReport(at: absoluteFileURL(for: baselinePath))
+        let candidate = try loadBenchmarkReport(at: absoluteFileURL(for: candidatePath))
+        let comparison = try VoiceFlowBenchmarkComparator.compare(
+            baseline: baseline,
+            candidate: candidate
+        )
+        let data = try encode(comparison)
+        if let outputPath = arguments.outputPath {
+            let outputURL = absoluteFileURL(for: outputPath)
+            try writeOwnerOnly(data, to: outputURL)
+            writeStatus("Saved content-free comparison to \(outputURL.path)")
+        } else {
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write(Data("\n".utf8))
+        }
+
+        let summary = comparison.summary
+        writeStatus(
+            "Compared \(summary.comparedCaseCount) cases: "
+                + "\(summary.improvedCaseCount) improved, "
+                + "\(summary.passedCaseCount) passed, "
+                + "\(summary.regressedCaseCount) regressed, "
+                + "\(summary.insufficientDataCaseCount) insufficient"
+        )
+        guard summary.passed else {
+            throw CLIError.comparisonFailed(
+                regressions: summary.regressedCaseCount,
+                insufficient: summary.insufficientDataCaseCount,
+                missing: summary.missingFromBaseline.count + summary.missingFromCandidate.count
+            )
+        }
+    }
+
+    private static func loadBenchmarkReport(at url: URL) throws -> VoiceFlowBenchmarkReport {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(VoiceFlowBenchmarkReport.self, from: Data(contentsOf: url))
+    }
+
+    private static func encode<T: Encodable>(_ report: T) throws -> Data {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -182,6 +241,48 @@ struct LocalTypeVoiceBenchmarkCLI {
 
     private static func writeError(_ message: String) {
         FileHandle.standardError.write(Data("error: \(message)\n".utf8))
+    }
+}
+
+private struct ComparisonArguments {
+    var baselinePath: String?
+    var candidatePath: String?
+    var outputPath: String?
+    var showHelp = false
+
+    static func parse(_ rawArguments: [String]) throws -> ComparisonArguments {
+        var parsed = ComparisonArguments()
+        var positional: [String] = []
+        var index = 0
+
+        while index < rawArguments.count {
+            let argument = rawArguments[index]
+            switch argument {
+            case "-h", "--help":
+                parsed.showHelp = true
+                index += 1
+            case "--output":
+                guard index + 1 < rawArguments.count,
+                      !rawArguments[index + 1].isEmpty else {
+                    throw CLIError.missingOutputPath
+                }
+                parsed.outputPath = rawArguments[index + 1]
+                index += 2
+            default:
+                if argument.hasPrefix("-") {
+                    throw CLIError.unknownArgument(argument)
+                }
+                positional.append(argument)
+                index += 1
+            }
+        }
+
+        guard positional.count <= 2 else {
+            throw CLIError.unexpectedArgument(positional[2])
+        }
+        parsed.baselinePath = positional.first
+        parsed.candidatePath = positional.count > 1 ? positional[1] : nil
+        return parsed
     }
 }
 
@@ -241,6 +342,8 @@ private enum CLIError: Error, LocalizedError {
     case missingAudio(String)
     case invalidOutputDirectory
     case iterationsFailed(Int)
+    case missingComparisonReports
+    case comparisonFailed(regressions: Int, insufficient: Int, missing: Int)
 
     var errorDescription: String? {
         switch self {
@@ -260,6 +363,10 @@ private enum CLIError: Error, LocalizedError {
             return "The report output parent is not a directory."
         case .iterationsFailed(let count):
             return "\(count) local benchmark iteration(s) failed."
+        case .missingComparisonReports:
+            return "Compare needs baseline and candidate report paths.\n\(LocalTypeVoiceBenchmarkCLI.usage)"
+        case .comparisonFailed(let regressions, let insufficient, let missing):
+            return "Comparison gate failed: \(regressions) regression(s), \(insufficient) insufficient case(s), and \(missing) missing case(s)."
         }
     }
 }

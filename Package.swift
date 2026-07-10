@@ -12,6 +12,7 @@ let package = Package(
         .executable(name: "localtype", targets: ["LocalTypeCLI"]),
         .executable(name: "localtype-session", targets: ["LocalTypeSessionCLI"]),
         .executable(name: "localtype-voice-benchmark", targets: ["LocalTypeVoiceBenchmarkCLI"]),
+        .executable(name: "LocalTypeVoiceCapture", targets: ["LocalTypeVoiceCapture"]),
         .executable(name: "LocalTypeMac", targets: ["LocalTypeMac"])
     ],
     targets: [
@@ -26,6 +27,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "LocalTypeVoiceBenchmarkCLI",
+            dependencies: ["LocalTypeCore"]
+        ),
+        .executableTarget(
+            name: "LocalTypeVoiceCapture",
             dependencies: ["LocalTypeCore"]
         ),
         .executableTarget(
