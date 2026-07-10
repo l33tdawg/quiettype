@@ -19,3 +19,5 @@ vendor/
 *.provisionprofile
 .env
 .env.*
+benchmarks/private/
+benchmark-results/

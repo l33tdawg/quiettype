@@ -177,6 +177,8 @@ DMG is being prepared.
 
 See [docs/PRD.md](docs/PRD.md) for product requirements.
 See [docs/dev-setup.md](docs/dev-setup.md) for local development setup.
+See [docs/voice-flow-benchmark.md](docs/voice-flow-benchmark.md) for the
+content-free, offline voice benchmark and opt-in local flow metrics.
 See [docs/macos-signing.md](docs/macos-signing.md) for signing notes.
 See [docs/beta-release.md](docs/beta-release.md) for local and GitHub Actions
 release notes.

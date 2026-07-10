@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "clean-short-baseline",
+      "audioPath": "private/clean-short.wav",
+      "expectedText": "QuietType transcribes this sentence locally.",
+      "durationSeconds": 3.2,
+      "requiredTerms": [
+        "QuietType"
+      ],
+      "promptKeywords": []
+    },
+    {
+      "id": "technical-terms-keywords",
+      "audioPath": "private/technical-terms.wav",
+      "expectedText": "SAGE records the CometBFT benchmark for QuietType.",
+      "durationSeconds": 4.1,
+      "requiredTerms": [
+        "SAGE",
+        "CometBFT",
+        "QuietType"
+      ],
+      "promptKeywords": [
+        "SAGE",
+        "CometBFT",
+        "QuietType"
+      ]
+    }
+  ]
+}

@@ -7617,7 +7617,10 @@ final class MenuBarModel: ObservableObject {
     private var voiceNotePlaybackTempURL: URL?
     private lazy var voiceNoteAudioStore = EncryptedVoiceNoteAudioStore(directory: voiceNoteAudioDirectory)
     private lazy var reviewAudioStore = EncryptedVoiceNoteAudioStore(directory: reviewAudioDirectory)
+    private lazy var voiceFlowMetricsStore = LocalVoiceFlowMetricsStore(fileURL: voiceFlowMetricsURL)
     private var chunker = StreamingWavChunker()
+    private var speechActivityTracker = SpeechActivityTracker()
+    private var voiceFlowMetricAccumulator: VoiceFlowMetricAccumulator?
     private let chunkDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("quiettype-stream")
     private var streamingTranscriptionSession: StreamingAudioTranscriptionSession?
     private var pendingStreamingChunks: [WavAudioChunk] = []
@@ -7653,6 +7656,8 @@ final class MenuBarModel: ObservableObject {
     private static let hiddenReviewMemoryIDsKey = "quiettype.hiddenReviewMemoryIDs"
     private static let availableUpdateKey = "quiettype.availableUpdate"
     private static let notifiedUpdateTagKey = "quiettype.notifiedUpdateTag"
+    private static let voiceFlowMetricsLoggingKey = "quiettype.voiceFlowMetricsLoggingEnabled"
+    private static let voiceFlowMetricsEnvironmentKey = "QUIETTYPE_VOICE_FLOW_METRICS"
     private static let backgroundUpdateRefreshInterval: UInt64 = 60 * 60 * 1_000_000_000
     private static let requiredCalibrationSets = 3
     private static let maxDictationDurationSeconds = 300.0
@@ -8202,9 +8207,44 @@ final class MenuBarModel: ObservableObject {
         voiceNoteSamples.removeAll(keepingCapacity: false)
     }
 
+    private func completeVoiceFlowMetrics(
+        outcome: VoiceFlowOutcome,
+        finalWordCount: Int = 0,
+        at date: Date = Date()
+    ) {
+        guard let accumulator = voiceFlowMetricAccumulator else {
+            return
+        }
+
+        voiceFlowMetricAccumulator = nil
+        let record = accumulator.finish(
+            outcome: outcome,
+            finalWordCount: finalWordCount,
+            at: date
+        )
+        let store = voiceFlowMetricsStore
+        Task {
+            try? await store.append(record)
+        }
+    }
+
     private var voiceNoteAudioDirectory: URL {
         quietTypeApplicationSupportDirectory
             .appendingPathComponent("VoiceNotes", isDirectory: true)
+    }
+
+    private var voiceFlowMetricsURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/QuietType", isDirectory: true)
+            .appendingPathComponent("voice-flow-metrics.jsonl")
+    }
+
+    private var voiceFlowMetricsLoggingEnabled: Bool {
+        let environmentValue = ProcessInfo.processInfo.environment[Self.voiceFlowMetricsEnvironmentKey]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return environmentValue.map { ["1", "true", "yes"].contains($0) } == true
+            || UserDefaults.standard.bool(forKey: Self.voiceFlowMetricsLoggingKey)
     }
 
     private var quietTypeApplicationSupportDirectory: URL {
@@ -10340,6 +10380,10 @@ final class MenuBarModel: ObservableObject {
         do {
             try service.start()
             captureService = service
+            speechActivityTracker = SpeechActivityTracker()
+            voiceFlowMetricAccumulator = voiceFlowMetricsLoggingEnabled
+                ? VoiceFlowMetricAccumulator(startedAt: recordingStartedAt ?? Date())
+                : nil
             microphoneAccessVerified = true
             microphonePermission = .granted
             updatePermissionsStartupStep()
@@ -10350,6 +10394,7 @@ final class MenuBarModel: ObservableObject {
             showListeningOverlay(force: true)
         } catch {
             captureService = nil
+            voiceFlowMetricAccumulator = nil
             recordingStartedAt = nil
             isRecording = false
             dictationState = .failed
@@ -10366,6 +10411,13 @@ final class MenuBarModel: ObservableObject {
             return
         }
 
+        let cancelledAt = Date()
+        let capturedDuration = recordingStartedAt.map { cancelledAt.timeIntervalSince($0) } ?? recordingDuration
+        voiceFlowMetricAccumulator?.markReleased(
+            at: cancelledAt,
+            recordingDuration: capturedDuration
+        )
+        voiceFlowMetricAccumulator?.recordEmittedChunks(total: partialChunkCount)
         captureService?.stop()
         captureService = nil
         isRecording = false
@@ -10388,6 +10440,7 @@ final class MenuBarModel: ObservableObject {
         inputNoiseFloorRMS = 0.006
         statusMessage = "Dictation cancelled"
         lastError = nil
+        completeVoiceFlowMetrics(outcome: .cancelled, at: cancelledAt)
         overlayController.show(state: .cancelled, detail: "Discarded locally")
         overlayController.hide(after: 0.9)
     }
@@ -11002,6 +11055,11 @@ final class MenuBarModel: ObservableObject {
             recordingDuration = Date().timeIntervalSince(recordingStartedAt)
         }
         lastDictationDuration = recordingDuration
+        voiceFlowMetricAccumulator?.markReleased(
+            at: dictationReleasedAt ?? Date(),
+            recordingDuration: recordingDuration
+        )
+        voiceFlowMetricAccumulator?.recordEmittedChunks(total: partialChunkCount)
         showProcessingOverlay(detail: "Transcribing locally")
 
         let durationText = String(format: "%.1f", recordingDuration)
@@ -11016,6 +11074,7 @@ final class MenuBarModel: ObservableObject {
             dictationState = .failed
             activeDictationContext = nil
             overlayController.hide()
+            completeVoiceFlowMetrics(outcome: .noAudio)
             return
         }
         if peakInputRMS < Self.minimumUsableRMS {
@@ -11030,6 +11089,7 @@ final class MenuBarModel: ObservableObject {
             dictationState = .failed
             activeDictationContext = nil
             overlayController.hide()
+            completeVoiceFlowMetrics(outcome: .signalTooLow)
             return
         }
 
@@ -11044,6 +11104,7 @@ final class MenuBarModel: ObservableObject {
             output = "Captured \(durationText)s of local audio. Looking for the local speech engine..."
             if let finalChunk = try chunker.flush(outputDirectory: chunkDirectory) {
                 partialChunkCount += 1
+                voiceFlowMetricAccumulator?.recordEmittedChunks(total: partialChunkCount)
                 statusMessage = "Saved \(partialChunkCount) chunks"
                 pendingStreamingChunks.append(finalChunk)
                 await activateStreamingIfUseful()
@@ -11077,6 +11138,7 @@ final class MenuBarModel: ObservableObject {
             discardPlaintextDictationAudio()
             activeDictationContext = nil
             overlayController.hide(after: 1.1)
+            completeVoiceFlowMetrics(outcome: .transcriptionFailed)
         }
     }
 
@@ -11127,6 +11189,14 @@ final class MenuBarModel: ObservableObject {
         let rms = sqrt(frame.samples.reduce(0.0) { partial, sample in
             partial + Double(sample * sample)
         } / Double(max(frame.samples.count, 1)))
+        if voiceFlowMetricAccumulator != nil {
+            let frameDuration = Double(frame.samples.count) / Double(max(frame.sampleRate, 1))
+            let activity = speechActivityTracker.observe(
+                rms: rms,
+                frameDurationSeconds: frameDuration
+            )
+            voiceFlowMetricAccumulator?.recordAudioFrame(activity: activity)
+        }
         peakInputRMS = max(peakInputRMS, rms)
         inputNoiseFloorRMS = Self.updatedNoiseFloor(currentFloor: inputNoiseFloorRMS, rms: rms)
         let displayLevel = Self.displayLevel(rms: rms, noiseFloor: inputNoiseFloorRMS, previous: inputLevel)
@@ -11138,6 +11208,7 @@ final class MenuBarModel: ObservableObject {
             if let last = chunks.last {
                 statusMessage = "Streaming chunk \(last.sequence + 1)"
             }
+            voiceFlowMetricAccumulator?.recordEmittedChunks(total: partialChunkCount)
             pendingStreamingChunks.append(contentsOf: chunks)
             await activateStreamingIfUseful()
         } catch {
@@ -11285,6 +11356,7 @@ final class MenuBarModel: ObservableObject {
         dictationState = .cancelled
         statusMessage = "Dictation cancelled"
         lastError = nil
+        completeVoiceFlowMetrics(outcome: .cancelled)
         overlayController.show(state: .cancelled, detail: "Discarded locally")
         overlayController.hide(after: 0.9)
     }
@@ -11324,6 +11396,7 @@ final class MenuBarModel: ObservableObject {
         }
 
         streamingTranscriptPreview = preview
+        voiceFlowMetricAccumulator?.recordPartialTranscript(preview)
         showListeningOverlay(force: true)
     }
 
@@ -11355,6 +11428,13 @@ final class MenuBarModel: ObservableObject {
             QuietType captured \(String(format: "%.1f", recordingDuration))s of audio and is running \(speechEngineStatus.lowercased()).
             """
             let streamResult = await streamingSession?.stopAndSnapshot()
+            if let streamResult {
+                voiceFlowMetricAccumulator?.recordStreamingDiagnostics(
+                    enqueuedChunkCount: streamResult.enqueuedChunkCount,
+                    completedChunkCount: streamResult.chunkCount,
+                    maxQueueDepth: streamResult.maxQueueDepth
+                )
+            }
             try Task.checkCancellation()
             let rawTranscript: String
             let wordTimings: [TranscribedWordTiming]
@@ -11388,6 +11468,7 @@ final class MenuBarModel: ObservableObject {
             guard !isLikelyNoiseTranscript(rawTranscript) else {
                 throw AudioTranscriberError.noiseOnlyTranscript(rawTranscript)
             }
+            voiceFlowMetricAccumulator?.markFinalTranscript()
             try Task.checkCancellation()
             var retainedReviewAudioURL: URL?
             var reviewAudioWarning: String?
@@ -11447,6 +11528,7 @@ final class MenuBarModel: ObservableObject {
                 statusMessage = speechEngineReady ? "Transcription failed" : "Speech engine unavailable"
                 lastError = String(describing: error)
             }
+            completeVoiceFlowMetrics(outcome: .transcriptionFailed)
         }
     }
 
@@ -11733,6 +11815,10 @@ final class MenuBarModel: ObservableObject {
                 dictationState = .failed
                 overlayController.show(state: .failed, detail: "Copy the transcript instead", transcript: result.text)
             }
+            completeVoiceFlowMetrics(
+                outcome: didInsert ? .inserted : .readyToCopy,
+                finalWordCount: translatedWords
+            )
             activeDictationContext = nil
             if historyReviewEnabled {
                 let previousPersistenceTask = transcriptPersistenceTask
@@ -11763,6 +11849,7 @@ final class MenuBarModel: ObservableObject {
             hasCopyableOutput = true
             lastError = String(describing: error)
             overlayController.hide(after: 1.1)
+            completeVoiceFlowMetrics(outcome: .transcriptionFailed)
         }
     }
 

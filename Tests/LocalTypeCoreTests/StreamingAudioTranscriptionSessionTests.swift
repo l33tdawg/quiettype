@@ -19,6 +19,8 @@ final class StreamingAudioTranscriptionSessionTests: XCTestCase {
         XCTAssertEqual(result.chunkCount, 2)
         XCTAssertEqual(result.coveredDurationSeconds, 2.0, accuracy: 0.001)
         XCTAssertTrue(result.errors.isEmpty)
+        XCTAssertEqual(result.enqueuedChunkCount, 2)
+        XCTAssertGreaterThanOrEqual(result.maxQueueDepth, 1)
     }
 
     func testTracksCoveredDurationForSuccessfulTranscriptChunksOnly() async throws {
@@ -171,6 +173,8 @@ final class StreamingAudioTranscriptionSessionTests: XCTestCase {
 
         XCTAssertEqual(result.chunkCount, 0)
         XCTAssertEqual(invocationCount, 1)
+        XCTAssertEqual(result.enqueuedChunkCount, 2)
+        XCTAssertGreaterThanOrEqual(result.maxQueueDepth, 1)
         XCTAssertLessThan(elapsed, .milliseconds(250))
     }
 }

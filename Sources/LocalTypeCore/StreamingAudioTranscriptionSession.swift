@@ -14,6 +14,8 @@ public actor StreamingAudioTranscriptionSession {
     private var isProcessing = false
     private var isCancelled = false
     private var processingTask: Task<Void, Never>?
+    private var enqueuedChunkCount = 0
+    private var maxQueueDepth = 0
 
     public init(
         transcriber: AudioFileTranscribing,
@@ -31,6 +33,8 @@ public actor StreamingAudioTranscriptionSession {
         }
 
         queue.append(chunk)
+        enqueuedChunkCount += 1
+        maxQueueDepth = max(maxQueueDepth, queue.count)
         guard !isProcessing else {
             return
         }
@@ -121,7 +125,9 @@ public actor StreamingAudioTranscriptionSession {
             text: mergedTranscript(),
             chunkCount: transcripts.count,
             coveredDurationSeconds: transcriptDurations.values.reduce(0, +),
-            errors: errors
+            errors: errors,
+            enqueuedChunkCount: enqueuedChunkCount,
+            maxQueueDepth: maxQueueDepth
         )
     }
 
@@ -184,11 +190,22 @@ public struct StreamingTranscriptionResult: Equatable, Sendable {
     public var chunkCount: Int
     public var coveredDurationSeconds: Double
     public var errors: [String]
+    public var enqueuedChunkCount: Int
+    public var maxQueueDepth: Int
 
-    public init(text: String, chunkCount: Int, coveredDurationSeconds: Double = 0, errors: [String]) {
+    public init(
+        text: String,
+        chunkCount: Int,
+        coveredDurationSeconds: Double = 0,
+        errors: [String],
+        enqueuedChunkCount: Int = 0,
+        maxQueueDepth: Int = 0
+    ) {
         self.text = text
         self.chunkCount = chunkCount
         self.coveredDurationSeconds = coveredDurationSeconds
         self.errors = errors
+        self.enqueuedChunkCount = enqueuedChunkCount
+        self.maxQueueDepth = maxQueueDepth
     }
 }

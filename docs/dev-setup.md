@@ -47,6 +47,9 @@ env \
 
 Expected output is a polished version of the input, preserving domain vocabulary such as `SAGE` and `CometBFT`.
 
+For repeatable on-device speech accuracy and latency measurements, use the
+[offline voice-flow benchmark](voice-flow-benchmark.md).
+
 ## App Bundle
 
 Build and package the visible macOS app:
