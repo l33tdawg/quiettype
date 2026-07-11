@@ -7754,6 +7754,7 @@ final class MenuBarModel: ObservableObject {
     private var dictationReleasedAt: Date?
     private var activeDictationAudioURL: URL?
     private var activeDictationContext: AppContext?
+    private var activeDictationForcesPreviewOnly = false
     private var lastExternalApplication: NSRunningApplication?
     private var trainingStartedAt: Date?
     private var teachingStartedAt: Date?
@@ -8045,6 +8046,9 @@ final class MenuBarModel: ObservableObject {
         case .preparing:
             return "Checking local services and the target app."
         case .listening:
+            if activeDictationForcesPreviewOnly {
+                return "Speak naturally, then click the mic again. The transcript will stay in QuietType for review or copying."
+            }
             return "Speak naturally, then press \(hotKeyLabel) or click the mic again to insert. Press Esc or X to cancel."
         case .finalizing:
             return "Resolving the final words locally. Press Esc or click X to cancel."
@@ -9768,7 +9772,7 @@ final class MenuBarModel: ObservableObject {
             return
         }
         lastHotKeyToggleAt = Date()
-        await toggleDictation()
+        await toggleDictation(source: .globalShortcut)
     }
 
     func registerSageAgentIfAvailable() async {
@@ -10539,16 +10543,20 @@ final class MenuBarModel: ObservableObject {
     }
 
     func toggleDictation() async {
+        await toggleDictation(source: .inAppControl)
+    }
+
+    private func toggleDictation(source: DictationInvocationSource) async {
         if isRecording {
             await stopRecording()
         } else if dictationState.canCancel {
             await cancelActiveDictation()
         } else {
-            await startRecording()
+            await startRecording(source: source)
         }
     }
 
-    func startRecording() async {
+    private func startRecording(source: DictationInvocationSource) async {
         guard dictationState.canStart else {
             statusMessage = isFinalizingDictation ? "Finishing current dictation" : "Dictation is already active"
             return
@@ -10564,10 +10572,13 @@ final class MenuBarModel: ObservableObject {
             return
         }
         dictationState = .preparing
-        activeDictationContext = await captureDictationContext()
+        activeDictationForcesPreviewOnly = source.forcesPreviewOnly
+        activeDictationContext = await captureDictationContext(
+            useExternalApplicationTarget: source.usesExternalApplicationTarget
+        )
         guard await prepareForDictation() else {
             dictationState = .failed
-            activeDictationContext = nil
+            clearActiveDictationTarget()
             return
         }
         refreshSpeechEngineStatus()
@@ -10635,6 +10646,7 @@ final class MenuBarModel: ObservableObject {
             updatePermissionsStartupStep()
             lastError = "Could not start microphone: \(error)"
             statusMessage = "Microphone permission needed"
+            clearActiveDictationTarget()
         }
     }
 
@@ -10665,7 +10677,7 @@ final class MenuBarModel: ObservableObject {
         lastRecordingURL = nil
         recordingStartedAt = nil
         dictationReleasedAt = nil
-        activeDictationContext = nil
+        clearActiveDictationTarget()
         inputLevel = 0
         peakInputLevel = 0
         peakInputRMS = 0
@@ -11173,7 +11185,11 @@ final class MenuBarModel: ObservableObject {
         selectedVoiceNoteID = notes.first?.id
     }
 
-    private func captureDictationContext() async -> AppContext {
+    private func captureDictationContext(useExternalApplicationTarget: Bool) async -> AppContext {
+        guard useExternalApplicationTarget else {
+            return AppContext(appName: "QuietType", profile: .balanced)
+        }
+
         let frontmostApplication = NSWorkspace.shared.frontmostApplication
         let targetApplication: NSRunningApplication?
         if let frontmostApplication,
@@ -11203,6 +11219,11 @@ final class MenuBarModel: ObservableObject {
             appName: selectedProfile.appName,
             profile: selectedProfile.appProfile
         )
+    }
+
+    private func clearActiveDictationTarget() {
+        activeDictationContext = nil
+        activeDictationForcesPreviewOnly = false
     }
 
     private func prepareForDictation() async -> Bool {
@@ -11304,7 +11325,7 @@ final class MenuBarModel: ObservableObject {
             output = "I could not detect microphone audio. Check your input device and microphone permission."
             statusMessage = "No audio captured"
             dictationState = .failed
-            activeDictationContext = nil
+            clearActiveDictationTarget()
             overlayController.hide()
             completeVoiceFlowMetrics(outcome: .noAudio)
             return
@@ -11319,7 +11340,7 @@ final class MenuBarModel: ObservableObject {
             statusMessage = "No usable microphone signal"
             lastError = "Check the selected input device in macOS Sound settings, then try again."
             dictationState = .failed
-            activeDictationContext = nil
+            clearActiveDictationTarget()
             overlayController.hide()
             completeVoiceFlowMetrics(outcome: .signalTooLow)
             return
@@ -11335,7 +11356,7 @@ final class MenuBarModel: ObservableObject {
             statusMessage = "No clear speech detected"
             lastError = nil
             dictationState = .failed
-            activeDictationContext = nil
+            clearActiveDictationTarget()
             overlayController.hide()
             completeVoiceFlowMetrics(outcome: .signalTooLow)
             return
@@ -11384,7 +11405,7 @@ final class MenuBarModel: ObservableObject {
             lastError = String(describing: error)
             dictationState = .failed
             discardPlaintextDictationAudio()
-            activeDictationContext = nil
+            clearActiveDictationTarget()
             overlayController.hide(after: 1.1)
             completeVoiceFlowMetrics(outcome: .transcriptionFailed)
         }
@@ -11595,7 +11616,7 @@ final class MenuBarModel: ObservableObject {
         lastRecordingURL = nil
         recordedSamples = []
         dictationReleasedAt = nil
-        activeDictationContext = nil
+        clearActiveDictationTarget()
         try? FileManager.default.removeItem(at: chunkDirectory)
         await finalizationTask?.value
         if let activeDictationAudioURL {
@@ -11766,7 +11787,7 @@ final class MenuBarModel: ObservableObject {
                 return
             }
             dictationState = .failed
-            activeDictationContext = nil
+            clearActiveDictationTarget()
             overlayController.hide(after: 1.1)
             refreshSpeechEngineStatus()
             if isLikelyNoiseOnlyFailure(error) {
@@ -12004,6 +12025,7 @@ final class MenuBarModel: ObservableObject {
 
     private func processTranscript(_ rawTranscript: String, audioURL: URL? = nil, wordTimings: [TranscribedWordTiming] = []) async {
         do {
+            let shouldPreviewOnly = previewOnly || activeDictationForcesPreviewOnly
             let context = activeDictationContext
                 ?? AppContext(appName: selectedProfile.appName, profile: selectedProfile.appProfile)
             let bufferInserter = BufferingTextInserter()
@@ -12024,7 +12046,7 @@ final class MenuBarModel: ObservableObject {
             hasCopyableOutput = true
             didInsert = false
 
-            if !previewOnly {
+            if !shouldPreviewOnly {
                 dictationState = .inserting
                 showProcessingOverlay(detail: "Inserting into \(context.appName)", allowsCancellation: false)
                 do {
@@ -12066,11 +12088,11 @@ final class MenuBarModel: ObservableObject {
                 dictationState = .succeeded
                 overlayController.show(state: .inserted, detail: "Inserted into \(context.appName)", transcript: result.text)
                 overlayController.hide(after: 3.0)
-            } else if previewOnly {
+            } else if shouldPreviewOnly {
                 dictationState = .succeeded
                 overlayController.show(
                     state: .readyToCopy,
-                    detail: "Preview only",
+                    detail: activeDictationForcesPreviewOnly ? "Started from QuietType" : "Preview only",
                     transcript: result.text,
                     onCancel: { [weak self] in self?.overlayController.hide() }
                 )
@@ -12088,7 +12110,7 @@ final class MenuBarModel: ObservableObject {
                 outcome: didInsert ? .inserted : .readyToCopy,
                 finalWordCount: translatedWords
             )
-            activeDictationContext = nil
+            clearActiveDictationTarget()
             if historyReviewEnabled {
                 let previousPersistenceTask = transcriptPersistenceTask
                 transcriptPersistenceTask = Task { @MainActor [weak self] in
@@ -12113,7 +12135,7 @@ final class MenuBarModel: ObservableObject {
                 return
             }
             dictationState = .failed
-            activeDictationContext = nil
+            clearActiveDictationTarget()
             output = rawTranscript
             hasCopyableOutput = true
             lastError = String(describing: error)
