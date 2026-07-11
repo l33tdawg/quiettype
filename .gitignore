@@ -2,6 +2,7 @@
 .swiftpm/
 .swiftpm-home/
 .clang-module-cache/
+.model-cache/
 .DS_Store
 DerivedData/
 *.xcuserdata/
