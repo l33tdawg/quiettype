@@ -14,6 +14,20 @@ public struct CorrectionEngine: Sendable {
             corrected = replacePhrase(confusion.heard, with: confusion.corrected, in: corrected)
         }
 
+        // A reviewed casing correction such as "AMy" -> "Amy" is strong
+        // evidence that the token is a name. Whisper can subsequently render
+        // the same short name as another all-caps variant (for example "AME").
+        // Repair only one-character, equal-length all-caps variants learned
+        // from an anomalously-cased source; ordinary lowercase words are never
+        // fuzzy-matched.
+        for confusion in profile.confusions where isReviewedNameCasing(confusion) {
+            corrected = replaceNearbyUppercaseVariant(
+                of: confusion.heard,
+                with: confusion.corrected,
+                in: corrected
+            )
+        }
+
         for entry in profile.vocabulary {
             for spokenForm in entry.spokenForms.sorted(by: { $0.count > $1.count }) {
                 corrected = replacePhrase(spokenForm, with: entry.preferredSpelling, in: corrected)
@@ -36,5 +50,52 @@ public struct CorrectionEngine: Sendable {
             with: replacement,
             options: [.regularExpression, .caseInsensitive, .diacriticInsensitive]
         )
+    }
+
+    private func isReviewedNameCasing(_ confusion: ASRConfusion) -> Bool {
+        let heard = confusion.heard.trimmingCharacters(in: .whitespacesAndNewlines)
+        let corrected = confusion.corrected.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !heard.contains(where: { $0.isWhitespace }),
+              heard.count >= 3,
+              heard.count == corrected.count,
+              heard.caseInsensitiveCompare(corrected) == .orderedSame,
+              heard != corrected,
+              corrected.first?.isUppercase == true,
+              corrected.dropFirst().allSatisfy({ !$0.isLetter || $0.isLowercase }) else {
+            return false
+        }
+        return heard.dropFirst().contains(where: { $0.isUppercase })
+    }
+
+    private func replaceNearbyUppercaseVariant(of heard: String, with replacement: String, in text: String) -> String {
+        guard let expression = try? NSRegularExpression(pattern: #"(?<![A-Za-z0-9])[A-Za-z]+(?![A-Za-z0-9])"#) else {
+            return text
+        }
+
+        let mutable = NSMutableString(string: text)
+        let matches = expression.matches(
+            in: text,
+            range: NSRange(text.startIndex..<text.endIndex, in: text)
+        )
+        for match in matches.reversed() {
+            let candidate = mutable.substring(with: match.range)
+            guard candidate.count == heard.count,
+                  candidate == candidate.uppercased(),
+                  candidate != candidate.lowercased(),
+                  singleCharacterDifference(candidate.lowercased(), heard.lowercased()) else {
+                continue
+            }
+            mutable.replaceCharacters(in: match.range, with: replacement)
+        }
+        return mutable as String
+    }
+
+    private func singleCharacterDifference(_ lhs: String, _ rhs: String) -> Bool {
+        guard lhs.count == rhs.count else {
+            return false
+        }
+        return zip(lhs, rhs).reduce(0) { count, pair in
+            count + (pair.0 == pair.1 ? 0 : 1)
+        } == 1
     }
 }

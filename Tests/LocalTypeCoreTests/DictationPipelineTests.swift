@@ -718,6 +718,42 @@ final class DictationPipelineTests: XCTestCase {
         XCTAssertEqual(result.text, "Meet Dr. Smith at 3.30 p.m. tomorrow.")
     }
 
+    func testAMPMNormalizationDoesNotCorruptNames() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "send Amy and Amanda the notes at three pm", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "Send Amy and Amanda the notes at 3 PM.")
+    }
+
+    func testKeepsBroLowercaseMidSentenceWhileNormalizingTime() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "thanks bro for checking with Amy at nine am", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "Thanks bro for checking with Amy at 9 AM.")
+    }
+
+    func testNormalizesAttachedMeridiemReturnedByASR() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "meet Amy at 3pm and call Amanda at 9am", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "Meet Amy at 3 PM and call Amanda at 9 AM.")
+    }
+
     func testAppliesBritishSpellingPreference() async throws {
         let profile = DictationProfile(spellingPreference: .british)
         let pipeline = DictationPipeline(profile: profile, semanticEditor: RuleBasedSemanticEditor())

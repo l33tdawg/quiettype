@@ -26,12 +26,11 @@ public struct ASRPromptBuilder: Sendable {
         return parts.joined(separator: " ")
     }
 
-    /// The bundled Argmax decoder carries QuietType's prompt-prefill guard, so
-    /// a short governed vocabulary prompt is safe for the authoritative
-    /// full-audio pass. Streaming previews deliberately remain unprompted.
-    public func productionOptions(for profile: DictationProfile) -> AudioTranscriptionOptions {
-        let value = prompt(for: profile).trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? .none : AudioTranscriptionOptions(initialPrompt: value)
+    /// Keep production transcription unprompted. The vocabulary prompt
+    /// added material release-to-text latency without changing retained-corpus
+    /// output. Deterministic local vocabulary repair still runs after ASR.
+    public func productionOptions() -> AudioTranscriptionOptions {
+        .none
     }
 
     private func preferredSpellings(from entries: [VocabularyEntry]) -> [String] {

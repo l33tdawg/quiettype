@@ -40,7 +40,7 @@ final class ASRPromptBuilderTests: XCTestCase {
         XCTAssertFalse(prompt.contains("heard 2"))
     }
 
-    func testProductionOptionsUseGovernedVocabularyForFullAudio() {
+    func testProductionOptionsRemainUnpromptedEvenWithGovernedVocabulary() {
         let profile = DictationProfile(
             vocabulary: [
                 VocabularyEntry(
@@ -54,11 +54,8 @@ final class ASRPromptBuilderTests: XCTestCase {
         )
 
         XCTAssertFalse(ASRPromptBuilder().prompt(for: profile).isEmpty)
-        let options = ASRPromptBuilder().productionOptions(for: profile)
+        let options = ASRPromptBuilder().productionOptions()
 
-        XCTAssertEqual(
-            options.initialPrompt,
-            "Vocabulary: SAGE. Preserve exact names, acronyms, and numbers."
-        )
+        XCTAssertNil(options.initialPrompt)
     }
 }

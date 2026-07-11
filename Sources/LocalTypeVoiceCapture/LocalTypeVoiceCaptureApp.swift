@@ -19,10 +19,21 @@ struct LocalTypeVoiceCaptureApp: App {
 
 @MainActor
 private final class VoiceCaptureModel: ObservableObject {
+    private static let releaseRegressionPromptIDs = [
+        "casing-short-names",
+        "casing-bro-but",
+        "casing-names-and-time",
+        "fn-tail-release",
+        "medium-natural-pauses"
+    ]
+
     @Published private(set) var currentIndex = 0
     @Published private(set) var isRecording = false
     @Published private(set) var inputLevel = 0.0
     @Published private(set) var recordedDurations: [String: Double] = [:]
+    @Published private(set) var fnShortcutStatus = "FN shortcut starting"
+    @Published private(set) var lastFnStartLatencyMS: Int?
+    @Published private(set) var lastFnStopToSaveMS: Int?
     @Published var statusMessage = "Ready to build a private local corpus"
     @Published var errorMessage: String?
 
@@ -33,6 +44,7 @@ private final class VoiceCaptureModel: ObservableObject {
     private let manifestURL: URL
     private var captureService: AVAudioCaptureService?
     private var captureBuffer: LockedVoiceCaptureBuffer?
+    private var functionKeyMonitor: FunctionKeyToggleMonitor?
 
     init() {
         let root = FileManager.default.homeDirectoryForCurrentUser
@@ -41,6 +53,14 @@ private final class VoiceCaptureModel: ObservableObject {
         audioDirectory = root.appendingPathComponent("audio", isDirectory: true)
         manifestURL = root.appendingPathComponent("voice-flow.json")
         loadExistingManifest()
+        if let firstMissing = suite.prompts.firstIndex(where: { recordedDurations[$0.id] == nil }) {
+            currentIndex = firstMissing
+        }
+        registerFunctionKey()
+    }
+
+    deinit {
+        functionKeyMonitor?.unregister()
     }
 
     var currentPrompt: VoiceFlowCapturePrompt {
@@ -48,11 +68,18 @@ private final class VoiceCaptureModel: ObservableObject {
     }
 
     var progressLabel: String {
-        "Prompt \(currentIndex + 1) of \(suite.prompts.count)"
+        if let releaseIndex = Self.releaseRegressionPromptIDs.firstIndex(of: currentPrompt.id) {
+            return "1.0 prompt \(releaseIndex + 1) of \(Self.releaseRegressionPromptIDs.count)"
+        }
+        return "Prompt \(currentIndex + 1) of \(suite.prompts.count)"
     }
 
-    var savedCount: Int {
-        recordedDurations.count
+    var savedCountLabel: String {
+        if Self.releaseRegressionPromptIDs.contains(currentPrompt.id) {
+            let count = Self.releaseRegressionPromptIDs.filter { recordedDurations[$0] != nil }.count
+            return "\(count) of \(Self.releaseRegressionPromptIDs.count) saved"
+        }
+        return "\(recordedDurations.count) saved"
     }
 
     var currentPromptIsSaved: Bool {
@@ -71,7 +98,7 @@ private final class VoiceCaptureModel: ObservableObject {
         currentIndex + 1 < suite.prompts.count && !isRecording
     }
 
-    func startRecording() async {
+    func startRecording(fnPressedAt: Date? = nil) async {
         guard !isRecording else { return }
         errorMessage = nil
 
@@ -102,7 +129,10 @@ private final class VoiceCaptureModel: ObservableObject {
             captureService = service
             isRecording = true
             inputLevel = 0
-            statusMessage = "Recording locally — speak the script, then stop and save"
+            if let fnPressedAt {
+                lastFnStartLatencyMS = max(0, Int(Date().timeIntervalSince(fnPressedAt) * 1_000))
+            }
+            statusMessage = "Recording locally — press FN after the final word"
         } catch {
             captureBuffer = nil
             captureService = nil
@@ -110,7 +140,7 @@ private final class VoiceCaptureModel: ObservableObject {
         }
     }
 
-    func stopAndSave() {
+    func stopAndSave(fnPressedAt: Date? = nil) {
         guard isRecording else { return }
         captureService?.stop()
         captureService = nil
@@ -142,10 +172,16 @@ private final class VoiceCaptureModel: ObservableObject {
             )
             recordedDurations[currentPrompt.id] = duration
             try writeManifest()
-            statusMessage = "Saved \(String(format: "%.1f", duration)) seconds locally"
+            if let fnPressedAt {
+                lastFnStopToSaveMS = max(0, Int(Date().timeIntervalSince(fnPressedAt) * 1_000))
+            }
+            let stopDetail = lastFnStopToSaveMS.map { " · FN-to-WAV \($0) ms" } ?? ""
+            statusMessage = "Saved \(String(format: "%.1f", duration)) seconds locally\(stopDetail)"
             errorMessage = nil
-            if currentIndex + 1 < suite.prompts.count {
-                currentIndex += 1
+            if let nextMissing = suite.prompts.indices.first(where: {
+                $0 > currentIndex && recordedDurations[suite.prompts[$0].id] == nil
+            }) {
+                currentIndex = nextMissing
             }
         } catch {
             errorMessage = "Could not save the local recording: \(error.localizedDescription)"
@@ -182,6 +218,29 @@ private final class VoiceCaptureModel: ObservableObject {
             NSWorkspace.shared.open(corpusDirectory)
         } catch {
             errorMessage = "Could not open the local corpus folder: \(error.localizedDescription)"
+        }
+    }
+
+    private func registerFunctionKey() {
+        let monitor = FunctionKeyToggleMonitor { [weak self] in
+            let pressedAt = Date()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.isRecording {
+                    self.stopAndSave(fnPressedAt: pressedAt)
+                } else {
+                    await self.startRecording(fnPressedAt: pressedAt)
+                }
+            }
+        }
+        do {
+            try monitor.register()
+            functionKeyMonitor = monitor
+            fnShortcutStatus = FunctionKeySystemUse.current.conflictsWithQuietType
+                ? "FN ready (macOS also uses this key)"
+                : "FN ready — press once to start and once to stop"
+        } catch {
+            fnShortcutStatus = "FN unavailable — use the on-screen buttons"
         }
     }
 
@@ -334,7 +393,7 @@ private struct VoiceCaptureView: View {
                 Text(model.progressLabel)
                     .font(.headline)
                 Spacer()
-                Text("\(model.savedCount) saved")
+                Text(model.savedCountLabel)
                     .foregroundStyle(.secondary)
             }
             ProgressView(
@@ -367,6 +426,15 @@ private struct VoiceCaptureView: View {
                 .textSelection(.enabled)
 
             VStack(alignment: .leading, spacing: 6) {
+                Label(model.fnShortcutStatus, systemImage: "fn")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if let startMS = model.lastFnStartLatencyMS,
+                   let stopMS = model.lastFnStopToSaveMS {
+                    Text("Last capture: FN-to-microphone \(startMS) ms · FN-to-WAV \(stopMS) ms")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
                 HStack {
                     Circle()
                         .fill(model.isRecording ? Color.red : Color.secondary.opacity(0.5))

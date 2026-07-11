@@ -1,0 +1,308 @@
+diff --git a/Sources/ArgmaxCLI/Server/ServeCLI.swift b/Sources/ArgmaxCLI/Server/ServeCLI.swift
+index 26ceee1..d6295c7 100644
+--- a/Sources/ArgmaxCLI/Server/ServeCLI.swift
++++ b/Sources/ArgmaxCLI/Server/ServeCLI.swift
+@@ -45,0 +46,25 @@ struct ServeCLI: AsyncParsableCommand {
++
++        let liveWhisperKit = LiveWhisperKitBox(whisperKit)
++        let liveDecodingOptions = TranscribeCLIUtils.createDecodingOptions(
++            from: transcribeArguments,
++            task: .transcribe
++        )
++
++        app.webSocket("v1", "audio", "live") { _, socket in
++            socket.send(#"{"type":"connected"}"#)
++            let session = LivePCMTranscriptionSession(
++                whisperKit: liveWhisperKit,
++                decodingOptions: liveDecodingOptions,
++                socket: socket
++            )
++            socket.onBinary { _, buffer in
++                let data = Data(buffer.readableBytesView)
++                Task { await session.appendPCM16(data) }
++            }
++            socket.onText { _, text in
++                Task { await session.receiveControl(text) }
++            }
++            socket.onClose.whenComplete { _ in
++                Task { await session.cancel() }
++            }
++        }
+@@ -89,0 +115,277 @@ struct ServeCLI: AsyncParsableCommand {
++private final class LiveWhisperKitBox: @unchecked Sendable {
++    let value: WhisperKit
++
++    init(_ value: WhisperKit) {
++        self.value = value
++    }
++}
++
++private actor LivePCMTranscriptionSession {
++    private struct Control: Decodable {
++        var type: String
++        var sampleRate: Int?
++
++        enum CodingKeys: String, CodingKey {
++            case type
++            case sampleRate = "sample_rate"
++        }
++    }
++
++    private struct Event: Encodable {
++        var type: String
++        var text: String?
++        var coveredSamples: Int?
++        var sampleRate: Int?
++        var detail: String?
++
++        enum CodingKeys: String, CodingKey {
++            case type
++            case text
++            case coveredSamples = "covered_samples"
++            case sampleRate = "sample_rate"
++            case detail
++        }
++    }
++
++    private let whisperKit: LiveWhisperKitBox
++    private let baseOptions: DecodingOptions
++    private let socket: WebSocket
++    private var sourceSamples: [Float] = []
++    private var sampleRate = 16_000
++    private var committedTranscripts: [String] = []
++    private var committedSourceSampleCount = 0
++    private var isDecoding = false
++    private var isStopping = false
++    private var isCancelled = false
++    private var heardSpeechSinceLastDecode = false
++    private var consecutiveSilentSamples = 0
++    private let minimumNewAudioSeconds = 12.0
++    private let minimumPauseSeconds = 0.55
++    private let speechRMSThreshold: Float = 0.012
++
++    init(
++        whisperKit: LiveWhisperKitBox,
++        decodingOptions: DecodingOptions,
++        socket: WebSocket
++    ) {
++        self.whisperKit = whisperKit
++        self.baseOptions = decodingOptions
++        self.socket = socket
++    }
++
++    func receiveControl(_ text: String) {
++        guard !isCancelled,
++              let data = text.data(using: .utf8),
++              let control = try? JSONDecoder().decode(Control.self, from: data) else {
++            send(Event(type: "error", detail: "Invalid live transcription control message."))
++            return
++        }
++
++        switch control.type {
++        case "start":
++            sampleRate = max(8_000, min(control.sampleRate ?? 16_000, 192_000))
++            send(Event(type: "ready", sampleRate: sampleRate))
++        case "stop":
++            isStopping = true
++            if !isDecoding {
++                startDecode(endSample: sourceSamples.count, final: true)
++            }
++        case "cancel":
++            cancel()
++        default:
++            send(Event(type: "error", detail: "Unknown live transcription control message."))
++        }
++    }
++
++    func appendPCM16(_ data: Data) {
++        guard !isCancelled, !isStopping, data.count >= 2 else {
++            return
++        }
++        let decoded = Self.decodePCM16(data)
++        sourceSamples.append(contentsOf: decoded)
++        let rms = sqrt(decoded.reduce(Float.zero) { $0 + ($1 * $1) } / Float(max(decoded.count, 1)))
++        if rms >= speechRMSThreshold {
++            heardSpeechSinceLastDecode = true
++            consecutiveSilentSamples = 0
++        } else if heardSpeechSinceLastDecode {
++            consecutiveSilentSamples += decoded.count
++        }
++        let pendingSeconds = Double(sourceSamples.count - committedSourceSampleCount) / Double(sampleRate)
++        if !isDecoding,
++           heardSpeechSinceLastDecode,
++           pendingSeconds >= minimumNewAudioSeconds,
++           Double(consecutiveSilentSamples) / Double(sampleRate) >= minimumPauseSeconds {
++            heardSpeechSinceLastDecode = false
++            consecutiveSilentSamples = 0
++            startDecode(endSample: sourceSamples.count, final: false)
++        }
++    }
++
++    func cancel() {
++        isCancelled = true
++        sourceSamples.removeAll(keepingCapacity: false)
++        committedTranscripts.removeAll(keepingCapacity: false)
++    }
++
++    private func startDecode(endSample: Int, final: Bool) {
++        guard !isCancelled, !isDecoding else {
++            return
++        }
++        guard !sourceSamples.isEmpty else {
++            if final {
++                send(Event(type: "error", detail: "No live audio received."))
++            }
++            return
++        }
++        if committedSourceSampleCount >= endSample {
++            if final {
++                send(
++                    Event(
++                        type: "final",
++                        text: mergedText(committedTranscripts),
++                        coveredSamples: sourceSamples.count,
++                        sampleRate: sampleRate
++                    )
++                )
++            }
++            return
++        }
++
++        isDecoding = true
++        let sourceStartSample = committedSourceSampleCount
++        let sourceSnapshot = Array(sourceSamples[sourceStartSample..<endSample])
++        let sourceSampleCount = sourceSnapshot.count
++        let rate = sampleRate
++        Task {
++            do {
++                let audio = Self.resample(sourceSnapshot, from: rate, to: 16_000)
++                let results = try await whisperKit.value.transcribe(
++                    audioArray: audio,
++                    decodeOptions: baseOptions
++                )
++                let merged = TranscriptionUtilities.mergeTranscriptionResults(results)
++                decodeCompleted(
++                    merged,
++                    sourceStartSample: sourceStartSample,
++                    sourceEndSample: sourceStartSample + sourceSampleCount,
++                    requestedFinal: final
++                )
++            } catch {
++                decodeFailed(error)
++            }
++        }
++    }
++
++    private func decodeCompleted(
++        _ result: TranscriptionResult?,
++        sourceStartSample: Int,
++        sourceEndSample: Int,
++        requestedFinal: Bool
++    ) {
++        guard !isCancelled else {
++            return
++        }
++        isDecoding = false
++        guard let result else {
++            send(Event(type: "error", detail: "Live transcription returned no result."))
++            return
++        }
++
++        guard sourceStartSample == committedSourceSampleCount else {
++            send(Event(type: "error", detail: "Live transcription segment coverage became inconsistent."))
++            return
++        }
++        let chunkText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
++        if !chunkText.isEmpty {
++            committedTranscripts.append(chunkText)
++        }
++        committedSourceSampleCount = sourceEndSample
++
++        if requestedFinal {
++            send(
++                Event(
++                    type: "final",
++                    text: mergedText(committedTranscripts),
++                    coveredSamples: sourceEndSample,
++                    sampleRate: sampleRate
++                )
++            )
++            return
++        }
++
++        send(
++            Event(
++                type: "partial",
++                text: mergedText(committedTranscripts),
++                coveredSamples: sourceEndSample,
++                sampleRate: sampleRate
++            )
++        )
++
++        if isStopping {
++            startDecode(endSample: sourceSamples.count, final: true)
++        } else {
++            startPauseDecodeIfReady()
++        }
++    }
++
++    private func startPauseDecodeIfReady() {
++        let pendingSeconds = Double(sourceSamples.count - committedSourceSampleCount) / Double(sampleRate)
++        let pauseSeconds = Double(consecutiveSilentSamples) / Double(sampleRate)
++        guard heardSpeechSinceLastDecode,
++              pendingSeconds >= minimumNewAudioSeconds,
++              pauseSeconds >= minimumPauseSeconds else {
++            return
++        }
++        heardSpeechSinceLastDecode = false
++        consecutiveSilentSamples = 0
++        startDecode(endSample: sourceSamples.count, final: false)
++    }
++
++    private func decodeFailed(_ error: Error) {
++        isDecoding = false
++        send(Event(type: "error", detail: error.localizedDescription))
++    }
++
++    private func mergedText(_ transcripts: [String]) -> String {
++        transcripts
++            .joined(separator: " ")
++            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
++            .trimmingCharacters(in: .whitespacesAndNewlines)
++    }
++
++    private func send(_ event: Event) {
++        guard let data = try? JSONEncoder().encode(event),
++              let text = String(data: data, encoding: .utf8) else {
++            return
++        }
++        socket.send(text)
++    }
++
++    private static func decodePCM16(_ data: Data) -> [Float] {
++        data.withUnsafeBytes { bytes in
++            let count = bytes.count / 2
++            return (0..<count).map { index in
++                let offset = index * 2
++                let bits = UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
++                return Float(Int16(bitPattern: bits)) / 32_768.0
++            }
++        }
++    }
++
++    private static func resample(_ samples: [Float], from sourceRate: Int, to targetRate: Int) -> [Float] {
++        guard sourceRate != targetRate, samples.count > 1 else {
++            return samples
++        }
++        let targetCount = max(1, Int((Double(samples.count) * Double(targetRate) / Double(sourceRate)).rounded(.down)))
++        let scale = Double(sourceRate) / Double(targetRate)
++        return (0..<targetCount).map { index in
++            let position = Double(index) * scale
++            let lower = min(Int(position), samples.count - 1)
++            let upper = min(lower + 1, samples.count - 1)
++            let fraction = Float(position - Double(lower))
++            return samples[lower] + ((samples[upper] - samples[lower]) * fraction)
++        }
++    }
++}
++

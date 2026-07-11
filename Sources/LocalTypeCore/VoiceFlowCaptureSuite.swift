@@ -214,6 +214,41 @@ public struct VoiceFlowCaptureSuite: Codable, Equatable, Sendable {
                 expectedText: "Create three tasks for July tenth, set the timeout to forty five seconds, and schedule the review for three thirty PM."
             ),
             VoiceFlowCapturePrompt(
+                id: "casing-short-names",
+                category: "Casing regressions",
+                deliveryInstruction: "Say Amy and Amanda naturally. Do not spell either name letter by letter.",
+                expectedText: "I asked Amy to send Amanda the updated review notes before lunch.",
+                requiredTerms: ["Amy", "Amanda"]
+            ),
+            VoiceFlowCapturePrompt(
+                id: "casing-bro-but",
+                category: "Casing regressions",
+                deliveryInstruction: "Use a casual tone and clearly say both bro and but mid-sentence.",
+                expectedText: "I understand the concern, bro, but we still need the complete benchmark before release.",
+                requiredTerms: ["bro", "but"]
+            ),
+            VoiceFlowCapturePrompt(
+                id: "casing-names-and-time",
+                category: "Casing regressions",
+                deliveryInstruction: "Read the names and times naturally, without emphasizing capitalization.",
+                expectedText: "Amy will call Amanda at nine AM, and Maya will send the final update at three PM.",
+                requiredTerms: ["Amy", "Amanda", "Maya", "AM", "PM"]
+            ),
+            VoiceFlowCapturePrompt(
+                id: "fn-tail-release",
+                category: "FN tail latency",
+                deliveryInstruction: "Press FN to start. Speak naturally, then press FN again immediately after the final word benchmark.",
+                expectedText: "We checked the model, the memory, the insertion path, and the final local benchmark.",
+                requiredTerms: ["benchmark"]
+            ),
+            VoiceFlowCapturePrompt(
+                id: "medium-natural-pauses",
+                category: "FN tail latency",
+                deliveryInstruction: "Speak at your normal dictation pace. Pause naturally after each sentence and press FN immediately after the last word.",
+                expectedText: "This release candidate needs to feel immediate in ordinary use. A short request should appear almost as soon as I finish speaking. A longer planning note should be processed while I am still talking, without showing unstable preview text. Natural pauses must not lose the word before the pause or the word after it. If the incremental result is incomplete, QuietType should use the full local recording. The final decision depends on repeatable accuracy and release to insertion latency.",
+                requiredTerms: ["QuietType"]
+            ),
+            VoiceFlowCapturePrompt(
                 id: "long-product-plan",
                 category: "Long form",
                 deliveryInstruction: "Read at a comfortable pace. Take natural pauses between paragraphs.",

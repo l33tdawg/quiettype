@@ -8,7 +8,7 @@ final class VoiceFlowCaptureSuiteTests: XCTestCase {
         let categories = Set(suite.prompts.map(\.category))
 
         XCTAssertEqual(suite.schemaVersion, 1)
-        XCTAssertEqual(suite.prompts.count, 25)
+        XCTAssertEqual(suite.prompts.count, 30)
         XCTAssertEqual(Set(identifiers).count, identifiers.count)
         XCTAssertTrue(suite.prompts.allSatisfy { !$0.expectedText.isEmpty })
         XCTAssertTrue(categories.isSuperset(of: [
@@ -19,6 +19,8 @@ final class VoiceFlowCaptureSuiteTests: XCTestCase {
             "Delivery variation",
             "Background noise",
             "Numbers and formatting",
+            "Casing regressions",
+            "FN tail latency",
             "Long form"
         ]))
     }

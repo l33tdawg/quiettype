@@ -32,4 +32,30 @@ final class CorrectionEngineTests: XCTestCase {
 
         XCTAssertEqual(engine.apply(to: "message sage usage"), "message SAGE usage")
     }
+
+    func testReviewedNameCasingRepairsNearbyAllCapsASRVariant() {
+        let engine = CorrectionEngine(
+            profile: DictationProfile(
+                vocabulary: [],
+                confusions: [
+                    ASRConfusion(heard: "AMy", corrected: "Amy", contextTerms: [], confidence: 0.93)
+                ]
+            )
+        )
+
+        XCTAssertEqual(engine.apply(to: "I spoke to AMy and then AME."), "I spoke to Amy and then Amy.")
+    }
+
+    func testReviewedNameCasingDoesNotFuzzyReplaceOrdinaryLowercaseWords() {
+        let engine = CorrectionEngine(
+            profile: DictationProfile(
+                vocabulary: [],
+                confusions: [
+                    ASRConfusion(heard: "AMy", corrected: "Amy", contextTerms: [], confidence: 0.93)
+                ]
+            )
+        )
+
+        XCTAssertEqual(engine.apply(to: "any AM and amyloid remain unchanged"), "any AM and amyloid remain unchanged")
+    }
 }

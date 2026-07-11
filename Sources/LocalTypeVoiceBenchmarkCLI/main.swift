@@ -1,4 +1,5 @@
 import Darwin
+import AVFoundation
 import Foundation
 import LocalTypeCore
 
@@ -8,6 +9,7 @@ struct LocalTypeVoiceBenchmarkCLI {
     Usage:
       localtype-voice-benchmark <manifest.json> [--iterations N] [--output report.json]
       localtype-voice-benchmark compare <baseline.json> <candidate.json> [--output comparison.json]
+      localtype-voice-benchmark live <audio.wav> [--endpoint ws://127.0.0.1:50060/v1/audio/live] [--manifest manifest.json] [--case id]
 
     Runs every WAV case against QuietType's loopback-only native speech engine.
     Compare applies the local accuracy and latency gates to two content-free reports.
@@ -20,6 +22,10 @@ struct LocalTypeVoiceBenchmarkCLI {
             if rawArguments.first == "compare" {
                 let arguments = try ComparisonArguments.parse(Array(rawArguments.dropFirst()))
                 try compareReports(arguments)
+                return
+            }
+            if rawArguments.first == "live" {
+                try await runLiveReplay(Array(rawArguments.dropFirst()))
                 return
             }
 
@@ -56,9 +62,112 @@ struct LocalTypeVoiceBenchmarkCLI {
                 throw CLIError.iterationsFailed(failures)
             }
         } catch {
-            writeError(error.localizedDescription)
+            writeError(String(reflecting: error))
             Darwin.exit(2)
         }
+    }
+
+    private static func runLiveReplay(_ arguments: [String]) async throws {
+        guard let audioPath = arguments.first else {
+            throw CLIError.missingManifest
+        }
+        var endpoint = URL(string: "ws://127.0.0.1:50060/v1/audio/live")!
+        if let endpointIndex = arguments.firstIndex(of: "--endpoint"),
+           arguments.indices.contains(endpointIndex + 1),
+           let value = URL(string: arguments[endpointIndex + 1]) {
+            endpoint = value
+        }
+
+        let audio = try readMonoAudio(at: absoluteFileURL(for: audioPath))
+        let client = WhisperKitLiveStreamClient(endpoint: endpoint)
+        let frameSampleCount = max(1, audio.sampleRate / 4)
+        let started = DispatchTime.now().uptimeNanoseconds
+        var offset = 0
+        while offset < audio.samples.count {
+            let end = min(audio.samples.count, offset + frameSampleCount)
+            try await client.append(
+                AudioFrame(
+                    samples: Array(audio.samples[offset..<end]),
+                    sampleRate: audio.sampleRate,
+                    timestamp: Double(offset) / Double(audio.sampleRate)
+                )
+            )
+            let duration = Double(end - offset) / Double(audio.sampleRate)
+            try await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            offset = end
+        }
+
+        let released = DispatchTime.now().uptimeNanoseconds
+        guard let result = await client.finish(timeoutSeconds: 90) else {
+            let detail = await client.lastError() ?? "Live transcription returned no final result."
+            throw CLIError.liveReplayFailed(detail)
+        }
+        let completed = DispatchTime.now().uptimeNanoseconds
+        let releaseLatencyMS = Int(Double(completed - released) / 1_000_000)
+        let totalMS = Int(Double(completed - started) / 1_000_000)
+        writeStatus("Live release-to-final: \(releaseLatencyMS) ms; total: \(totalMS) ms; coverage: \(String(format: "%.3f", result.coveredDurationSeconds))s")
+        if let manifestIndex = arguments.firstIndex(of: "--manifest"),
+           arguments.indices.contains(manifestIndex + 1) {
+            let manifestURL = absoluteFileURL(for: arguments[manifestIndex + 1])
+            let manifest = try loadManifest(at: manifestURL)
+            let requestedCaseID = optionValue("--case", in: arguments)
+            let audioURL = absoluteFileURL(for: audioPath).standardizedFileURL
+            let benchmarkCase = manifest.cases.first { candidate in
+                if let requestedCaseID {
+                    return candidate.id == requestedCaseID
+                }
+                return resolvedAudioURL(
+                    candidate.audioPath,
+                    relativeTo: manifestURL.deletingLastPathComponent()
+                ) == audioURL
+            }
+            if let benchmarkCase {
+                let score = VoiceFlowTextScorer.score(
+                    reference: benchmarkCase.expectedText,
+                    hypothesis: result.text,
+                    requiredTerms: benchmarkCase.requiredTerms
+                )
+                writeStatus(
+                    "Live accuracy: WER \(String(format: "%.2f", score.wordErrorRate * 100))%; required terms \(String(format: "%.2f", score.requiredTermAccuracy * 100))%"
+                )
+            } else {
+                throw CLIError.liveReplayFailed("No matching benchmark case was found for the live replay.")
+            }
+        }
+        print(result.text)
+    }
+
+    private static func optionValue(_ option: String, in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: option),
+              arguments.indices.contains(index + 1) else {
+            return nil
+        }
+        return arguments[index + 1]
+    }
+
+    private static func readMonoAudio(at url: URL) throws -> (samples: [Float], sampleRate: Int) {
+        let file = try AVAudioFile(forReading: url)
+        let format = file.processingFormat
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: AVAudioFrameCount(file.length)
+        ) else {
+            throw CLIError.liveReplayFailed("Could not allocate an audio replay buffer.")
+        }
+        try file.read(into: buffer)
+        guard let channels = buffer.floatChannelData,
+              buffer.frameLength > 0 else {
+            throw CLIError.liveReplayFailed("The replay file is not readable as floating-point PCM.")
+        }
+        let frameCount = Int(buffer.frameLength)
+        let channelCount = Int(format.channelCount)
+        var samples = [Float](repeating: 0, count: frameCount)
+        for channel in 0..<channelCount {
+            for index in 0..<frameCount {
+                samples[index] += channels[channel][index] / Float(channelCount)
+            }
+        }
+        return (samples, Int(format.sampleRate.rounded()))
     }
 
     private static func loadManifest(at url: URL) throws -> VoiceFlowBenchmarkManifest {
@@ -344,6 +453,7 @@ private enum CLIError: Error, LocalizedError {
     case iterationsFailed(Int)
     case missingComparisonReports
     case comparisonFailed(regressions: Int, insufficient: Int, missing: Int)
+    case liveReplayFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -367,6 +477,8 @@ private enum CLIError: Error, LocalizedError {
             return "Compare needs baseline and candidate report paths.\n\(LocalTypeVoiceBenchmarkCLI.usage)"
         case .comparisonFailed(let regressions, let insufficient, let missing):
             return "Comparison gate failed: \(regressions) regression(s), \(insufficient) insufficient case(s), and \(missing) missing case(s)."
+        case .liveReplayFailed(let detail):
+            return detail
         }
     }
 }

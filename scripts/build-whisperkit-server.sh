@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENDOR="$ROOT/vendor/argmax-oss-swift"
-PATCH="$ROOT/patches/argmax-whisperkit-prefill-guard.patch"
+PREFILL_PATCH="$ROOT/patches/argmax-whisperkit-prefill-guard.patch"
+LIVE_PCM_PATCH="$ROOT/patches/argmax-live-pcm-stream.patch"
 EXPECTED_REVISION="${QUIETTYPE_ARGMAX_REVISION:-dcf3a00f0ae4d5b57bc0aad92063b102b70d5fd1}"
 
 if [[ ! -d "$VENDOR" ]]; then
@@ -12,10 +13,12 @@ if [[ ! -d "$VENDOR" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$PATCH" ]]; then
-  echo "Missing required Argmax compatibility patch: $PATCH" >&2
-  exit 1
-fi
+for patch in "$PREFILL_PATCH" "$LIVE_PCM_PATCH"; do
+  if [[ ! -f "$patch" ]]; then
+    echo "Missing required Argmax compatibility patch: $patch" >&2
+    exit 1
+  fi
+done
 
 ACTUAL_REVISION="$(git -C "$VENDOR" rev-parse HEAD)"
 if [[ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]]; then
@@ -23,15 +26,22 @@ if [[ "$ACTUAL_REVISION" != "$EXPECTED_REVISION" ]]; then
   exit 1
 fi
 
-if git -C "$VENDOR" apply --check "$PATCH" >/dev/null 2>&1; then
-  git -C "$VENDOR" apply "$PATCH"
-  echo "Applied QuietType Argmax prefill guard."
-elif git -C "$VENDOR" apply --reverse --check "$PATCH" >/dev/null 2>&1; then
-  echo "QuietType Argmax prefill guard is already applied."
-else
-  echo "Argmax prefill guard does not apply cleanly at $ACTUAL_REVISION." >&2
-  exit 1
-fi
+apply_patch_once() {
+  local patch="$1"
+  local label="$2"
+  if git -C "$VENDOR" apply --unidiff-zero --check "$patch" >/dev/null 2>&1; then
+    git -C "$VENDOR" apply --unidiff-zero "$patch"
+    echo "Applied QuietType $label."
+  elif git -C "$VENDOR" apply --unidiff-zero --reverse --check "$patch" >/dev/null 2>&1; then
+    echo "QuietType $label is already applied."
+  else
+    echo "Argmax $label does not apply cleanly at $ACTUAL_REVISION." >&2
+    exit 1
+  fi
+}
+
+apply_patch_once "$PREFILL_PATCH" "prefill guard"
+apply_patch_once "$LIVE_PCM_PATCH" "live PCM stream"
 
 cd "$VENDOR"
 BUILD_ALL=1 \

@@ -7661,7 +7661,6 @@ final class MenuBarModel: ObservableObject {
     @Published var lastWordsPerMinute = 0
     @Published var inputLevel = 0.0
     @Published var lastRecordingURL: URL?
-    @Published var partialChunkCount = 0
     @Published var lastLatencyMS: Int?
     @Published var lastError: String?
     @Published var previewOnly = false
@@ -7788,15 +7787,17 @@ final class MenuBarModel: ObservableObject {
     private lazy var voiceNoteAudioStore = EncryptedVoiceNoteAudioStore(directory: voiceNoteAudioDirectory)
     private lazy var reviewAudioStore = EncryptedVoiceNoteAudioStore(directory: reviewAudioDirectory)
     private lazy var voiceFlowMetricsStore = LocalVoiceFlowMetricsStore(fileURL: voiceFlowMetricsURL)
-    private var chunker = StreamingWavChunker()
     private var speechActivityTracker = SpeechActivityTracker()
+    private var liveTranscriptionClient: WhisperKitLiveStreamClient?
+    private var pauseAlignedSegmenter: PauseAlignedWavSegmenter?
+    private var incrementalTranscriptionSession: StreamingAudioTranscriptionSession?
+    private var incrementalSegmentDirectory: URL?
+    private var pendingIncrementalChunks: [WavAudioChunk] = []
+    private var incrementalFastPathActivated = false
+    private var incrementalCapturedDurationSeconds = 0.0
     private var detectedSpeechDurationMS = 0
     private var didDetectSpeech = false
     private var voiceFlowMetricAccumulator: VoiceFlowMetricAccumulator?
-    private let chunkDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("quiettype-stream")
-    private var streamingTranscriptionSession: StreamingAudioTranscriptionSession?
-    private var pendingStreamingChunks: [WavAudioChunk] = []
-    private var streamingTranscriptPreview = ""
     private var activeTranscriptionOptions = AudioTranscriptionOptions.none
     private var lastListeningUIUpdateAt = Date.distantPast
     private var lastListeningOverlayUpdateAt = Date.distantPast
@@ -7836,13 +7837,10 @@ final class MenuBarModel: ObservableObject {
     private static let maxDictationDurationSeconds = 300.0
     private static let maxTrainingPairCount = 10
     private static let maxReviewAudioFiles = 10
-    // The on-screen preview is advisory; the full recording remains authoritative on release.
-    private static let streamingChunkDuration = 1.0
-    private static let streamingChunkOverlap = 0.25
-    private static let streamingTranscriptMinimumDuration = 0.9
     private static let minimumUsableRMS = 0.0015
     private static let recordingUIRefreshInterval = 0.15
     private static let recordingOverlayRefreshInterval = 0.15
+    private static let incrementalActivationDurationSeconds = 20.0
 
     init() {
         calibrationSavedCount = UserDefaults.standard.integer(forKey: Self.calibrationSavedCountKey)
@@ -8375,7 +8373,6 @@ final class MenuBarModel: ObservableObject {
             try? FileManager.default.removeItem(at: activeDictationAudioURL)
         }
         try? FileManager.default.removeItem(at: temporaryDictationAudioDirectory)
-        try? FileManager.default.removeItem(at: chunkDirectory)
         activeDictationAudioURL = nil
         recordedSamples.removeAll(keepingCapacity: false)
     }
@@ -9488,8 +9485,6 @@ final class MenuBarModel: ObservableObject {
         captureService?.stop()
         captureService = nil
         isRecording = false
-        streamingTranscriptionSession = nil
-        pendingStreamingChunks = []
         discardPlaintextDictationAudio()
         discardPlaintextVoiceNoteAudio()
         voiceNoteCaptureService?.stop()
@@ -10588,7 +10583,6 @@ final class MenuBarModel: ObservableObject {
         lastError = nil
         statusMessage = ""
         capturedFrameCount = 0
-        partialChunkCount = 0
         inputLevel = 0
         peakInputLevel = 0
         peakInputRMS = 0
@@ -10598,17 +10592,14 @@ final class MenuBarModel: ObservableObject {
         recordingDuration = 0
         recordedSamples = []
         recordingSampleRate = 16_000
-        chunker = StreamingWavChunker(
-            sampleRate: recordingSampleRate,
-            chunkDurationSeconds: Self.streamingChunkDuration,
-            overlapDurationSeconds: Self.streamingChunkOverlap,
-            maxDurationSeconds: Self.maxDictationDurationSeconds
-        )
         activeTranscriptionOptions = currentTranscriptionOptions()
-        streamingTranscriptionSession = nil
-        pendingStreamingChunks = []
-        streamingTranscriptPreview = ""
-        try? FileManager.default.removeItem(at: chunkDirectory)
+        liveTranscriptionClient = WhisperKitLiveStreamClient()
+        pauseAlignedSegmenter = nil
+        incrementalTranscriptionSession = nil
+        incrementalSegmentDirectory = nil
+        pendingIncrementalChunks = []
+        incrementalFastPathActivated = false
+        incrementalCapturedDurationSeconds = 0
         lastRecordingURL = nil
         recordingStartedAt = Date()
         dictationReleasedAt = nil
@@ -10636,6 +10627,7 @@ final class MenuBarModel: ObservableObject {
             statusMessage = "Listening locally"
             showListeningOverlay(force: true)
         } catch {
+            await cancelIncrementalTranscription()
             captureService = nil
             voiceFlowMetricAccumulator = nil
             recordingStartedAt = nil
@@ -10661,19 +10653,14 @@ final class MenuBarModel: ObservableObject {
             at: cancelledAt,
             recordingDuration: capturedDuration
         )
-        voiceFlowMetricAccumulator?.recordEmittedChunks(total: partialChunkCount)
         captureService?.stop()
         captureService = nil
         isRecording = false
         dictationState = .cancelled
         lastDictationDuration = recordingDuration
-        await streamingTranscriptionSession?.cancel()
-        streamingTranscriptionSession = nil
-        pendingStreamingChunks = []
-        streamingTranscriptPreview = ""
+        await cancelIncrementalTranscription()
         discardPlaintextDictationAudio()
         capturedFrameCount = 0
-        partialChunkCount = 0
         lastRecordingURL = nil
         recordingStartedAt = nil
         dictationReleasedAt = nil
@@ -11312,15 +11299,11 @@ final class MenuBarModel: ObservableObject {
             at: dictationReleasedAt ?? Date(),
             recordingDuration: recordingDuration
         )
-        voiceFlowMetricAccumulator?.recordEmittedChunks(total: partialChunkCount)
         showProcessingOverlay(detail: "Transcribing locally")
 
         let durationText = String(format: "%.1f", recordingDuration)
         if capturedFrameCount == 0 {
-            await streamingTranscriptionSession?.cancel()
-            streamingTranscriptionSession = nil
-            pendingStreamingChunks = []
-            streamingTranscriptPreview = ""
+            await cancelIncrementalTranscription()
             discardPlaintextDictationAudio()
             output = "I could not detect microphone audio. Check your input device and microphone permission."
             statusMessage = "No audio captured"
@@ -11331,10 +11314,7 @@ final class MenuBarModel: ObservableObject {
             return
         }
         if peakInputRMS < Self.minimumUsableRMS {
-            await streamingTranscriptionSession?.cancel()
-            streamingTranscriptionSession = nil
-            pendingStreamingChunks = []
-            streamingTranscriptPreview = ""
+            await cancelIncrementalTranscription()
             discardPlaintextDictationAudio()
             output = "QuietType could open the microphone, but the input signal was too low to transcribe."
             statusMessage = "No usable microphone signal"
@@ -11347,10 +11327,7 @@ final class MenuBarModel: ObservableObject {
         }
         if recordingDuration >= 0.8,
            (!didDetectSpeech || detectedSpeechDurationMS < 90) {
-            await streamingTranscriptionSession?.cancel()
-            streamingTranscriptionSession = nil
-            pendingStreamingChunks = []
-            streamingTranscriptPreview = ""
+            await cancelIncrementalTranscription()
             discardPlaintextDictationAudio()
             output = "QuietType heard microphone input, but could not identify a sustained voice."
             statusMessage = "No clear speech detected"
@@ -11364,6 +11341,17 @@ final class MenuBarModel: ObservableObject {
 
         do {
             let shouldRetainAudio = historyReviewEnabled && keepReviewAudio
+            let capturedSampleCount = recordedSamples.count
+            let liveResult = await finishLiveTranscription(
+                expectedSampleCount: capturedSampleCount,
+                sampleRate: recordingSampleRate
+            )
+            if liveResult != nil {
+                await cancelIncrementalTranscription()
+            } else {
+                incrementalCapturedDurationSeconds = Double(capturedSampleCount) / Double(max(recordingSampleRate, 1))
+                await finalizeIncrementalSegments(recordingDuration: incrementalCapturedDurationSeconds)
+            }
             let url = temporaryDictationAudioURL()
             activeDictationAudioURL = url
             try OwnerOnlyFileSecurity.prepareDirectory(url.deletingLastPathComponent())
@@ -11371,17 +11359,8 @@ final class MenuBarModel: ObservableObject {
             recordedSamples.removeAll(keepingCapacity: false)
             lastRecordingURL = nil
             output = "Captured \(durationText)s of local audio. Looking for the local speech engine..."
-            if let finalChunk = try chunker.flush(outputDirectory: chunkDirectory) {
-                partialChunkCount += 1
-                voiceFlowMetricAccumulator?.recordEmittedChunks(total: partialChunkCount)
-                statusMessage = "Saved \(partialChunkCount) chunks"
-                pendingStreamingChunks.append(finalChunk)
-                await activateStreamingIfUseful()
-            } else {
-                statusMessage = "Saved \(url.lastPathComponent)"
-            }
+            statusMessage = "Saved \(url.lastPathComponent)"
             lastError = nil
-            let session = recordingDuration >= Self.streamingTranscriptMinimumDuration ? streamingTranscriptionSession : nil
             dictationFinalizationTask?.cancel()
             dictationFinalizationTask = Task { @MainActor [weak self] in
                 guard let self else {
@@ -11389,18 +11368,13 @@ final class MenuBarModel: ObservableObject {
                 }
                 await self.transcribeAndProcess(
                     url,
-                    retainReviewAudio: shouldRetainAudio,
-                    streamingSession: session
+                    liveTranscript: liveResult?.text,
+                    retainReviewAudio: shouldRetainAudio
                 )
-                self.streamingTranscriptionSession = nil
-                self.pendingStreamingChunks = []
                 self.dictationFinalizationTask = nil
             }
         } catch {
-            await streamingTranscriptionSession?.cancel()
-            streamingTranscriptionSession = nil
-            pendingStreamingChunks = []
-            streamingTranscriptPreview = ""
+            await cancelIncrementalTranscription()
             output = "Captured \(durationText)s of local audio, but could not save the WAV file."
             lastError = String(describing: error)
             dictationState = .failed
@@ -11472,25 +11446,17 @@ final class MenuBarModel: ObservableObject {
         if voiceFlowMetricAccumulator != nil {
             voiceFlowMetricAccumulator?.recordAudioFrame(activity: activity)
         }
+        let sentToLiveStream = await appendLiveTranscriptionFrame(frame)
+        if !sentToLiveStream {
+            beginPauseAlignedFallbackIfNeeded(sampleRate: frame.sampleRate)
+            await appendIncrementalFrame(frame, activity: activity, elapsed: elapsed)
+        }
         peakInputRMS = max(peakInputRMS, rms)
         inputNoiseFloorRMS = Self.updatedNoiseFloor(currentFloor: inputNoiseFloorRMS, rms: rms)
         let displayLevel = Self.displayLevel(rms: rms, noiseFloor: inputNoiseFloorRMS, previous: inputLevel)
         peakInputLevel = max(peakInputLevel, displayLevel)
 
-        do {
-            let chunks = try chunker.append(frame, outputDirectory: chunkDirectory)
-            partialChunkCount += chunks.count
-            if let last = chunks.last {
-                statusMessage = "Streaming chunk \(last.sequence + 1)"
-            }
-            voiceFlowMetricAccumulator?.recordEmittedChunks(total: partialChunkCount)
-            pendingStreamingChunks.append(contentsOf: chunks)
-            await activateStreamingIfUseful()
-        } catch {
-            lastError = "Could not write audio chunk: \(error)"
-        }
-
-        if chunker.reachedMaxDuration && isRecording {
+        if elapsed >= Self.maxDictationDurationSeconds && isRecording {
             recordingDuration = elapsed
             inputLevel = displayLevel
             statusMessage = "5 minute limit reached"
@@ -11502,6 +11468,168 @@ final class MenuBarModel: ObservableObject {
             recordingDuration = elapsed
             inputLevel = displayLevel
             showListeningOverlay()
+        }
+    }
+
+    private func appendLiveTranscriptionFrame(_ frame: AudioFrame) async -> Bool {
+        guard let client = liveTranscriptionClient else {
+            return false
+        }
+        do {
+            try await client.append(frame)
+            return true
+        } catch {
+            await client.cancel()
+            liveTranscriptionClient = nil
+            return false
+        }
+    }
+
+    private func beginPauseAlignedFallbackIfNeeded(sampleRate: Int) {
+        guard pauseAlignedSegmenter == nil,
+              incrementalTranscriptionSession == nil else {
+            return
+        }
+        pauseAlignedSegmenter = PauseAlignedWavSegmenter(sampleRate: sampleRate)
+        incrementalTranscriptionSession = StreamingAudioTranscriptionSession(
+            transcriber: makeAudioTranscriber(),
+            options: .none
+        )
+        incrementalSegmentDirectory = temporaryDictationAudioDirectory
+            .appendingPathComponent("Segments-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private func appendIncrementalFrame(
+        _ frame: AudioFrame,
+        activity: SpeechActivityUpdate,
+        elapsed: TimeInterval
+    ) async {
+        guard var segmenter = pauseAlignedSegmenter,
+              let directory = incrementalSegmentDirectory else {
+            return
+        }
+
+        do {
+            if let chunk = try segmenter.append(frame, activity: activity, outputDirectory: directory) {
+                if incrementalFastPathActivated,
+                   let session = incrementalTranscriptionSession {
+                    await session.enqueue(chunk)
+                } else {
+                    pendingIncrementalChunks.append(chunk)
+                }
+            }
+            pauseAlignedSegmenter = segmenter
+            if elapsed >= Self.incrementalActivationDurationSeconds {
+                await activateIncrementalFastPath()
+            }
+        } catch {
+            await cancelIncrementalTranscription()
+        }
+    }
+
+    private func activateIncrementalFastPath() async {
+        guard !incrementalFastPathActivated,
+              let session = incrementalTranscriptionSession else {
+            return
+        }
+        incrementalFastPathActivated = true
+        let chunks = pendingIncrementalChunks
+        pendingIncrementalChunks.removeAll(keepingCapacity: true)
+        for chunk in chunks {
+            await session.enqueue(chunk)
+        }
+    }
+
+    private func finalizeIncrementalSegments(recordingDuration: TimeInterval) async {
+        guard recordingDuration >= Self.incrementalActivationDurationSeconds,
+              var segmenter = pauseAlignedSegmenter,
+              let directory = incrementalSegmentDirectory,
+              let session = incrementalTranscriptionSession else {
+            await cancelIncrementalTranscription()
+            return
+        }
+
+        do {
+            if !incrementalFastPathActivated {
+                await activateIncrementalFastPath()
+            }
+            if let finalChunk = try segmenter.flush(outputDirectory: directory) {
+                await session.enqueue(finalChunk)
+            }
+            pauseAlignedSegmenter = segmenter
+        } catch {
+            await cancelIncrementalTranscription()
+        }
+    }
+
+    private func consumeIncrementalTranscriptIfValid() async -> String? {
+        guard incrementalFastPathActivated,
+              let session = incrementalTranscriptionSession else {
+            return nil
+        }
+
+        let result = await session.finish()
+        voiceFlowMetricAccumulator?.recordEmittedChunks(total: result.enqueuedChunkCount)
+        voiceFlowMetricAccumulator?.recordStreamingDiagnostics(
+            enqueuedChunkCount: result.enqueuedChunkCount,
+            completedChunkCount: result.chunkCount,
+            maxQueueDepth: result.maxQueueDepth
+        )
+
+        let coverageDelta = abs(result.coveredDurationSeconds - incrementalCapturedDurationSeconds)
+        let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isValid = result.enqueuedChunkCount >= 2
+            && result.chunkCount == result.enqueuedChunkCount
+            && result.errors.isEmpty
+            && coverageDelta <= 0.25
+            && !text.isEmpty
+            && !isLikelyNoiseTranscript(text, duration: incrementalCapturedDurationSeconds)
+
+        cleanupIncrementalTranscriptionState()
+        return isValid ? text : nil
+    }
+
+    private func finishLiveTranscription(expectedSampleCount: Int, sampleRate: Int) async -> LiveTranscriptionResult? {
+        guard let client = liveTranscriptionClient else {
+            return nil
+        }
+        liveTranscriptionClient = nil
+        guard let result = await client.finish(),
+              result.sampleRate == sampleRate,
+              abs(result.coveredSampleCount - expectedSampleCount) <= max(1, sampleRate / 4),
+              !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return result
+    }
+
+    private func cancelLiveTranscription() async {
+        let client = liveTranscriptionClient
+        liveTranscriptionClient = nil
+        await client?.cancel()
+    }
+
+    private func cancelIncrementalTranscription() async {
+        await cancelLiveTranscription()
+        let session = incrementalTranscriptionSession
+        let directory = incrementalSegmentDirectory
+        cleanupIncrementalTranscriptionState(removingDirectory: false)
+        await session?.cancel()
+        if let directory {
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
+    private func cleanupIncrementalTranscriptionState(removingDirectory: Bool = true) {
+        let directory = incrementalSegmentDirectory
+        pauseAlignedSegmenter = nil
+        incrementalTranscriptionSession = nil
+        incrementalSegmentDirectory = nil
+        pendingIncrementalChunks = []
+        incrementalFastPathActivated = false
+        incrementalCapturedDurationSeconds = 0
+        if removingDirectory, let directory {
+            try? FileManager.default.removeItem(at: directory)
         }
     }
 
@@ -11554,7 +11682,6 @@ final class MenuBarModel: ObservableObject {
             state: .listening,
             level: inputLevel,
             detail: listeningOverlayDetail,
-            transcript: streamingTranscriptPreview,
             onCancel: { [weak self] in
                 Task { @MainActor [weak self] in
                     await self?.cancelRecording()
@@ -11577,7 +11704,6 @@ final class MenuBarModel: ObservableObject {
         overlayController.show(
             state: .processing,
             detail: detail,
-            transcript: streamingTranscriptPreview,
             onCancel: cancelAction
         )
     }
@@ -11597,14 +11723,10 @@ final class MenuBarModel: ObservableObject {
         statusMessage = "Cancelling dictation"
         overlayController.show(
             state: .processing,
-            detail: "Deleting temporary audio",
-            transcript: streamingTranscriptPreview
+            detail: "Deleting temporary audio"
         )
         finalizationTask?.cancel()
-        await streamingTranscriptionSession?.cancel()
-        streamingTranscriptionSession = nil
-        pendingStreamingChunks = []
-        streamingTranscriptPreview = ""
+        await cancelIncrementalTranscription()
         if let activeDictationAudioURL {
             try? FileManager.default.removeItem(at: activeDictationAudioURL)
         }
@@ -11617,7 +11739,6 @@ final class MenuBarModel: ObservableObject {
         recordedSamples = []
         dictationReleasedAt = nil
         clearActiveDictationTarget()
-        try? FileManager.default.removeItem(at: chunkDirectory)
         await finalizationTask?.value
         if let activeDictationAudioURL {
             try? FileManager.default.removeItem(at: activeDictationAudioURL)
@@ -11636,55 +11757,18 @@ final class MenuBarModel: ObservableObject {
         overlayController.hide(after: 0.9)
     }
 
-    private func activateStreamingIfUseful() async {
-        guard nativeSpeechServerReady, recordingDuration >= Self.streamingTranscriptMinimumDuration else {
-            return
-        }
-
-        if streamingTranscriptionSession == nil {
-            streamingTranscriptionSession = StreamingAudioTranscriptionSession(
-                transcriber: WhisperKitServerTranscriber(timeoutSeconds: WhisperKitServerTranscriber.streamingTimeoutSeconds),
-                options: .none,
-                onTranscriptUpdate: { [weak self] preview in
-                    await self?.updateStreamingTranscriptPreview(preview)
-                }
-            )
-        }
-
-        guard let streamingTranscriptionSession else {
-            return
-        }
-
-        let chunks = pendingStreamingChunks
-        pendingStreamingChunks.removeAll(keepingCapacity: true)
-        for chunk in chunks {
-            await streamingTranscriptionSession.enqueue(chunk)
-        }
-    }
-
-    private func updateStreamingTranscriptPreview(_ preview: String) {
-        guard isRecording else {
-            return
-        }
-        guard preview != streamingTranscriptPreview else {
-            return
-        }
-
-        streamingTranscriptPreview = preview
-        voiceFlowMetricAccumulator?.recordPartialTranscript(preview)
-        showListeningOverlay(force: true)
-    }
-
     private func transcribeAndProcess(
         _ audioURL: URL,
-        retainReviewAudio: Bool = false,
-        streamingSession: StreamingAudioTranscriptionSession? = nil
+        liveTranscript: String? = nil,
+        retainReviewAudio: Bool = false
     ) async {
+        var handedAudioToBackgroundWork = false
         defer {
-            try? FileManager.default.removeItem(at: audioURL)
-            try? FileManager.default.removeItem(at: chunkDirectory)
-            if activeDictationAudioURL == audioURL {
-                activeDictationAudioURL = nil
+            if !handedAudioToBackgroundWork {
+                try? FileManager.default.removeItem(at: audioURL)
+                if activeDictationAudioURL == audioURL {
+                    activeDictationAudioURL = nil
+                }
             }
         }
         do {
@@ -11702,87 +11786,36 @@ final class MenuBarModel: ObservableObject {
 
             QuietType captured \(String(format: "%.1f", recordingDuration))s of audio and is running \(speechEngineStatus.lowercased()).
             """
-            let streamResult = await streamingSession?.stopAndSnapshot()
-            if let streamResult {
-                voiceFlowMetricAccumulator?.recordStreamingDiagnostics(
-                    enqueuedChunkCount: streamResult.enqueuedChunkCount,
-                    completedChunkCount: streamResult.chunkCount,
-                    maxQueueDepth: streamResult.maxQueueDepth
-                )
+            try Task.checkCancellation()
+            let incrementalTranscript: String?
+            if let liveTranscript = liveTranscript?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank {
+                incrementalTranscript = liveTranscript
+            } else {
+                incrementalTranscript = await consumeIncrementalTranscriptIfValid()
+            }
+            let rawTranscript: String
+            if let incrementalTranscript {
+                rawTranscript = incrementalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                rawTranscript = try await transcribeFullAudio(audioURL)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
             }
             try Task.checkCancellation()
-            let rawTranscript: String
-            let wordTimings: [TranscribedWordTiming]
-            do {
-                if streamResult != nil {
-                    statusMessage = "Resolving full audio"
-                }
-                let timedResult = try await transcribeFullAudioWithTiming(audioURL)
-                try Task.checkCancellation()
-                let fullTranscript = timedResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !isLikelyNoiseTranscript(fullTranscript) else {
-                    throw AudioTranscriberError.noiseOnlyTranscript(fullTranscript)
-                }
-                rawTranscript = fullTranscript
-                wordTimings = timedResult.words
-                statusMessage = wordTimings.isEmpty ? "Processed full audio" : "Processed timed audio"
-            } catch {
-                if let streamResult,
-                   isUsableStreamingTranscript(
-                    streamResult.text,
-                    chunkCount: streamResult.chunkCount,
-                    coveredDuration: streamResult.coveredDurationSeconds
-                   ) {
-                    rawTranscript = streamResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    wordTimings = []
-                    statusMessage = "Used streamed fallback"
-                } else {
-                    throw error
-                }
-            }
             guard !isLikelyNoiseTranscript(rawTranscript) else {
                 throw AudioTranscriberError.noiseOnlyTranscript(rawTranscript)
             }
+            statusMessage = incrementalTranscript == nil ? "Processed full audio" : "Processed during dictation"
             voiceFlowMetricAccumulator?.markFinalTranscript()
             try Task.checkCancellation()
-            var retainedReviewAudioURL: URL?
-            var reviewAudioWarning: String?
-            if retainReviewAudio && historyReviewEnabled && keepReviewAudio {
-                statusMessage = "Encrypting review audio"
-                var encryptedURL: URL?
-                do {
-                    let savedURL = try await reviewAudioStore.saveWAV(
-                        at: audioURL,
-                        filenamePrefix: "dictation"
-                    )
-                    encryptedURL = savedURL
-                    try Task.checkCancellation()
-                    if historyReviewEnabled && keepReviewAudio {
-                        pruneReviewAudioCache(keeping: savedURL)
-                        lastRecordingURL = savedURL
-                        retainedReviewAudioURL = savedURL
-                    } else {
-                        try? FileManager.default.removeItem(at: savedURL)
-                        lastRecordingURL = nil
-                    }
-                } catch {
-                    if error is CancellationError || Task.isCancelled {
-                        if let encryptedURL {
-                            try? FileManager.default.removeItem(at: encryptedURL)
-                        }
-                        throw CancellationError()
-                    }
-                    lastRecordingURL = nil
-                    reviewAudioWarning = "Review audio could not be encrypted and was not retained."
-                }
-            }
-            try Task.checkCancellation()
             transcript = rawTranscript
-            await processTranscript(rawTranscript, audioURL: retainedReviewAudioURL, wordTimings: wordTimings)
-            if let reviewAudioWarning, lastError == nil {
-                lastError = reviewAudioWarning
-            }
+            handedAudioToBackgroundWork = true
+            await processTranscript(
+                rawTranscript,
+                sourceAudioURL: audioURL,
+                retainReviewAudio: retainReviewAudio
+            )
         } catch {
+            await cancelIncrementalTranscription()
             if error is CancellationError || Task.isCancelled {
                 return
             }
@@ -11832,34 +11865,6 @@ final class MenuBarModel: ObservableObject {
             let text = try await transcribeFullAudio(audioURL)
             return TimedTranscriptionResult(text: text)
         }
-    }
-
-    private func isUsableStreamingTranscript(_ text: String, chunkCount: Int, coveredDuration: Double) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return false
-        }
-        guard recordingDuration >= 6.0 else {
-            return false
-        }
-
-        let words = wordCount(trimmed)
-        if recordingDuration >= 12.0 {
-            let minimumCoveredDuration = recordingDuration * 0.70
-            if coveredDuration < minimumCoveredDuration {
-                return false
-            }
-        }
-        if recordingDuration >= 2.5 && words <= 1 {
-            return false
-        }
-        if chunkCount >= 3 && words <= 1 {
-            return false
-        }
-        if recordingDuration >= 4.0 && words < max(2, Int(recordingDuration / 3.0)) {
-            return false
-        }
-        return !isLikelyNoiseTranscript(trimmed)
     }
 
     private func isLikelyNoiseTranscript(_ text: String, duration: Double? = nil) -> Bool {
@@ -11933,7 +11938,7 @@ final class MenuBarModel: ObservableObject {
     }
 
     private func currentTranscriptionOptions() -> AudioTranscriptionOptions {
-        ASRPromptBuilder().productionOptions(for: currentDictationProfile())
+        ASRPromptBuilder().productionOptions()
     }
 
     private func prepareNativeSpeechServerIfAvailable() async {
@@ -12023,7 +12028,11 @@ final class MenuBarModel: ObservableObject {
         }
     }
 
-    private func processTranscript(_ rawTranscript: String, audioURL: URL? = nil, wordTimings: [TranscribedWordTiming] = []) async {
+    private func processTranscript(
+        _ rawTranscript: String,
+        sourceAudioURL: URL? = nil,
+        retainReviewAudio: Bool = false
+    ) async {
         do {
             let shouldPreviewOnly = previewOnly || activeDictationForcesPreviewOnly
             let context = activeDictationContext
@@ -12073,15 +12082,6 @@ final class MenuBarModel: ObservableObject {
             totalTranslatedWordCount += translatedWords
             UserDefaults.standard.set(totalTranslatedWordCount, forKey: Self.totalTranslatedWordCountKey)
             statusMessage = didInsert ? "Inserted into \(context.appName)" : "Ready to copy"
-            var reviewAudioURLForNote = audioURL
-            if reviewAudioURLForNote != nil,
-               (!historyReviewEnabled || !keepReviewAudio) {
-                if let reviewAudioURLForNote {
-                    try? FileManager.default.removeItem(at: reviewAudioURLForNote)
-                }
-                reviewAudioURLForNote = nil
-                lastRecordingURL = nil
-            }
             let insertedForNote = didInsert
             let latencyForNote = lastLatencyMS
             if didInsert {
@@ -12111,26 +12111,37 @@ final class MenuBarModel: ObservableObject {
                 finalWordCount: translatedWords
             )
             clearActiveDictationTarget()
-            if historyReviewEnabled {
+            if historyReviewEnabled, let sourceAudioURL {
                 let previousPersistenceTask = transcriptPersistenceTask
                 transcriptPersistenceTask = Task { @MainActor [weak self] in
                     await previousPersistenceTask?.value
                     guard !Task.isCancelled, let self else {
+                        try? FileManager.default.removeItem(at: sourceAudioURL)
                         return
                     }
-                    await self.saveTranscriptNote(
+                    await self.finishTranscriptPersistence(
+                        sourceAudioURL: sourceAudioURL,
                         rawTranscript: rawTranscript,
                         polishedText: result.text,
                         inserted: insertedForNote,
                         latencyMS: latencyForNote,
-                        audioURL: reviewAudioURLForNote,
-                        wordTimings: wordTimings,
                         context: context,
-                        reportsStatus: false
+                        retainReviewAudio: retainReviewAudio
                     )
+                }
+            } else if let sourceAudioURL {
+                try? FileManager.default.removeItem(at: sourceAudioURL)
+                if activeDictationAudioURL == sourceAudioURL {
+                    activeDictationAudioURL = nil
                 }
             }
         } catch {
+            if let sourceAudioURL {
+                try? FileManager.default.removeItem(at: sourceAudioURL)
+                if activeDictationAudioURL == sourceAudioURL {
+                    activeDictationAudioURL = nil
+                }
+            }
             if error is CancellationError || Task.isCancelled {
                 return
             }
@@ -12142,6 +12153,60 @@ final class MenuBarModel: ObservableObject {
             overlayController.hide(after: 1.1)
             completeVoiceFlowMetrics(outcome: .transcriptionFailed)
         }
+    }
+
+    private func finishTranscriptPersistence(
+        sourceAudioURL: URL,
+        rawTranscript: String,
+        polishedText: String,
+        inserted: Bool,
+        latencyMS: Int?,
+        context: AppContext,
+        retainReviewAudio: Bool
+    ) async {
+        defer {
+            try? FileManager.default.removeItem(at: sourceAudioURL)
+            if activeDictationAudioURL == sourceAudioURL {
+                activeDictationAudioURL = nil
+            }
+        }
+
+        var retainedReviewAudioURL: URL?
+        if !Task.isCancelled,
+           retainReviewAudio,
+           historyReviewEnabled,
+           keepReviewAudio,
+           let savedURL = try? await reviewAudioStore.saveWAV(
+            at: sourceAudioURL,
+            filenamePrefix: "dictation"
+           ) {
+            if historyReviewEnabled && keepReviewAudio {
+                pruneReviewAudioCache(keeping: savedURL)
+                lastRecordingURL = savedURL
+                retainedReviewAudioURL = savedURL
+            } else {
+                try? FileManager.default.removeItem(at: savedURL)
+                lastRecordingURL = nil
+            }
+        }
+
+        guard !Task.isCancelled else {
+            if let retainedReviewAudioURL {
+                try? FileManager.default.removeItem(at: retainedReviewAudioURL)
+            }
+            return
+        }
+
+        await saveTranscriptNote(
+            rawTranscript: rawTranscript,
+            polishedText: polishedText,
+            inserted: inserted,
+            latencyMS: latencyMS,
+            audioURL: retainedReviewAudioURL,
+            wordTimings: [],
+            context: context,
+            reportsStatus: false
+        )
     }
 
     private func saveTranscriptNote(
@@ -12526,7 +12591,8 @@ final class MenuBarModel: ObservableObject {
             }
 
             if heard.caseInsensitiveCompare(corrected) == .orderedSame,
-               !looksLikePreferredTerm(corrected) {
+               !looksLikePreferredTerm(corrected),
+               !isReviewedNameCasingCorrection(heard: heard, corrected: corrected) {
                 return nil
             }
 
@@ -12631,6 +12697,17 @@ final class MenuBarModel: ObservableObject {
     private func looksLikePreferredTerm(_ value: String) -> Bool {
         value.uppercased() == value && value.count > 1
             || value.dropFirst().contains { $0.isUppercase }
+    }
+
+    private func isReviewedNameCasingCorrection(heard: String, corrected: String) -> Bool {
+        guard heard != corrected,
+              heard.caseInsensitiveCompare(corrected) == .orderedSame,
+              heard.count >= 3,
+              corrected.first?.isUppercase == true,
+              corrected.dropFirst().allSatisfy({ !$0.isLetter || $0.isLowercase }) else {
+            return false
+        }
+        return heard.dropFirst().contains(where: { $0.isUppercase })
     }
 
     func toggleTeachingSampleRecording() async {
@@ -12773,6 +12850,7 @@ final class MenuBarModel: ObservableObject {
                 source: "SAGE · quiettype-agent",
                 confidence: 0.95
             )
+            _ = try await memoryStore.put(memory)
             localMemories.insert(memory, at: 0)
             sageMemories.insert(
                 SageMemoryRecord(

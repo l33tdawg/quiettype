@@ -1046,9 +1046,16 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
                 options: [.regularExpression, .caseInsensitive]
             )
         }
-        result = result.replacingOccurrences(of: #"\b([0-9]+)\s+(am|pm)\b"#, with: "$1 $2", options: [.regularExpression, .caseInsensitive])
-        result = result.replacingOccurrences(of: " am", with: " AM", options: .caseInsensitive)
-        result = result.replacingOccurrences(of: " pm", with: " PM", options: .caseInsensitive)
+        result = result.replacingOccurrences(
+            of: #"\b([0-9]+)\s*am\b"#,
+            with: "$1 AM",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        result = result.replacingOccurrences(
+            of: #"\b([0-9]+)\s*pm\b"#,
+            with: "$1 PM",
+            options: [.regularExpression, .caseInsensitive]
+        )
         return normalizeWhitespace(result)
     }
 

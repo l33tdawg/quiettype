@@ -8,8 +8,8 @@ Use the installed Developer ID Application identity:
 
 ```bash
 QUIETTYPE_VERSION="1.0.0" \
-QUIETTYPE_BUILD="30" \
-QUIETTYPE_RELEASE_LABEL="rc.4" \
+QUIETTYPE_BUILD="31" \
+QUIETTYPE_RELEASE_LABEL="rc.5" \
 QUIETTYPE_NOTARIZE="1" \
 SAGE_RELEASE_TAG="v11.4.11" \
 QUIETTYPE_CODESIGN_IDENTITY="Developer ID Application: Dhillon Kannabhiran (2N7GKZ8D8Z)" \
@@ -24,7 +24,7 @@ under `arch -arm64` so tests and the app binary match the arm64-only beta DMG.
 By default the public beta package also bundles the local WhisperKit/Core ML ASR model from:
 
 ```text
-~/Documents/huggingface/models/argmaxinc/whisperkit-coreml/openai_whisper-large-v3-v20240930_626MB
+.model-cache/whisperkit-coreml/openai_whisper-large-v3-v20240930_626MB
 ```
 
 That makes the DMG much larger, but it gives testers the expected install-and-run experience. To intentionally ship a smaller app that uses an already-installed model, set `QUIETTYPE_BUNDLE_MODELS=0`.
@@ -70,8 +70,8 @@ bundled because QuietType requires SAGE governed local memory.
 Expected output:
 
 ```text
-dist/QuietType-1.0.0-rc.4-macOS-arm64.dmg
-dist/QuietType-1.0.0-rc.4-macOS-arm64.dmg.sha256
+dist/QuietType-1.0.0-rc.5-macOS-arm64.dmg
+dist/QuietType-1.0.0-rc.5-macOS-arm64.dmg.sha256
 ```
 
 ## 2. Validate the signed artifact
@@ -80,7 +80,7 @@ Before sharing a beta, validate the exact DMG artifact that testers will
 install:
 
 ```bash
-bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-rc.4-macOS-arm64.dmg
+bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-rc.5-macOS-arm64.dmg
 ```
 
 The validator mounts the DMG read-only, checks that `CFBundleExecutable` exists
@@ -90,7 +90,7 @@ app and the DMG. For clean-machine Launch Services validation, run the same
 command with:
 
 ```bash
-QUIETTYPE_VALIDATE_LAUNCH=1 bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-rc.4-macOS-arm64.dmg
+QUIETTYPE_VALIDATE_LAUNCH=1 bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-rc.5-macOS-arm64.dmg
 ```
 
 ## 3. Notarization
@@ -125,17 +125,17 @@ QUIETTYPE_NOTARIZE=1 bash scripts/beta-release.sh
 The repository is public, so the prerelease and its assets are visible to everyone.
 
 ```bash
-VERSION="v1.0.0-rc.4"
-DMG="dist/QuietType-1.0.0-rc.4-macOS-arm64.dmg"
+VERSION="v1.0.0-rc.5"
+DMG="dist/QuietType-1.0.0-rc.5-macOS-arm64.dmg"
 
-git tag -a "$VERSION" -m "QuietType 1.0.0 RC4"
+git tag -a "$VERSION" -m "QuietType 1.0.0 RC5"
 git push origin "$VERSION"
 
 gh release create "$VERSION" "$DMG" "$DMG.sha256" \
   --repo l33tdawg/quiettype \
   --verify-tag \
   --prerelease \
-  --title "QuietType 1.0.0 RC4" \
+  --title "QuietType 1.0.0 RC5" \
   --notes "Public beta for macOS Apple Silicon. Local dictation, local memory, no cloud processing."
 ```
 
