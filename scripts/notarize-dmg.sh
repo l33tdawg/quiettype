@@ -5,7 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$ROOT/dist/QuietType.app"
 VERSION="${QUIETTYPE_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo "1.0.0")}"
 BUILD="${QUIETTYPE_BUILD:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist" 2>/dev/null || echo "1")}"
-DMG="${QUIETTYPE_DMG:-$ROOT/dist/QuietType-${VERSION}-beta.${BUILD}-macOS-arm64.dmg}"
+RELEASE_LABEL="${QUIETTYPE_RELEASE_LABEL:-$(/usr/libexec/PlistBuddy -c 'Print :QuietTypeReleaseLabel' "$APP/Contents/Info.plist" 2>/dev/null || echo "beta.${BUILD}")}"
+DMG="${QUIETTYPE_DMG:-$ROOT/dist/QuietType-${VERSION}-${RELEASE_LABEL}-macOS-arm64.dmg}"
 PROFILE="${QUIETTYPE_NOTARY_PROFILE:-QUIETTYPE_NOTARY}"
 
 if [[ ! -f "$DMG" ]]; then

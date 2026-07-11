@@ -7204,15 +7204,30 @@ private final class SageGitHubInstaller {
 }
 
 private struct QuietTypeReleaseVersion: Comparable {
+    private enum Channel: Int {
+        case beta = 0
+        case releaseCandidate = 1
+        case stable = 2
+    }
+
     var major: Int
     var minor: Int
     var patch: Int
-    var betaBuild: Int
+    private var channel: Channel
+    private var prereleaseNumber: Int
 
     static func current() -> QuietTypeReleaseVersion {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
         let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
-        return parse("v\(version)-beta.\(build)") ?? QuietTypeReleaseVersion(major: 1, minor: 0, patch: 0, betaBuild: build)
+        let releaseLabel = Bundle.main.object(forInfoDictionaryKey: "QuietTypeReleaseLabel") as? String
+        let taggedVersion = releaseLabel.map { "v\(version)-\($0)" } ?? "v\(version)-beta.\(build)"
+        return parse(taggedVersion) ?? QuietTypeReleaseVersion(
+            major: 1,
+            minor: 0,
+            patch: 0,
+            channel: .beta,
+            prereleaseNumber: build
+        )
     }
 
     static func parse(_ value: String) -> QuietTypeReleaseVersion? {
@@ -7221,25 +7236,53 @@ private struct QuietTypeReleaseVersion: Comparable {
             .replacingOccurrences(of: "quiettype-", with: "")
             .replacingOccurrences(of: "-macos-arm64.dmg", with: "")
             .replacingOccurrences(of: "v", with: "")
-        let parts = normalized.components(separatedBy: "-beta.")
+        let parts = normalized.split(separator: "-", maxSplits: 1).map(String.init)
         let versionParts = parts[0].split(separator: ".").compactMap { Int($0) }
         guard versionParts.count >= 3 else {
             return nil
         }
-        let build = parts.count > 1 ? (Int(parts[1]) ?? 0) : 0
+        let prerelease = parts.count > 1 ? parts[1] : ""
+        let channel: Channel
+        let prereleaseNumber: Int
+        if prerelease.hasPrefix("beta.") {
+            channel = .beta
+            prereleaseNumber = Int(prerelease.dropFirst("beta.".count)) ?? 0
+        } else if prerelease.hasPrefix("rc.") {
+            channel = .releaseCandidate
+            prereleaseNumber = Int(prerelease.dropFirst("rc.".count)) ?? 0
+        } else if prerelease.isEmpty {
+            channel = .stable
+            prereleaseNumber = 0
+        } else {
+            return nil
+        }
         return QuietTypeReleaseVersion(
             major: versionParts[0],
             minor: versionParts[1],
             patch: versionParts[2],
-            betaBuild: build
+            channel: channel,
+            prereleaseNumber: prereleaseNumber
         )
+    }
+
+    var displayLabel: String {
+        let version = "v\(major).\(minor).\(patch)"
+        switch channel {
+        case .beta:
+            return "\(version) beta.\(prereleaseNumber)"
+        case .releaseCandidate:
+            return "\(version) RC\(prereleaseNumber)"
+        case .stable:
+            return version
+        }
     }
 
     static func < (lhs: QuietTypeReleaseVersion, rhs: QuietTypeReleaseVersion) -> Bool {
         if lhs.major != rhs.major { return lhs.major < rhs.major }
         if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
         if lhs.patch != rhs.patch { return lhs.patch < rhs.patch }
-        return lhs.betaBuild < rhs.betaBuild
+        if lhs.channel != rhs.channel { return lhs.channel.rawValue < rhs.channel.rawValue }
+        return lhs.prereleaseNumber < rhs.prereleaseNumber
     }
 }
 
@@ -7483,7 +7526,7 @@ private final class QuietTypeGitHubUpdater {
     }
 
     private func display(_ version: QuietTypeReleaseVersion) -> String {
-        "v\(version.major).\(version.minor).\(version.patch) beta.\(version.betaBuild)"
+        version.displayLabel
     }
 
     @discardableResult
@@ -7875,6 +7918,10 @@ final class MenuBarModel: ObservableObject {
     var appVersionLabel: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+        if let releaseLabel = Bundle.main.object(forInfoDictionaryKey: "QuietTypeReleaseLabel") as? String,
+           let parsed = QuietTypeReleaseVersion.parse("v\(version)-\(releaseLabel)") {
+            return parsed.displayLabel
+        }
         if build.isEmpty {
             return "v\(version)"
         }

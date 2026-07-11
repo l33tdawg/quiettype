@@ -10,7 +10,8 @@ NOTARIZE="${QUIETTYPE_NOTARIZE:-0}"
 export SWIFTPM_HOME
 export CLANG_MODULE_CACHE_PATH
 export QUIETTYPE_VERSION="${QUIETTYPE_VERSION:-1.0.0}"
-export QUIETTYPE_BUILD="${QUIETTYPE_BUILD:-26}"
+export QUIETTYPE_BUILD="${QUIETTYPE_BUILD:-27}"
+export QUIETTYPE_RELEASE_LABEL="${QUIETTYPE_RELEASE_LABEL:-rc.1}"
 export SAGE_RELEASE_TAG="${SAGE_RELEASE_TAG:-v11.4.11}"
 export QUIETTYPE_CODESIGN_IDENTITY="$SIGN_IDENTITY"
 export QUIETTYPE_CODESIGN_OPTIONS="${QUIETTYPE_CODESIGN_OPTIONS:---options runtime}"
@@ -22,7 +23,7 @@ arch -arm64 swift build -c release --arch arm64 --product LocalTypeMac
 bash "$ROOT/scripts/package-app.sh"
 codesign --verify --deep --strict --verbose=2 "$ROOT/dist/QuietType.app"
 bash "$ROOT/scripts/create-dmg.sh"
-DMG="$ROOT/dist/QuietType-${QUIETTYPE_VERSION}-beta.${QUIETTYPE_BUILD}-macOS-arm64.dmg"
+DMG="$ROOT/dist/QuietType-${QUIETTYPE_VERSION}-${QUIETTYPE_RELEASE_LABEL}-macOS-arm64.dmg"
 bash "$ROOT/scripts/verify-dmg-app.sh" "$DMG"
 
 if [[ "$NOTARIZE" == "1" || "$NOTARIZE" == "true" ]]; then

@@ -19,6 +19,7 @@ WHISPERKIT_MODEL_SOURCE="${QUIETTYPE_WHISPERKIT_MODEL_SOURCE:-$DEFAULT_WHISPERKI
 SAGE_APP_SOURCE="${QUIETTYPE_SAGE_APP_SOURCE:-$DEFAULT_SAGE_APP}"
 APP_VERSION="${QUIETTYPE_VERSION:-}"
 APP_BUILD="${QUIETTYPE_BUILD:-}"
+RELEASE_LABEL="${QUIETTYPE_RELEASE_LABEL:-}"
 SAGE_EXPECTED_BUNDLE_ID="${SAGE_EXPECTED_BUNDLE_ID:-com.sage.brain}"
 SAGE_EXPECTED_VERSION="${SAGE_EXPECTED_VERSION:-${SAGE_RELEASE_TAG:-}}"
 SAGE_EXPECTED_ARCH="${SAGE_EXPECTED_ARCH:-arm64}"
@@ -89,6 +90,9 @@ if [[ -n "$APP_VERSION" ]]; then
 fi
 if [[ -n "$APP_BUILD" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_BUILD" "$APP/Contents/Info.plist"
+fi
+if [[ -n "$RELEASE_LABEL" ]]; then
+  /usr/libexec/PlistBuddy -c "Set :QuietTypeReleaseLabel $RELEASE_LABEL" "$APP/Contents/Info.plist"
 fi
 BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")"
 if [[ "$BUNDLE_ID" != "local.quiettype.mac" ]]; then
