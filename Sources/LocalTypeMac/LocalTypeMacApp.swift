@@ -483,12 +483,23 @@ private struct DictationOverlayView: View {
         state.title == OverlayState.voiceNote.title
     }
 
+    private var actionDismissesOverlay: Bool {
+        state.title == OverlayState.readyToCopy.title
+            || state.title == OverlayState.failed.title
+    }
+
     private var cancelAccessibilityLabel: String {
-        isVoiceNoteOverlay ? "Cancel voice note" : "Cancel dictation"
+        if actionDismissesOverlay {
+            return "Dismiss transcript overlay"
+        }
+        return isVoiceNoteOverlay ? "Cancel voice note" : "Cancel dictation"
     }
 
     private var cancelAccessibilityHint: String {
-        isVoiceNoteOverlay
+        if actionDismissesOverlay {
+            return "Closes this overlay while keeping the transcript available in QuietType."
+        }
+        return isVoiceNoteOverlay
             ? "Discards the current voice-note recording."
             : "Discards the current dictation without inserting text."
     }
@@ -590,7 +601,13 @@ private struct DictationOverlayView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel(cancelAccessibilityLabel)
                     .accessibilityHint(cancelAccessibilityHint)
-                    .quickTooltip(isVoiceNoteOverlay ? "Cancel and discard this voice note." : "Cancel this dictation without inserting text.")
+                    .quickTooltip(
+                        actionDismissesOverlay
+                            ? "Dismiss this overlay. Your transcript stays in QuietType."
+                            : isVoiceNoteOverlay
+                                ? "Cancel and discard this voice note."
+                                : "Cancel this dictation without inserting text."
+                    )
                 }
             }
 
@@ -12051,11 +12068,21 @@ final class MenuBarModel: ObservableObject {
                 overlayController.hide(after: 3.0)
             } else if previewOnly {
                 dictationState = .succeeded
-                overlayController.show(state: .readyToCopy, detail: "Preview only", transcript: result.text)
+                overlayController.show(
+                    state: .readyToCopy,
+                    detail: "Preview only",
+                    transcript: result.text,
+                    onCancel: { [weak self] in self?.overlayController.hide() }
+                )
                 overlayController.hide(after: 4.0)
             } else {
                 dictationState = .failed
-                overlayController.show(state: .failed, detail: "Copy the transcript instead", transcript: result.text)
+                overlayController.show(
+                    state: .failed,
+                    detail: "Copy the transcript instead",
+                    transcript: result.text,
+                    onCancel: { [weak self] in self?.overlayController.hide() }
+                )
             }
             completeVoiceFlowMetrics(
                 outcome: didInsert ? .inserted : .readyToCopy,
