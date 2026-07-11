@@ -43,8 +43,9 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
     private func repairButMisheardAsBro(_ text: String) -> String {
         var result = text
         let conjunctionPatterns = [
-            #"\bbro\s+just\s+left\b"#: "but just left",
-            #"\bbro\s+that\s+was\b"#: "but that was"
+            (#"\bbro\s+just\s+left\b"#, "but just left"),
+            (#"\bbro\s+that\s+was\b"#, "but that was"),
+            (#"\bbro\s+far\s+from\b"#, "but far from")
         ]
         for (pattern, replacement) in conjunctionPatterns {
             result = result.replacingOccurrences(
@@ -53,6 +54,11 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
                 options: [.regularExpression, .caseInsensitive]
             )
         }
+        result = result.replacingOccurrences(
+            of: #"\b[Bb]ro\s+(\p{Lu}[\p{L}'’\-]*)\s+at\s+the\b"#,
+            with: "but $1 at the",
+            options: .regularExpression
+        )
         return result
     }
 

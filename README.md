@@ -13,8 +13,8 @@ with no cloud processing path for normal dictation.
 ![QuietType home dashboard](docs/screenshots/quiettype-home.png)
 
 <p align="center">
-  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-rc.6/QuietType-1.0.0-rc.6-macOS-arm64.dmg">
-    <img alt="Download QuietType 1.0.0 RC6 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.0%20RC6-black?style=for-the-badge&logo=apple">
+  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-rc.7/QuietType-1.0.0-rc.7-macOS-arm64.dmg">
+    <img alt="Download QuietType 1.0.0 RC7 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.0%20RC7-black?style=for-the-badge&logo=apple">
   </a>
 </p>
 
@@ -76,6 +76,11 @@ Normal dictation does not require OpenAI, Gemini, Anthropic or any hosted ASR
 provider. The macOS app is native Swift/SwiftUI/AppKit, so microphone capture,
 Accessibility insertion, hotkeys, Keychain-backed storage and model execution
 stay aligned with Apple platform security.
+
+For reproducible local debugging, QuietType retains one owner-only plaintext
+WAV of the latest successful dictation and replaces it after the next success.
+It stays on the Mac, is never written to SAGE, and can be removed with Clear
+review audio in Settings.
 
 ### Governed local memory with SAGE
 

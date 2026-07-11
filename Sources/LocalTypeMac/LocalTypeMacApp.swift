@@ -7786,6 +7786,7 @@ final class MenuBarModel: ObservableObject {
     private var voiceNotePlaybackTempURL: URL?
     private lazy var voiceNoteAudioStore = EncryptedVoiceNoteAudioStore(directory: voiceNoteAudioDirectory)
     private lazy var reviewAudioStore = EncryptedVoiceNoteAudioStore(directory: reviewAudioDirectory)
+    private lazy var latestDictationAudioStore = LatestDictationAudioStore(directory: latestDictationAudioDirectory)
     private lazy var voiceFlowMetricsStore = LocalVoiceFlowMetricsStore(fileURL: voiceFlowMetricsURL)
     private var speechActivityTracker = SpeechActivityTracker()
     private var liveTranscriptionClient: WhisperKitLiveStreamClient?
@@ -8356,6 +8357,11 @@ final class MenuBarModel: ObservableObject {
     private var reviewAudioDirectory: URL {
         quietTypeApplicationSupportDirectory
             .appendingPathComponent("ReviewAudio", isDirectory: true)
+    }
+
+    private var latestDictationAudioDirectory: URL {
+        quietTypeApplicationSupportDirectory
+            .appendingPathComponent("LatestDictationAudio", isDirectory: true)
     }
 
     private var temporaryDictationAudioDirectory: URL {
@@ -9170,6 +9176,7 @@ final class MenuBarModel: ObservableObject {
     private func repairSensitiveStoragePermissions() {
         let directories = [
             reviewAudioDirectory,
+            latestDictationAudioDirectory,
             voiceNoteAudioDirectory,
             trainingDirectory()
         ]
@@ -9194,6 +9201,7 @@ final class MenuBarModel: ObservableObject {
 
     func refreshStorageSnapshot() {
         let reviewAudioDirectory = reviewAudioDirectory
+        let latestDictationAudioDirectory = latestDictationAudioDirectory
         let voiceNoteAudioDirectory = voiceNoteAudioDirectory
         let trainingDirectory = trainingDirectory()
         let updateDownloadsDirectory = updateDownloadsDirectory
@@ -9210,6 +9218,12 @@ final class MenuBarModel: ObservableObject {
                         title: "Encrypted review audio",
                         detail: "Encrypted .qtvoice clips, capped at \(maxReviewAudioFiles) recent dictations.",
                         urls: [reviewAudioDirectory]
+                    ),
+                    Self.storageEntry(
+                        id: "latest-dictation-audio",
+                        title: "Latest dictation debug audio",
+                        detail: "One owner-only LastDictation.wav file, replaced after each successful transcript.",
+                        urls: [latestDictationAudioDirectory]
                     ),
                     Self.storageEntry(
                         id: "voice-notes",
@@ -9253,6 +9267,7 @@ final class MenuBarModel: ObservableObject {
             try removeFiles(in: reviewAudioDirectory) {
                 ["wav", "qtvoice"].contains($0.pathExtension.lowercased())
             }
+            try latestDictationAudioStore.clear()
             storageCleanupStatus = "Review audio cache cleared."
         } catch {
             storageCleanupStatus = "Could not clear review audio: \(error.localizedDescription)"
@@ -12110,6 +12125,9 @@ final class MenuBarModel: ObservableObject {
                 outcome: didInsert ? .inserted : .readyToCopy,
                 finalWordCount: translatedWords
             )
+            if let sourceAudioURL {
+                _ = try? latestDictationAudioStore.retainWAV(at: sourceAudioURL)
+            }
             clearActiveDictationTarget()
             if historyReviewEnabled, let sourceAudioURL {
                 let previousPersistenceTask = transcriptPersistenceTask
