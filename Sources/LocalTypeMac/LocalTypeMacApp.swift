@@ -1377,8 +1377,10 @@ struct TesterView: View {
         nativePage {
             VStack(alignment: .leading, spacing: 20) {
                 header
-                if !model.setupComplete {
+                if model.requiresUserSetup {
                     setupNudgePanel
+                } else if !model.speechEngineReady {
+                    speechEngineWarmupPanel
                 }
                 metricsGrid
                 ViewThatFits(in: .horizontal) {
@@ -2333,6 +2335,32 @@ struct TesterView: View {
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+    }
+
+    private var speechEngineWarmupPanel: some View {
+        HStack(alignment: .center, spacing: 16) {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 34, height: 34)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Preparing local speech")
+                    .font(.system(size: 20, weight: .semibold))
+                Text("QuietType is warming the on-device speech engine in the background. The first launch after an update can take about a minute; later launches are faster.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            StatusPill(icon: "waveform", text: "Starting", tint: .secondary)
+        }
+        .padding(18)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        .accessibilityElement(children: .combine)
     }
 
     private var privacyStrip: some View {
@@ -8002,6 +8030,10 @@ final class MenuBarModel: ObservableObject {
         sageReady && permissionsReady && speechEngineReady
     }
 
+    var requiresUserSetup: Bool {
+        !sageReady || !permissionsReady || !trainingComplete
+    }
+
     var setupComplete: Bool {
         coreDictationReady && trainingComplete
     }
@@ -8090,9 +8122,6 @@ final class MenuBarModel: ObservableObject {
             let remaining = max(0, Self.requiredCalibrationSets - calibrationSavedCount)
             return "Complete \(remaining) more voice training \(remaining == 1 ? "set" : "sets") so QuietType can preserve your terms and corrections."
         }
-        if !speechEngineReady {
-            return "The local speech engine is still warming. QuietType will finish setup when it is ready."
-        }
         return "Setup is complete."
     }
 
@@ -8102,9 +8131,6 @@ final class MenuBarModel: ObservableObject {
         }
         if !permissionsReady {
             return "Start setup"
-        }
-        if !speechEngineReady {
-            return "Continue setup"
         }
         if !trainingComplete {
             return "Resume training"
