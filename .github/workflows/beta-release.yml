@@ -1,4 +1,4 @@
-name: Beta release
+name: Release
 
 on:
   push:
@@ -15,11 +15,11 @@ on:
       build:
         description: "Monotonic app build number"
         required: true
-        default: "27"
+        default: "28"
       release_label:
         description: "Release label (for example rc.1 or beta.27)"
         required: true
-        default: "rc.1"
+        default: "rc.2"
 
 permissions:
   contents: write
@@ -38,25 +38,33 @@ jobs:
       QUIETTYPE_WHISPERKIT_MODEL_REVISION: "97a5bf9bbc74c7d9c12c755d04dea59e672e3808"
       SAGE_RELEASE_TAG: "v11.4.11"
       QUIETTYPE_FORCE_SAGE_DOWNLOAD: "1"
-      QUIETTYPE_BUILD: "27"
-      QUIETTYPE_RELEASE_LABEL: "rc.1"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Resolve beta version
+      - name: Resolve release version
         shell: bash
         run: |
+          SOURCE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' resources/LocalTypeMac/Info.plist)"
+          SOURCE_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' resources/LocalTypeMac/Info.plist)"
+          SOURCE_LABEL="$(/usr/libexec/PlistBuddy -c 'Print :QuietTypeReleaseLabel' resources/LocalTypeMac/Info.plist)"
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-(beta|rc)\.([0-9]+)$ ]]; then
-            echo "QUIETTYPE_VERSION=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
-            echo "QUIETTYPE_RELEASE_LABEL=${BASH_REMATCH[2]}.${BASH_REMATCH[3]}" >> "$GITHUB_ENV"
+            TAG_VERSION="${BASH_REMATCH[1]}"
+            TAG_LABEL="${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+            if [[ "$TAG_VERSION" != "$SOURCE_VERSION" || "$TAG_LABEL" != "$SOURCE_LABEL" ]]; then
+              echo "Tag $GITHUB_REF_NAME does not match source metadata ${SOURCE_VERSION}-${SOURCE_LABEL}." >&2
+              exit 1
+            fi
+            echo "QUIETTYPE_VERSION=$SOURCE_VERSION" >> "$GITHUB_ENV"
+            echo "QUIETTYPE_BUILD=$SOURCE_BUILD" >> "$GITHUB_ENV"
+            echo "QUIETTYPE_RELEASE_LABEL=$SOURCE_LABEL" >> "$GITHUB_ENV"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             echo "QUIETTYPE_VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
             echo "QUIETTYPE_BUILD=${{ inputs.build }}" >> "$GITHUB_ENV"
             echo "QUIETTYPE_RELEASE_LABEL=${{ inputs.release_label }}" >> "$GITHUB_ENV"
           else
-            echo "QUIETTYPE_VERSION=1.0.0" >> "$GITHUB_ENV"
+            echo "QUIETTYPE_VERSION=$SOURCE_VERSION" >> "$GITHUB_ENV"
             echo "QUIETTYPE_BUILD=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
             echo "QUIETTYPE_RELEASE_LABEL=ci.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
           fi
@@ -196,4 +204,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --prerelease \
             --title "QuietType ${QUIETTYPE_VERSION} ${QUIETTYPE_RELEASE_LABEL}" \
-            --notes "Public beta for macOS Apple Silicon. Fast local voice input for coding agents, local memory, no cloud transcription."
+            --notes "Signed prerelease for macOS Apple Silicon. Fast local voice input, governed local memory, and no cloud transcription."

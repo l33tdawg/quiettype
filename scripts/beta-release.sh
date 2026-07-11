@@ -6,12 +6,16 @@ SWIFTPM_HOME="${SWIFTPM_HOME:-$ROOT/.swiftpm-home}"
 CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT/.clang-module-cache}"
 SIGN_IDENTITY="${QUIETTYPE_CODESIGN_IDENTITY:-Developer ID Application: Dhillon Kannabhiran (2N7GKZ8D8Z)}"
 NOTARIZE="${QUIETTYPE_NOTARIZE:-0}"
+INFO_PLIST="$ROOT/resources/LocalTypeMac/Info.plist"
+DEFAULT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")"
+DEFAULT_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST")"
+DEFAULT_RELEASE_LABEL="$(/usr/libexec/PlistBuddy -c 'Print :QuietTypeReleaseLabel' "$INFO_PLIST")"
 
 export SWIFTPM_HOME
 export CLANG_MODULE_CACHE_PATH
-export QUIETTYPE_VERSION="${QUIETTYPE_VERSION:-1.0.0}"
-export QUIETTYPE_BUILD="${QUIETTYPE_BUILD:-27}"
-export QUIETTYPE_RELEASE_LABEL="${QUIETTYPE_RELEASE_LABEL:-rc.1}"
+export QUIETTYPE_VERSION="${QUIETTYPE_VERSION:-$DEFAULT_VERSION}"
+export QUIETTYPE_BUILD="${QUIETTYPE_BUILD:-$DEFAULT_BUILD}"
+export QUIETTYPE_RELEASE_LABEL="${QUIETTYPE_RELEASE_LABEL:-$DEFAULT_RELEASE_LABEL}"
 export SAGE_RELEASE_TAG="${SAGE_RELEASE_TAG:-v11.4.11}"
 export QUIETTYPE_CODESIGN_IDENTITY="$SIGN_IDENTITY"
 export QUIETTYPE_CODESIGN_OPTIONS="${QUIETTYPE_CODESIGN_OPTIONS:---options runtime}"
@@ -32,5 +36,5 @@ if [[ "$NOTARIZE" == "1" || "$NOTARIZE" == "true" ]]; then
 fi
 
 echo
-echo "Beta artifact ready:"
-ls -lh "$ROOT"/dist/QuietType-*-macOS-arm64.dmg "$ROOT"/dist/QuietType-*-macOS-arm64.dmg.sha256
+echo "Release artifact ready:"
+ls -lh "$DMG" "$DMG.sha256"

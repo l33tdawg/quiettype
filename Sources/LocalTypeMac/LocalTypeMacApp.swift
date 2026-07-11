@@ -779,6 +779,7 @@ struct TesterView: View {
     @State private var selectedSetupTab: QuietTypeSetupTab = .overview
     @State private var showingTeachSheet = false
     @State private var showingRecognizedTerms = false
+    @State private var showingAboutSheet = false
     @State private var pendingReviewDeleteMemory: DictionaryMemoryItem?
     @State private var isDeletingReviewMemory = false
     @State private var guideStep: QuietTypeGuideStep?
@@ -793,7 +794,7 @@ struct TesterView: View {
         }
         .overlayPreferenceValue(GuideSpotlightPreferenceKey.self) { anchors in
             GeometryReader { proxy in
-                if model.setupComplete, let guideStep {
+                if model.setupComplete || firstRunAssistantComplete, let guideStep {
                     GuidedOnboardingOverlay(
                         step: guideStep,
                         spotlightFrame: anchors[guideStep].map { proxy[$0] }
@@ -831,6 +832,9 @@ struct TesterView: View {
         .sheet(isPresented: $showingTeachSheet) {
             TeachQuietTypeSheet(model: model)
         }
+        .sheet(isPresented: $showingAboutSheet) {
+            aboutSheet
+        }
         .onAppear {
             model.startAppServices()
             if model.setupComplete {
@@ -851,8 +855,12 @@ struct TesterView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .showQuietTypeAbout)) { _ in
-            selectedSection = .settings
-            selectedSettingsTab = .about
+            if model.setupComplete || firstRunAssistantComplete {
+                selectedSection = .settings
+                selectedSettingsTab = .about
+            } else {
+                showingAboutSheet = true
+            }
         }
     }
 
@@ -1228,9 +1236,15 @@ struct TesterView: View {
                 FirstRunActionItem(
                     title: "Warm the local speech engine",
                     detail: "The Apple Silicon speech path starts in the background so the first real dictation is fast.",
-                    status: model.speechEngineReady ? "Ready" : "Starting",
+                    status: model.speechEngineReady ? "Ready" : model.speechEngineFailed ? "Retry" : "Starting",
                     isComplete: model.speechEngineReady,
-                    action: { model.startAppServices() }
+                    action: {
+                        if model.speechEngineFailed {
+                            model.retryNativeSpeechWarmup()
+                        } else {
+                            model.startAppServices()
+                        }
+                    }
                 )
             ]
         case .training:
@@ -1368,6 +1382,9 @@ struct TesterView: View {
             model.discardCalibrationRecording()
             firstRunAssistantComplete = true
             selectedSection = .home
+            if !hasSeenGuide {
+                guideStep = .welcome
+            }
         case .experience:
             model.copyOutput()
         }
@@ -1469,7 +1486,7 @@ struct TesterView: View {
                 CompactStatPill(title: "Setup", value: model.personalizationLabel)
                 CompactStatPill(title: "Training sets", value: model.trainingProgressLabel)
                 CompactStatPill(title: "Samples", value: "\(model.trainingPairCount)")
-                CompactStatPill(title: "Dictation", value: model.speechEngineReady ? "Ready" : "Starting")
+                CompactStatPill(title: "Dictation", value: model.speechEngineReady ? "Ready" : model.speechEngineFailed ? "Attention" : "Starting")
             }
 
             setupChecklistPanel
@@ -1577,9 +1594,13 @@ struct TesterView: View {
                         number: "3",
                         title: "Start dictation",
                         detail: "QuietType starts the local speech engine in the background.",
-                        state: model.speechEngineReady ? .done : .working,
-                        actionTitle: "Wait"
-                    ) {}
+                        state: model.speechEngineReady ? .done : model.speechEngineFailed ? .action : .working,
+                        actionTitle: model.speechEngineFailed ? "Retry" : "Wait"
+                    ) {
+                        if model.speechEngineFailed {
+                            model.retryNativeSpeechWarmup()
+                        }
+                    }
 
                     SetupStepCard(
                         number: "4",
@@ -2339,14 +2360,21 @@ struct TesterView: View {
 
     private var speechEngineWarmupPanel: some View {
         HStack(alignment: .center, spacing: 16) {
-            ProgressView()
-                .controlSize(.small)
-                .frame(width: 34, height: 34)
+            if model.speechEngineFailed {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, height: 34)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 34, height: 34)
+            }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Preparing local speech")
+                Text(model.speechEngineFailed ? "Local speech needs attention" : "Preparing local speech")
                     .font(.system(size: 20, weight: .semibold))
-                Text("QuietType is warming the on-device speech engine in the background. The first launch after an update can take about a minute; later launches are faster.")
+                Text(model.speechEngineFailure ?? "QuietType is warming the on-device speech engine in the background. The first launch after an update can take about a minute; later launches are faster.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2354,13 +2382,21 @@ struct TesterView: View {
 
             Spacer()
 
-            StatusPill(icon: "waveform", text: "Starting", tint: .secondary)
+            if model.speechEngineFailed {
+                Button {
+                    model.retryNativeSpeechWarmup()
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(QuietButtonStyle(prominence: .primary))
+            } else {
+                StatusPill(icon: "waveform", text: "Starting", tint: .secondary)
+            }
         }
         .padding(18)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.08), lineWidth: 1))
-        .accessibilityElement(children: .combine)
     }
 
     private var privacyStrip: some View {
@@ -3078,12 +3114,14 @@ struct TesterView: View {
                 .frame(maxWidth: 640)
 
             HStack(spacing: 10) {
-                Button("Show guided tour") {
+                Button(model.setupComplete || firstRunAssistantComplete ? "Show guided tour" : "Guided tour after setup") {
+                    showingAboutSheet = false
                     hasSeenGuide = false
                     selectedSection = .home
                     guideStep = .welcome
                 }
                 .buttonStyle(QuietButtonStyle())
+                .disabled(!model.setupComplete && !firstRunAssistantComplete)
                 Button("GitHub") {
                     NSWorkspace.shared.open(URL(string: "https://github.com/l33tdawg/quiettype")!)
                 }
@@ -3118,6 +3156,30 @@ struct TesterView: View {
         }
         .padding(.top, 56)
         .frame(maxWidth: .infinity, alignment: .top)
+    }
+
+    private var aboutSheet: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                aboutPanel
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 24)
+            }
+            .scrollIndicators(.hidden)
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("Done") {
+                    showingAboutSheet = false
+                }
+                .buttonStyle(QuietButtonStyle(prominence: .primary))
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .frame(minWidth: 720, minHeight: 640)
     }
 
     private func openShareURL(for destination: QuietTypeShareDestination) {
@@ -3318,7 +3380,7 @@ struct TesterView: View {
             }
 
             VStack(spacing: 10) {
-                ActivityRow(icon: "waveform", title: "Speech engine", value: model.speechEngineReady ? "Ready" : "Starting")
+                ActivityRow(icon: "waveform", title: "Speech engine", value: model.speechEngineReady ? "Ready" : model.speechEngineFailed ? "Needs attention" : "Starting")
                     .quickTooltip("The bundled Apple Silicon speech engine runs locally on this Mac.")
                 ActivityRow(icon: "brain.head.profile", title: "Private memory", value: model.sageReady ? "Connected" : "Setup")
                     .quickTooltip("SAGE keeps approved corrections and vocabulary in governed local memory.")
@@ -7203,86 +7265,23 @@ private final class SageGitHubInstaller {
     }
 }
 
-private struct QuietTypeReleaseVersion: Comparable {
-    private enum Channel: Int {
-        case beta = 0
-        case releaseCandidate = 1
-        case stable = 2
-    }
-
-    var major: Int
-    var minor: Int
-    var patch: Int
-    private var channel: Channel
-    private var prereleaseNumber: Int
-
+private extension QuietTypeReleaseVersion {
     static func current() -> QuietTypeReleaseVersion {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
         let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
         let releaseLabel = Bundle.main.object(forInfoDictionaryKey: "QuietTypeReleaseLabel") as? String
         let taggedVersion = releaseLabel.map { "v\(version)-\($0)" } ?? "v\(version)-beta.\(build)"
-        return parse(taggedVersion) ?? QuietTypeReleaseVersion(
-            major: 1,
-            minor: 0,
-            patch: 0,
-            channel: .beta,
-            prereleaseNumber: build
-        )
-    }
-
-    static func parse(_ value: String) -> QuietTypeReleaseVersion? {
-        let normalized = value
-            .lowercased()
-            .replacingOccurrences(of: "quiettype-", with: "")
-            .replacingOccurrences(of: "-macos-arm64.dmg", with: "")
-            .replacingOccurrences(of: "v", with: "")
-        let parts = normalized.split(separator: "-", maxSplits: 1).map(String.init)
-        let versionParts = parts[0].split(separator: ".").compactMap { Int($0) }
-        guard versionParts.count >= 3 else {
-            return nil
+        if let parsed = parse(taggedVersion) {
+            return parsed
         }
-        let prerelease = parts.count > 1 ? parts[1] : ""
-        let channel: Channel
-        let prereleaseNumber: Int
-        if prerelease.hasPrefix("beta.") {
-            channel = .beta
-            prereleaseNumber = Int(prerelease.dropFirst("beta.".count)) ?? 0
-        } else if prerelease.hasPrefix("rc.") {
-            channel = .releaseCandidate
-            prereleaseNumber = Int(prerelease.dropFirst("rc.".count)) ?? 0
-        } else if prerelease.isEmpty {
-            channel = .stable
-            prereleaseNumber = 0
-        } else {
-            return nil
-        }
-        return QuietTypeReleaseVersion(
-            major: versionParts[0],
-            minor: versionParts[1],
-            patch: versionParts[2],
-            channel: channel,
-            prereleaseNumber: prereleaseNumber
-        )
-    }
-
-    var displayLabel: String {
-        let version = "v\(major).\(minor).\(patch)"
-        switch channel {
-        case .beta:
-            return "\(version) beta.\(prereleaseNumber)"
-        case .releaseCandidate:
-            return "\(version) RC\(prereleaseNumber)"
-        case .stable:
-            return version
-        }
-    }
-
-    static func < (lhs: QuietTypeReleaseVersion, rhs: QuietTypeReleaseVersion) -> Bool {
-        if lhs.major != rhs.major { return lhs.major < rhs.major }
-        if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
-        if lhs.patch != rhs.patch { return lhs.patch < rhs.patch }
-        if lhs.channel != rhs.channel { return lhs.channel.rawValue < rhs.channel.rawValue }
-        return lhs.prereleaseNumber < rhs.prereleaseNumber
+        return parse("v\(version)-beta.\(max(build, 1))")
+            ?? QuietTypeReleaseVersion(
+                major: 1,
+                minor: 0,
+                patch: 0,
+                channel: .beta,
+                prereleaseNumber: max(build, 1)
+            )
     }
 }
 
@@ -7294,6 +7293,16 @@ private final class QuietTypeGitHubUpdater {
 
     func openReleasesPage() {
         NSWorkspace.shared.open(releasesPageURL)
+    }
+
+    func pruneRetainedArtifacts() {
+        guard let supportDirectory = try? applicationSupportDirectory() else {
+            return
+        }
+        let updatesDirectory = supportDirectory.appendingPathComponent("Updates", isDirectory: true)
+        let backupsDirectory = supportDirectory.appendingPathComponent("Backups", isDirectory: true)
+        try? pruneItems(in: updatesDirectory, keepingMostRecent: 1)
+        try? pruneItems(in: backupsDirectory, keepingMostRecent: 1)
     }
 
     func checkAvailability() async throws -> QuietTypeUpdateAvailability? {
@@ -7398,6 +7407,7 @@ private final class QuietTypeGitHubUpdater {
         let updatesDirectory = try applicationSupportDirectory()
             .appendingPathComponent("Updates", isDirectory: true)
         try fileManager.createDirectory(at: updatesDirectory, withIntermediateDirectories: true)
+        try pruneItems(in: updatesDirectory, keepingMostRecent: 0)
 
         let destination = updatesDirectory.appendingPathComponent(asset.name)
         if fileManager.fileExists(atPath: destination.path) {
@@ -7437,6 +7447,7 @@ private final class QuietTypeGitHubUpdater {
             let backupDirectory = try applicationSupportDirectory()
                 .appendingPathComponent("Backups", isDirectory: true)
             try fileManager.createDirectory(at: backupDirectory, withIntermediateDirectories: true)
+            try pruneItems(in: backupDirectory, keepingMostRecent: 0)
             let appBackupURL = backupDirectory.appendingPathComponent("QuietType-\(timestamp()).app", isDirectory: true)
             try fileManager.copyItem(at: destinationApp, to: appBackupURL)
             backupURL = appBackupURL
@@ -7517,6 +7528,22 @@ private final class QuietTypeGitHubUpdater {
             throw QuietTypeUpdaterError.installFailed("Could not locate Application Support.")
         }
         return directory.appendingPathComponent("QuietType", isDirectory: true)
+    }
+
+    private func pruneItems(in directory: URL, keepingMostRecent count: Int) throws {
+        let items = try fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+        let sorted = items.sorted { lhs, rhs in
+            let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return lhsDate > rhsDate
+        }
+        for item in sorted.dropFirst(max(0, count)) {
+            try fileManager.removeItem(at: item)
+        }
     }
 
     private func timestamp() -> String {
@@ -7603,6 +7630,7 @@ final class MenuBarModel: ObservableObject {
     @Published var hiddenReviewMemoryIDs: Set<String> = []
     @Published var speechEngineStatus = "Checking speech"
     @Published var speechEngineReady = false
+    @Published private(set) var speechEngineFailure: String?
     @Published var nativeSpeechServerReady = false
     @Published var fallbackSpeechReady = false
     @Published var startupSteps = StartupStep.defaults
@@ -7690,6 +7718,7 @@ final class MenuBarModel: ObservableObject {
     private var sageServeProcess: Process?
     private var whisperKitSupervisor: WhisperKitServerSupervisor?
     private var nativeInferencePrewarmed = false
+    private var nativeInferenceWarmupTask: Task<Bool, Never>?
     private var didStartAppServices = false
     private var nativeSpeechStartupTask: Task<Void, Never>?
     private var nativeSpeechLaunchSignal: NativeSpeechLaunchSignal?
@@ -7782,6 +7811,7 @@ final class MenuBarModel: ObservableObject {
     private static let voiceFlowMetricsLoggingKey = "quiettype.voiceFlowMetricsLoggingEnabled"
     private static let voiceFlowMetricsEnvironmentKey = "QUIETTYPE_VOICE_FLOW_METRICS"
     private static let backgroundUpdateRefreshInterval: UInt64 = 60 * 60 * 1_000_000_000
+    private static let nativeSpeechLaunchTimeoutSeconds: TimeInterval = 120
     private static let requiredCalibrationSets = 3
     private static let maxDictationDurationSeconds = 300.0
     private static let maxTrainingPairCount = 10
@@ -8012,6 +8042,9 @@ final class MenuBarModel: ObservableObject {
         if nativeSpeechServerReady {
             return "Ready for private Apple Silicon dictation. Text inserts automatically."
         }
+        if let speechEngineFailure {
+            return speechEngineFailure
+        }
         if fallbackSpeechReady {
             return "Native speech is warming. QuietType will start when the Apple Silicon engine is ready."
         }
@@ -8021,6 +8054,9 @@ final class MenuBarModel: ObservableObject {
     var startupSummary: String {
         if nativeSpeechServerReady {
             return "Native speech ready"
+        }
+        if speechEngineFailure != nil {
+            return "Native speech needs attention"
         }
         if fallbackSpeechReady {
             return "Native speech starting"
@@ -8075,6 +8111,10 @@ final class MenuBarModel: ObservableObject {
 
     var coreDictationReady: Bool {
         sageReady && permissionsReady && speechEngineReady
+    }
+
+    var speechEngineFailed: Bool {
+        speechEngineFailure != nil
     }
 
     var requiresUserSetup: Bool {
@@ -8844,6 +8884,8 @@ final class MenuBarModel: ObservableObject {
 
         if nativeSpeechServerReady {
             speechEngineStatus = "Native speech ready"
+        } else if speechEngineFailure != nil {
+            speechEngineStatus = "Native speech unavailable"
         } else if fallbackSpeechReady {
             speechEngineStatus = "Native speech warming"
         } else if WhisperKitServerBundleLocator.bundledExecutable() != nil {
@@ -9080,6 +9122,9 @@ final class MenuBarModel: ObservableObject {
         isBooting = true
         discardPlaintextDictationAudio()
         discardPlaintextVoiceNoteAudio()
+        Task.detached(priority: .utility) {
+            QuietTypeGitHubUpdater().pruneRetainedArtifacts()
+        }
 
         // Native speech has the largest cold-start cost after an upgrade. Start
         // it before SAGE, permissions, and the rest of app setup so the model is
@@ -9386,6 +9431,8 @@ final class MenuBarModel: ObservableObject {
         overlayController.hide()
         nativeSpeechStartupTask?.cancel()
         nativeSpeechStartupTask = nil
+        nativeInferenceWarmupTask?.cancel()
+        nativeInferenceWarmupTask = nil
         nativeSpeechLaunchSignal?.resolve()
         nativeSpeechLaunchSignal = nil
         updateCheckTask?.cancel()
@@ -9437,6 +9484,8 @@ final class MenuBarModel: ObservableObject {
         overlayController.hide()
         nativeSpeechStartupTask?.cancel()
         nativeSpeechStartupTask = nil
+        nativeInferenceWarmupTask?.cancel()
+        nativeInferenceWarmupTask = nil
         nativeSpeechLaunchSignal?.resolve()
         nativeSpeechLaunchSignal = nil
         updateCheckTask?.cancel()
@@ -10225,9 +10274,12 @@ final class MenuBarModel: ObservableObject {
             return
         }
 
+        speechEngineFailure = nil
+
         guard let executableURL = WhisperKitServerBundleLocator.bundledExecutable(),
               FileManager.default.isExecutableFile(atPath: executableURL.path) else {
             nativeSpeechServerReady = false
+            speechEngineFailure = "The bundled on-device speech engine is missing or cannot be opened."
             updateStartupStep(
                 id: "nativeSpeech",
                 detail: "Native engine is not bundled in this build.",
@@ -10249,31 +10301,17 @@ final class MenuBarModel: ObservableObject {
         speechEngineStatus = "Native speech starting"
 
         do {
-            let serverIsHealthy = await whisperKitSupervisor?.isServerHealthy() == true
+            let serverWasAlreadyHealthy = await whisperKitSupervisor?.isServerHealthy() == true
             guard !Task.isCancelled else {
                 return
             }
-            if serverIsHealthy {
-                launchSignal.resolve()
-                let didPrewarm = await warmNativeSpeechInferenceIfNeeded()
-                guard !Task.isCancelled else {
-                    return
-                }
-                nativeSpeechServerReady = true
-                updateStartupStep(
-                    id: "nativeSpeech",
-                    detail: didPrewarm ? "Apple Silicon transcription server is ready for first dictation." : "Apple Silicon transcription server is reachable. First dictation may finish warming it.",
-                    state: .ready
-                )
-                statusMessage = "Native speech ready"
-                refreshSpeechEngineStatus()
-                return
+            if !serverWasAlreadyHealthy {
+                try whisperKitSupervisor?.startWarming()
             }
-
-            try whisperKitSupervisor?.startWarming()
             launchSignal.resolve()
 
             let startedAt = Date()
+            let deadline = startedAt.addingTimeInterval(Self.nativeSpeechLaunchTimeoutSeconds)
             while !Task.isCancelled {
                 let serverIsHealthy = await whisperKitSupervisor?.isServerHealthy() == true
                 guard !Task.isCancelled else {
@@ -10284,19 +10322,29 @@ final class MenuBarModel: ObservableObject {
                     guard !Task.isCancelled else {
                         return
                     }
-                    nativeSpeechServerReady = true
-                    updateStartupStep(
-                        id: "nativeSpeech",
-                        detail: didPrewarm ? "Apple Silicon transcription server is ready for first dictation." : "Apple Silicon transcription server is reachable. First dictation may finish warming it.",
-                        state: .ready
-                    )
-                    statusMessage = "Native speech ready"
-                    refreshSpeechEngineStatus()
-                    return
+                    if didPrewarm {
+                        nativeSpeechServerReady = true
+                        speechEngineFailure = nil
+                        updateStartupStep(
+                            id: "nativeSpeech",
+                            detail: "Apple Silicon transcription server is ready for first dictation.",
+                            state: .ready
+                        )
+                        statusMessage = "Native speech ready"
+                        refreshSpeechEngineStatus()
+                        return
+                    }
+                    speechEngineStatus = "Native speech warming"
                 }
 
-                if whisperKitSupervisor?.isProcessRunning != true {
+                if !serverWasAlreadyHealthy, whisperKitSupervisor?.isProcessRunning != true {
                     throw WhisperKitServerSupervisorError.startupTimedOut("Native speech process exited during warmup.")
+                }
+
+                if Date() >= deadline {
+                    throw WhisperKitServerSupervisorError.startupTimedOut(
+                        "The local speech engine did not complete inference prewarm within \(Int(Self.nativeSpeechLaunchTimeoutSeconds)) seconds."
+                    )
                 }
 
                 let elapsed = Int(Date().timeIntervalSince(startedAt))
@@ -10313,13 +10361,17 @@ final class MenuBarModel: ObservableObject {
                 return
             }
             nativeSpeechServerReady = false
+            nativeInferencePrewarmed = false
             let detail = String(describing: error)
+            speechEngineFailure = "The on-device speech engine could not finish warming. Retry to start it again."
+            speechEngineStatus = "Native speech unavailable"
             updateStartupStep(
                 id: "nativeSpeech",
                 detail: fallbackSpeechReady ? "Native speech is not ready yet. QuietType will wait for the Apple Silicon engine." : detail,
                 state: .failed
             )
             lastError = fallbackSpeechReady ? "Native WhisperKit is unavailable. QuietType will wait for the Apple Silicon speech engine." : detail
+            whisperKitSupervisor?.stop()
         }
 
         refreshSpeechEngineStatus()
@@ -10330,9 +10382,29 @@ final class MenuBarModel: ObservableObject {
         guard !nativeInferencePrewarmed else {
             return true
         }
+        if let nativeInferenceWarmupTask {
+            return await nativeInferenceWarmupTask.value
+        }
         guard await whisperKitSupervisor?.isServerHealthy() == true else {
             return false
         }
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else {
+                return false
+            }
+            return await self.performNativeSpeechInferenceWarmup()
+        }
+        nativeInferenceWarmupTask = task
+        let didPrewarm = await task.value
+        nativeInferenceWarmupTask = nil
+        if didPrewarm {
+            nativeInferencePrewarmed = true
+        }
+        return didPrewarm
+    }
+
+    private func performNativeSpeechInferenceWarmup() async -> Bool {
 
         statusMessage = "Preparing native speech"
         updateStartupStep(
@@ -10358,15 +10430,29 @@ final class MenuBarModel: ObservableObject {
             }
             _ = try await WhisperKitServerTranscriber(timeoutSeconds: WhisperKitServerTranscriber.warmupTimeoutSeconds)
                 .transcribe(audioFile: tempURL, options: .none)
-            nativeInferencePrewarmed = true
             return true
         } catch {
             try? FileManager.default.removeItem(at: tempURL)
             if isEmptyTranscriptFailure(error) || isLikelyNoiseOnlyFailure(error) {
-                nativeInferencePrewarmed = true
                 return true
             }
             return false
+        }
+    }
+
+    func retryNativeSpeechWarmup() {
+        guard nativeSpeechStartupTask == nil else {
+            return
+        }
+        speechEngineFailure = nil
+        speechEngineStatus = "Native speech starting"
+        nativeSpeechServerReady = false
+        nativeInferencePrewarmed = false
+        nativeInferenceWarmupTask?.cancel()
+        nativeInferenceWarmupTask = nil
+        whisperKitSupervisor?.stop()
+        Task {
+            await startNativeSpeechWarmup()
         }
     }
 
@@ -11818,6 +11904,7 @@ final class MenuBarModel: ObservableObject {
                 state: .failed
             )
             speechEngineStatus = "Native speech unavailable"
+            speechEngineFailure = "The bundled on-device speech engine is missing or cannot be opened."
             lastError = "QuietType requires the bundled Apple Silicon speech engine."
             return false
         }
@@ -11837,13 +11924,21 @@ final class MenuBarModel: ObservableObject {
         do {
             try await whisperKitSupervisor?.ensureRunning(stopOnTimeout: false)
             let didPrewarm = await warmNativeSpeechInferenceIfNeeded()
+            guard didPrewarm else {
+                nativeSpeechServerReady = false
+                speechEngineReady = false
+                speechEngineStatus = "Native speech warming"
+                lastError = "The local speech engine is reachable but inference prewarm has not completed yet."
+                return false
+            }
             nativeSpeechServerReady = true
+            speechEngineFailure = nil
             speechEngineReady = true
             speechEngineStatus = "Native speech ready"
             statusMessage = "Native speech ready"
             updateStartupStep(
                 id: "nativeSpeech",
-                detail: didPrewarm ? "Apple Silicon transcription server is ready for first dictation." : "Apple Silicon transcription server is reachable. First dictation may finish warming it.",
+                detail: "Apple Silicon transcription server is ready for first dictation.",
                 state: .ready
             )
             return true
@@ -11852,7 +11947,8 @@ final class MenuBarModel: ObservableObject {
             nativeInferencePrewarmed = false
             speechEngineReady = false
             let detail = String(describing: error)
-            speechEngineStatus = "Native speech starting"
+            speechEngineFailure = "The on-device speech engine could not finish warming. Retry to start it again."
+            speechEngineStatus = "Native speech unavailable"
             lastError = detail
             updateStartupStep(
                 id: "nativeSpeech",
