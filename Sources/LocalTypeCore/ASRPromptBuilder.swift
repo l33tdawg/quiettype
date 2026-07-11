@@ -26,6 +26,14 @@ public struct ASRPromptBuilder: Sendable {
         return parts.joined(separator: " ")
     }
 
+    /// WhisperKit's OpenAI-compatible server can currently return a successful
+    /// response with an empty transcript for otherwise valid vocabulary prompt
+    /// tokens. Keep production transcription on the reliable unprompted path;
+    /// `CorrectionEngine` still applies the same private vocabulary locally.
+    public func productionOptions() -> AudioTranscriptionOptions {
+        .none
+    }
+
     private func preferredSpellings(from entries: [VocabularyEntry]) -> [String] {
         guard maxVocabularyTerms > 0 else {
             return []

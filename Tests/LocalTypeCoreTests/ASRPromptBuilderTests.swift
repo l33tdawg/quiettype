@@ -39,4 +39,24 @@ final class ASRPromptBuilderTests: XCTestCase {
         XCTAssertFalse(prompt.contains("Term3"))
         XCTAssertFalse(prompt.contains("heard 2"))
     }
+
+    func testProductionOptionsAvoidUnstableNativeVocabularyPrompting() {
+        let profile = DictationProfile(
+            vocabulary: [
+                VocabularyEntry(
+                    term: "SAGE",
+                    spokenForms: ["sage"],
+                    preferredSpelling: "SAGE",
+                    category: "technical",
+                    confidenceBoost: 0.95
+                )
+            ]
+        )
+
+        XCTAssertFalse(ASRPromptBuilder().prompt(for: profile).isEmpty)
+        let options = ASRPromptBuilder().productionOptions()
+
+        XCTAssertEqual(options, .none)
+        XCTAssertNil(options.initialPrompt)
+    }
 }

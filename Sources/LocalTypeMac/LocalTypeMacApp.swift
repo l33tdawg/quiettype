@@ -10361,7 +10361,7 @@ final class MenuBarModel: ObservableObject {
             overlapDurationSeconds: Self.streamingChunkOverlap,
             maxDurationSeconds: Self.maxDictationDurationSeconds
         )
-        activeTranscriptionOptions = currentTranscriptionOptions(appName: activeDictationContext?.appName)
+        activeTranscriptionOptions = currentTranscriptionOptions()
         streamingTranscriptionSession = nil
         pendingStreamingChunks = []
         streamingTranscriptPreview = ""
@@ -10587,7 +10587,7 @@ final class MenuBarModel: ObservableObject {
 
         do {
             statusMessage = "Transcribing voice note"
-            activeTranscriptionOptions = currentTranscriptionOptions(appName: "Voice Notes")
+            activeTranscriptionOptions = currentTranscriptionOptions()
             let tempURL = temporaryVoiceNoteAudioDirectory
                 .appendingPathComponent("voice-note-\(UUID().uuidString).wav")
             try OwnerOnlyFileSecurity.prepareDirectory(temporaryVoiceNoteAudioDirectory)
@@ -11657,13 +11657,8 @@ final class MenuBarModel: ObservableObject {
         return profile
     }
 
-    private func currentTranscriptionOptions(appName: String? = nil) -> AudioTranscriptionOptions {
-        AudioTranscriptionOptions(
-            initialPrompt: ASRPromptBuilder().prompt(
-                for: currentDictationProfile(),
-                appName: appName ?? selectedProfile.appName
-            )
-        )
+    private func currentTranscriptionOptions() -> AudioTranscriptionOptions {
+        ASRPromptBuilder().productionOptions()
     }
 
     private func prepareNativeSpeechServerIfAvailable() async {
