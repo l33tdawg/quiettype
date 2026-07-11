@@ -15,7 +15,7 @@ on:
       build:
         description: "Beta build number"
         required: true
-        default: "25"
+        default: "26"
 
 permissions:
   contents: write
@@ -30,6 +30,7 @@ jobs:
       QUIETTYPE_CODESIGN_IDENTITY: "Developer ID Application: Dhillon Kannabhiran (2N7GKZ8D8Z)"
       QUIETTYPE_NOTARY_PROFILE: "QUIETTYPE_NOTARY"
       QUIETTYPE_NOTARIZE: "1"
+      QUIETTYPE_ARGMAX_REVISION: "dcf3a00f0ae4d5b57bc0aad92063b102b70d5fd1"
       QUIETTYPE_WHISPERKIT_MODEL_REVISION: "97a5bf9bbc74c7d9c12c755d04dea59e672e3808"
       SAGE_RELEASE_TAG: "v11.4.11"
       QUIETTYPE_FORCE_SAGE_DOWNLOAD: "1"
@@ -128,7 +129,7 @@ jobs:
             vendor/SAGE.app
             vendor/whisper.cpp
             vendor/argmax-oss-swift/.build
-          key: quiettype-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'scripts/*.sh') }}-${{ env.QUIETTYPE_WHISPERKIT_MODEL_REVISION }}-${{ env.SAGE_RELEASE_TAG }}
+          key: quiettype-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'scripts/*.sh', 'patches/*.patch') }}-${{ env.QUIETTYPE_ARGMAX_REVISION }}-${{ env.QUIETTYPE_WHISPERKIT_MODEL_REVISION }}-${{ env.SAGE_RELEASE_TAG }}
           restore-keys: |
             quiettype-${{ runner.os }}-${{ runner.arch }}-
 
@@ -137,11 +138,23 @@ jobs:
         shell: bash
         run: |
           mkdir -p vendor
-          if [[ ! -d vendor/argmax-oss-swift/.git ]]; then
-            git clone https://github.com/argmaxinc/argmax-oss-swift.git vendor/argmax-oss-swift
+          ARGMAX_DIR="vendor/argmax-oss-swift"
+          ARGMAX_BUILD_CACHE="$RUNNER_TEMP/argmax-oss-swift-build"
+          if [[ ! -d "$ARGMAX_DIR/.git" ]]; then
+            if [[ -d "$ARGMAX_DIR/.build" ]]; then
+              mv "$ARGMAX_DIR/.build" "$ARGMAX_BUILD_CACHE"
+            fi
+            if [[ -d "$ARGMAX_DIR" ]] && ! rmdir "$ARGMAX_DIR"; then
+              echo "Unexpected files in $ARGMAX_DIR; refusing to replace them." >&2
+              exit 1
+            fi
+            git clone https://github.com/argmaxinc/argmax-oss-swift.git "$ARGMAX_DIR"
+            if [[ -d "$ARGMAX_BUILD_CACHE" ]]; then
+              mv "$ARGMAX_BUILD_CACHE" "$ARGMAX_DIR/.build"
+            fi
           fi
-          git -C vendor/argmax-oss-swift fetch --depth 1 origin dcf3a00f0ae4d5b57bc0aad92063b102b70d5fd1
-          git -C vendor/argmax-oss-swift checkout dcf3a00f0ae4d5b57bc0aad92063b102b70d5fd1
+          git -C "$ARGMAX_DIR" fetch --depth 1 origin "$QUIETTYPE_ARGMAX_REVISION"
+          git -C "$ARGMAX_DIR" checkout "$QUIETTYPE_ARGMAX_REVISION"
           bash scripts/build-whisperkit-server.sh
           bash scripts/build-whisper-cpp-fallback.sh
           MODEL_DIR="$(bash scripts/download-whisperkit-model.sh)"

@@ -1,0 +1,39 @@
+diff --git a/Sources/WhisperKit/Core/TextDecoder.swift b/Sources/WhisperKit/Core/TextDecoder.swift
+index 042fcc4..372fe9c 100644
+--- a/Sources/WhisperKit/Core/TextDecoder.swift
++++ b/Sources/WhisperKit/Core/TextDecoder.swift
+@@ -567,6 +567,7 @@ open class TextDecoder: TextDecoding, WhisperMLModel {
+         Logging.debug("Running main loop for a maximum of \(loopCount) iterations, starting at index \(prefilledIndex)")
+         var hasAlignment = false
+         var isFirstTokenLogProbTooLow = false
++        let firstSampleTokenIndex = max(prefilledIndex, initialPromptIndex - 1)
+         let windowUUID = UUID()
+         await earlyStopActor.set(false, for: windowUUID)
+ 
+@@ -575,7 +576,7 @@ open class TextDecoder: TextDecoding, WhisperMLModel {
+ 
+             let isPrefill = tokenIndex < initialPromptIndex - 1 // Prefill stops at the last token of the initial prompt
+             let isLastPrefillToken = tokenIndex == initialPromptIndex - 1
+-            let isFirstToken = tokenIndex == prefilledIndex
++            let isFirstToken = tokenIndex == firstSampleTokenIndex
+ 
+             // Check if current index is part of the initial prompt
+             if tokenIndex < initialPromptIndex {
+@@ -666,7 +667,7 @@ open class TextDecoder: TextDecoding, WhisperMLModel {
+                     false
+                 }
+             let isSegmentCompleted =
+-                sampleResult.completed ||
++                (!isPrefill && sampleResult.completed) ||
+                 currentTokens.count >= Constants.maxTokenContext - 1 ||
+                 isFirstTokenLogProbTooLow
+ 
+@@ -745,7 +746,7 @@ open class TextDecoder: TextDecoding, WhisperMLModel {
+             timings.decodingLoop += Date().timeIntervalSince(loopStart)
+             timings.totalDecodingLoops += 1
+ 
+-            if tokenIndex == prefilledIndex {
++            if tokenIndex == firstSampleTokenIndex {
+                 Logging.debug("Found first token at: \(Date())")
+                 timings.firstTokenTime = CFAbsoluteTimeGetCurrent()
+             }

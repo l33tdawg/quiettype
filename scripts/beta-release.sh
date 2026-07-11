@@ -10,12 +10,13 @@ NOTARIZE="${QUIETTYPE_NOTARIZE:-0}"
 export SWIFTPM_HOME
 export CLANG_MODULE_CACHE_PATH
 export QUIETTYPE_VERSION="${QUIETTYPE_VERSION:-1.0.0}"
-export QUIETTYPE_BUILD="${QUIETTYPE_BUILD:-25}"
+export QUIETTYPE_BUILD="${QUIETTYPE_BUILD:-26}"
 export SAGE_RELEASE_TAG="${SAGE_RELEASE_TAG:-v11.4.11}"
 export QUIETTYPE_CODESIGN_IDENTITY="$SIGN_IDENTITY"
 export QUIETTYPE_CODESIGN_OPTIONS="${QUIETTYPE_CODESIGN_OPTIONS:---options runtime}"
 export QUIETTYPE_REQUIRE_ASR_ASSETS="${QUIETTYPE_REQUIRE_ASR_ASSETS:-1}"
 
+bash "$ROOT/scripts/build-whisperkit-server.sh"
 arch -arm64 swift test --arch arm64 --disable-swift-testing
 arch -arm64 swift build -c release --arch arm64 --product LocalTypeMac
 bash "$ROOT/scripts/package-app.sh"
