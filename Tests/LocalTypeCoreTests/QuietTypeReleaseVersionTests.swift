@@ -6,11 +6,13 @@ final class QuietTypeReleaseVersionTests: XCTestCase {
         let beta26 = try XCTUnwrap(QuietTypeReleaseVersion.parse("v1.0.0-beta.26"))
         let rc1 = try XCTUnwrap(QuietTypeReleaseVersion.parse("v1.0.0-rc.1"))
         let rc2 = try XCTUnwrap(QuietTypeReleaseVersion.parse("v1.0.0-rc.2"))
+        let rc3 = try XCTUnwrap(QuietTypeReleaseVersion.parse("v1.0.0-rc.3"))
         let stable = try XCTUnwrap(QuietTypeReleaseVersion.parse("v1.0.0"))
 
         XCTAssertLessThan(beta26, rc1)
         XCTAssertLessThan(rc1, rc2)
-        XCTAssertLessThan(rc2, stable)
+        XCTAssertLessThan(rc2, rc3)
+        XCTAssertLessThan(rc3, stable)
     }
 
     func testParsesTagAndArtifactNamesWithExpectedLabels() throws {
