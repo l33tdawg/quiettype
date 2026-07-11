@@ -19,7 +19,7 @@ on:
       release_label:
         description: "Release label"
         required: true
-        default: "rc.1"
+        default: "rc.2"
 
 permissions:
   contents: write
