@@ -7,6 +7,10 @@ import Security
 import SwiftUI
 @preconcurrency import UserNotifications
 
+private extension Notification.Name {
+    static let showQuietTypeAbout = Notification.Name("QuietType.showAbout")
+}
+
 @main
 struct LocalTypeMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -18,6 +22,11 @@ struct LocalTypeMacApp: App {
         }
         .defaultSize(width: 1180, height: 820)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About QuietType") {
+                    NotificationCenter.default.post(name: .showQuietTypeAbout, object: nil)
+                }
+            }
             CommandGroup(replacing: .appTermination) {
                 Button("Quit QuietType") {
                     NSApplication.shared.terminate(nil)
@@ -816,6 +825,7 @@ struct TesterView: View {
             maxHeight: .infinity
         )
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: selectedSection)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: selectedSettingsTab)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: guideStep)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: model.setupComplete)
         .sheet(isPresented: $showingTeachSheet) {
@@ -839,6 +849,10 @@ struct TesterView: View {
             Task {
                 await model.refreshPermissions(verifyMicrophoneAccess: true)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showQuietTypeAbout)) { _ in
+            selectedSection = .settings
+            selectedSettingsTab = .about
         }
     }
 
@@ -961,32 +975,45 @@ struct TesterView: View {
         VStack(spacing: 0) {
             updateAvailableBanner
 
-            ZStack {
-                switch selectedSection {
-                case .home:
-                    homePage
-                case .voiceNotes:
-                    voiceNotesPage
-                case .history:
-                    dictionaryPage
-                case .setup:
-                    setupPage
-                case .dictionary:
-                    dictionaryPage
-                case .settings:
-                    settingsPage
-                case .help:
-                    helpPage
-                }
+            ZStack(alignment: .topLeading) {
+                selectedSectionPage
+                    .id(selectedSection)
+                    .transition(sectionTransition)
             }
-            .id(selectedSection)
-            .transition(.asymmetric(
-                insertion: .move(edge: .trailing).combined(with: .opacity),
-                removal: .opacity
-            ))
+            .clipped()
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var selectedSectionPage: some View {
+        switch selectedSection {
+        case .home:
+            homePage
+        case .voiceNotes:
+            voiceNotesPage
+        case .history:
+            dictionaryPage
+        case .setup:
+            setupPage
+        case .dictionary:
+            dictionaryPage
+        case .settings:
+            settingsPage
+        case .help:
+            helpPage
+        }
+    }
+
+    private var sectionTransition: AnyTransition {
+        if reduceMotion {
+            return .opacity
+        }
+        return .asymmetric(
+            insertion: .move(edge: .trailing).combined(with: .opacity),
+            removal: .move(edge: .leading).combined(with: .opacity)
+        )
     }
 
     @ViewBuilder
@@ -2247,15 +2274,22 @@ struct TesterView: View {
     }
 
     private var metricsGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 14)], spacing: 14) {
+        LazyVGrid(
+            columns: Array(
+                repeating: GridItem(.flexible(minimum: 180, maximum: 250), spacing: 14),
+                count: 3
+            ),
+            spacing: 14
+        ) {
             MetricTile(icon: "text.bubble", value: "\(model.sessionsToday)", label: "Sessions today", tooltip: "Completed dictation sessions recorded today on this Mac.")
             MetricTile(icon: "speedometer", value: model.currentWordsPerMinuteLabel, label: "Speaking pace", tooltip: "Words per minute from the current or most recent dictation session.")
             MetricTile(icon: "bolt", value: model.lastLatencyMS.map { "\($0) ms" } ?? "Ready", label: "Release to text", tooltip: "Actual time from stopping dictation until polished text is inserted or ready to copy.")
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: 778)
         .anchorPreference(key: GuideSpotlightPreferenceKey.self, value: .bounds) { anchor in
             [.privacy: anchor]
         }
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private var setupNudgePanel: some View {
@@ -2337,6 +2371,8 @@ struct TesterView: View {
                 }
 
                 settingsTabContent
+                    .id(selectedSettingsTab)
+                    .transition(sectionTransition)
                     .padding(18)
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -2364,11 +2400,19 @@ struct TesterView: View {
             dictationControlsPanel
             appearancePanel
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 16)], spacing: 16) {
+            LazyVGrid(
+                columns: Array(
+                    repeating: GridItem(.flexible(minimum: 190, maximum: 360), spacing: 16),
+                    count: 3
+                ),
+                spacing: 16
+            ) {
                 setupStatusPanel
                 memoryBackendPanel
                 quickUpdatePanel
             }
+            .frame(maxWidth: 1_112)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -2387,10 +2431,18 @@ struct TesterView: View {
         VStack(alignment: .leading, spacing: 18) {
             privacyNetworkPanel
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
+            LazyVGrid(
+                columns: Array(
+                    repeating: GridItem(.flexible(minimum: 280, maximum: 430), spacing: 16),
+                    count: 2
+                ),
+                spacing: 16
+            ) {
                 storageOverviewPanel
                 storageCleanupPanel
             }
+            .frame(maxWidth: 876)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
