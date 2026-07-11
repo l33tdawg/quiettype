@@ -2,6 +2,25 @@ import XCTest
 @testable import LocalTypeCore
 
 final class WhisperKitServerTranscriberTests: XCTestCase {
+    func testTimedRequestUsesOnlyArgmaxSupportedMultipartFields() throws {
+        let audioURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("quiettype-multipart-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+        try Data([0x52, 0x49, 0x46, 0x46]).write(to: audioURL)
+
+        let body = try WhisperKitServerTranscriber().multipartBody(
+            audioFile: audioURL,
+            boundary: "QuietType-Test",
+            options: AudioTranscriptionOptions(initialPrompt: "Vocabulary: Raft."),
+            includeWordTimestamps: true
+        )
+        let request = String(decoding: body, as: UTF8.self)
+
+        XCTAssertTrue(request.contains("name=\"timestamp_granularities[]\""))
+        XCTAssertTrue(request.contains("name=\"prompt\""))
+        XCTAssertFalse(request.contains("name=\"word_timestamps\""))
+    }
+
     func testRejectsNonLoopbackEndpoint() async throws {
         let transcriber = WhisperKitServerTranscriber(endpoint: URL(string: "https://example.com/v1/audio/transcriptions")!)
 

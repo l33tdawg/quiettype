@@ -7772,6 +7772,8 @@ final class MenuBarModel: ObservableObject {
     private lazy var voiceFlowMetricsStore = LocalVoiceFlowMetricsStore(fileURL: voiceFlowMetricsURL)
     private var chunker = StreamingWavChunker()
     private var speechActivityTracker = SpeechActivityTracker()
+    private var detectedSpeechDurationMS = 0
+    private var didDetectSpeech = false
     private var voiceFlowMetricAccumulator: VoiceFlowMetricAccumulator?
     private let chunkDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("quiettype-stream")
     private var streamingTranscriptionSession: StreamingAudioTranscriptionSession?
@@ -10562,6 +10564,8 @@ final class MenuBarModel: ObservableObject {
         inputLevel = 0
         peakInputLevel = 0
         peakInputRMS = 0
+        detectedSpeechDurationMS = 0
+        didDetectSpeech = false
         inputNoiseFloorRMS = 0.006
         recordingDuration = 0
         recordedSamples = []
@@ -11303,6 +11307,22 @@ final class MenuBarModel: ObservableObject {
             completeVoiceFlowMetrics(outcome: .signalTooLow)
             return
         }
+        if recordingDuration >= 0.8,
+           (!didDetectSpeech || detectedSpeechDurationMS < 90) {
+            await streamingTranscriptionSession?.cancel()
+            streamingTranscriptionSession = nil
+            pendingStreamingChunks = []
+            streamingTranscriptPreview = ""
+            discardPlaintextDictationAudio()
+            output = "QuietType heard microphone input, but could not identify a sustained voice."
+            statusMessage = "No clear speech detected"
+            lastError = nil
+            dictationState = .failed
+            activeDictationContext = nil
+            overlayController.hide()
+            completeVoiceFlowMetrics(outcome: .signalTooLow)
+            return
+        }
 
         do {
             let shouldRetainAudio = historyReviewEnabled && keepReviewAudio
@@ -11400,12 +11420,18 @@ final class MenuBarModel: ObservableObject {
         let rms = sqrt(frame.samples.reduce(0.0) { partial, sample in
             partial + Double(sample * sample)
         } / Double(max(frame.samples.count, 1)))
+        let frameDuration = Double(frame.samples.count) / Double(max(frame.sampleRate, 1))
+        let activity = speechActivityTracker.observe(
+            rms: rms,
+            frameDurationSeconds: frameDuration
+        )
+        if activity.didStartSpeech {
+            didDetectSpeech = true
+        }
+        if activity.state == .speech {
+            detectedSpeechDurationMS += activity.frameDurationMS
+        }
         if voiceFlowMetricAccumulator != nil {
-            let frameDuration = Double(frame.samples.count) / Double(max(frame.sampleRate, 1))
-            let activity = speechActivityTracker.observe(
-                rms: rms,
-                frameDurationSeconds: frameDuration
-            )
             voiceFlowMetricAccumulator?.recordAudioFrame(activity: activity)
         }
         peakInputRMS = max(peakInputRMS, rms)
@@ -11580,7 +11606,7 @@ final class MenuBarModel: ObservableObject {
         if streamingTranscriptionSession == nil {
             streamingTranscriptionSession = StreamingAudioTranscriptionSession(
                 transcriber: WhisperKitServerTranscriber(timeoutSeconds: WhisperKitServerTranscriber.streamingTimeoutSeconds),
-                options: activeTranscriptionOptions,
+                options: .none,
                 onTranscriptUpdate: { [weak self] preview in
                     await self?.updateStreamingTranscriptPreview(preview)
                 }
@@ -11869,7 +11895,7 @@ final class MenuBarModel: ObservableObject {
     }
 
     private func currentTranscriptionOptions() -> AudioTranscriptionOptions {
-        ASRPromptBuilder().productionOptions()
+        ASRPromptBuilder().productionOptions(for: currentDictationProfile())
     }
 
     private func prepareNativeSpeechServerIfAvailable() async {

@@ -26,12 +26,12 @@ public struct ASRPromptBuilder: Sendable {
         return parts.joined(separator: " ")
     }
 
-    /// WhisperKit's OpenAI-compatible server can currently return a successful
-    /// response with an empty transcript for otherwise valid vocabulary prompt
-    /// tokens. Keep production transcription on the reliable unprompted path;
-    /// `CorrectionEngine` still applies the same private vocabulary locally.
-    public func productionOptions() -> AudioTranscriptionOptions {
-        .none
+    /// The bundled Argmax decoder carries QuietType's prompt-prefill guard, so
+    /// a short governed vocabulary prompt is safe for the authoritative
+    /// full-audio pass. Streaming previews deliberately remain unprompted.
+    public func productionOptions(for profile: DictationProfile) -> AudioTranscriptionOptions {
+        let value = prompt(for: profile).trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? .none : AudioTranscriptionOptions(initialPrompt: value)
     }
 
     private func preferredSpellings(from entries: [VocabularyEntry]) -> [String] {

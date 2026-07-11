@@ -87,7 +87,7 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
         return result
     }
 
-    private func multipartBody(
+    func multipartBody(
         audioFile: URL,
         boundary: String,
         options: AudioTranscriptionOptions,
@@ -105,7 +105,6 @@ public struct WhisperKitServerTranscriber: AudioFileTranscribing {
         if includeWordTimestamps {
             data.appendMultipartField(name: "timestamp_granularities[]", value: "word", boundary: boundary)
             data.appendMultipartField(name: "timestamp_granularities[]", value: "segment", boundary: boundary)
-            data.appendMultipartField(name: "word_timestamps", value: "true", boundary: boundary)
         }
         data.appendMultipartFile(name: "file", filename: audioFile.lastPathComponent, contentType: "audio/wav", fileData: try Data(contentsOf: audioFile), boundary: boundary)
         data.appendString("--\(boundary)--\r\n")
