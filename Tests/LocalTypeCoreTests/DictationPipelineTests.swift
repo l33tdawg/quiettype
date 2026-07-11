@@ -742,6 +742,36 @@ final class DictationPipelineTests: XCTestCase {
         XCTAssertEqual(result.text, "Thanks bro for checking with Amy at 9 AM.")
     }
 
+    func testRepairsButMisheardAsBroInObservedFootballContexts() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "Neil has been with Sevilla for the last three years bro just left them this summer period Odegaard harassed a little deeper comma bro that was very composed indeed",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "Neil has been with Sevilla for the last 3 years but just left them this summer. Odegaard harassed a little deeper, but that was very composed indeed."
+        )
+    }
+
+    func testPreservesGenuineBroVocativesNearSimilarWords() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "bro just check this and tell me comma bro comma that was amazing", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "Bro just check this and tell me, bro, that was amazing.")
+    }
+
     func testNormalizesAttachedMeridiemReturnedByASR() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Messages", profile: .messaging)

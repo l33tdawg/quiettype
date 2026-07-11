@@ -23,6 +23,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         text = normalizeWhitespacePreservingParagraphs(text)
 
         text = resolveSimpleCorrections(text)
+        text = repairButMisheardAsBro(text)
         text = format(text, for: request.appContext.profile)
         text = applySpellingPreference(text, request.profile.spellingPreference)
         if request.profile.profanityFilterEnabled {
@@ -34,6 +35,25 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         }
 
         return EditorResult(text: text, latencyMS: Int(Date().timeIntervalSince(started) * 1000))
+    }
+
+    /// Whisper occasionally hears the conjunction "but" as "bro". Keep this
+    /// deliberately narrow so genuine vocatives such as "thanks bro" and
+    /// "bro just check this" remain untouched.
+    private func repairButMisheardAsBro(_ text: String) -> String {
+        var result = text
+        let conjunctionPatterns = [
+            #"\bbro\s+just\s+left\b"#: "but just left",
+            #"\bbro\s+that\s+was\b"#: "but that was"
+        ]
+        for (pattern, replacement) in conjunctionPatterns {
+            result = result.replacingOccurrences(
+                of: pattern,
+                with: replacement,
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+        return result
     }
 
     private func resolveSimpleCorrections(_ text: String) -> String {
