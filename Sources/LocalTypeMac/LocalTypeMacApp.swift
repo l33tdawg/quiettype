@@ -20,7 +20,7 @@ struct LocalTypeMacApp: App {
         WindowGroup("QuietType") {
             TesterView(model: model)
         }
-        .defaultSize(width: 1180, height: 820)
+        .defaultSize(width: 1540, height: 1300)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About QuietType") {
@@ -818,10 +818,10 @@ struct TesterView: View {
         .environment(\.quietTypeTypeDelta, textSizeChoice.pointDelta)
         .frame(
             minWidth: 960,
-            idealWidth: 1180,
+            idealWidth: 1540,
             maxWidth: .infinity,
             minHeight: 680,
-            idealHeight: 820,
+            idealHeight: 1300,
             maxHeight: .infinity
         )
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: selectedSection)
