@@ -29,11 +29,11 @@ fi
 apply_patch_once() {
   local patch="$1"
   local label="$2"
-  if git -C "$VENDOR" apply --unidiff-zero --check "$patch" >/dev/null 2>&1; then
+  if git -C "$VENDOR" apply --unidiff-zero --reverse --check "$patch" >/dev/null 2>&1; then
+    echo "QuietType $label is already applied."
+  elif git -C "$VENDOR" apply --unidiff-zero --check "$patch" >/dev/null 2>&1; then
     git -C "$VENDOR" apply --unidiff-zero "$patch"
     echo "Applied QuietType $label."
-  elif git -C "$VENDOR" apply --unidiff-zero --reverse --check "$patch" >/dev/null 2>&1; then
-    echo "QuietType $label is already applied."
   else
     echo "Argmax $label does not apply cleanly at $ACTUAL_REVISION." >&2
     exit 1
