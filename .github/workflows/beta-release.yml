@@ -17,9 +17,9 @@ on:
         required: true
         default: "28"
       release_label:
-        description: "Release label (for example rc.1 or beta.27)"
+        description: "Release label"
         required: true
-        default: "rc.2"
+        default: "rc.1"
 
 permissions:
   contents: write

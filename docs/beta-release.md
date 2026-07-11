@@ -8,7 +8,7 @@ Use the installed Developer ID Application identity:
 
 ```bash
 QUIETTYPE_VERSION="1.0.0" \
-QUIETTYPE_BUILD="27" \
+QUIETTYPE_BUILD="28" \
 QUIETTYPE_RELEASE_LABEL="rc.1" \
 QUIETTYPE_NOTARIZE="1" \
 SAGE_RELEASE_TAG="v11.4.11" \
