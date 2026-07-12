@@ -6023,6 +6023,7 @@ private func quietUpdateStage(status: String, messages: [String]) -> QuietUpdate
 private func quietUpdateProgressValue(
     status: String,
     messages: [String],
+    downloadFraction: Double?,
     isChecking: Bool,
     completed: Bool,
     failed: Bool,
@@ -6037,11 +6038,14 @@ private func quietUpdateProgressValue(
     guard isChecking else {
         return messages.isEmpty && status.isEmpty ? 0.0 : 1.0
     }
+    if let downloadFraction {
+        return 0.18 + (min(max(downloadFraction, 0), 1) * 0.54)
+    }
     switch quietUpdateStage(status: status, messages: messages) {
     case .checking:
         return 0.18
     case .updating:
-        return 0.56
+        return 0.72
     case .installing:
         return 0.84
     }
@@ -6123,12 +6127,20 @@ private struct UpdateInstallOverlay: View {
                     ProgressView(value: quietUpdateProgressValue(
                         status: model.updateStatus,
                         messages: model.updateProgressMessages,
+                        downloadFraction: model.updateDownloadProgress?.fractionCompleted,
                         isChecking: model.isCheckingForUpdates,
                         completed: model.updateInstallCompleted,
                         failed: model.updateInstallFailed,
                         requiresRestart: model.updateInstallRequiresRestart
                     ))
                     .progressViewStyle(.linear)
+
+                    if let downloadProgress = model.updateDownloadProgress {
+                        Text(downloadProgress.displayText)
+                            .font(.system(size: 12 + typeDelta, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.primary)
+                            .monospacedDigit()
+                    }
 
                     Text(quietUpdateInstruction(
                         isChecking: model.isCheckingForUpdates,
@@ -7187,10 +7199,117 @@ private struct QuietTypeGitHubRelease: Decodable {
 private struct QuietTypeGitHubAsset: Decodable {
     var name: String
     var browserDownloadURL: URL
+    var size: Int64?
 
     enum CodingKeys: String, CodingKey {
         case name
         case browserDownloadURL = "browser_download_url"
+        case size
+    }
+}
+
+private final class QuietTypeProgressiveDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let destination: URL
+    private let fallbackTotalBytes: Int64?
+    private let progressHandler: @MainActor @Sendable (UpdateDownloadProgress) -> Void
+    private var continuation: CheckedContinuation<(URL, URLResponse), Error>?
+    private var session: URLSession?
+    private var response: URLResponse?
+    private var downloadedURL: URL?
+    private var moveError: Error?
+    private var lastReportedPercentage = -1
+    private var lastReportedBytes: Int64 = 0
+
+    init(
+        destination: URL,
+        fallbackTotalBytes: Int64?,
+        progressHandler: @escaping @MainActor @Sendable (UpdateDownloadProgress) -> Void
+    ) {
+        self.destination = destination
+        self.fallbackTotalBytes = fallbackTotalBytes
+        self.progressHandler = progressHandler
+    }
+
+    func download(_ request: URLRequest) async throws -> (URL, URLResponse) {
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            let configuration = URLSessionConfiguration.ephemeral
+            let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+            self.session = session
+            session.downloadTask(with: request).resume()
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : fallbackTotalBytes
+        let update = UpdateDownloadProgress(
+            bytesDownloaded: totalBytesWritten,
+            totalBytesExpected: expected
+        )
+        let percentage = update.fractionCompleted.map { Int(($0 * 100).rounded(.down)) }
+        let shouldReport: Bool
+        if let percentage {
+            shouldReport = percentage != lastReportedPercentage
+        } else {
+            shouldReport = totalBytesWritten - lastReportedBytes >= 1_048_576
+        }
+        guard shouldReport else {
+            return
+        }
+        lastReportedPercentage = percentage ?? lastReportedPercentage
+        lastReportedBytes = totalBytesWritten
+        Task { @MainActor [progressHandler] in
+            progressHandler(update)
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        response = downloadTask.response
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.moveItem(at: location, to: destination)
+            downloadedURL = destination
+        } catch {
+            moveError = error
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        defer {
+            continuation = nil
+            self.session?.finishTasksAndInvalidate()
+            self.session = nil
+        }
+        if let error {
+            continuation?.resume(throwing: error)
+            return
+        }
+        if let moveError {
+            continuation?.resume(throwing: moveError)
+            return
+        }
+        guard let downloadedURL,
+              let response = response ?? task.response else {
+            continuation?.resume(throwing: URLError(.cannotCreateFile))
+            return
+        }
+        continuation?.resume(returning: (downloadedURL, response))
     }
 }
 
@@ -7358,7 +7477,10 @@ private final class QuietTypeGitHubUpdater {
         )
     }
 
-    func checkDownloadBackupAndInstall(progress: @escaping @MainActor (String) -> Void) async throws -> QuietTypeUpdateResult {
+    func checkDownloadBackupAndInstall(
+        progress: @escaping @MainActor (String) -> Void,
+        downloadProgress: @escaping @MainActor @Sendable (UpdateDownloadProgress) -> Void
+    ) async throws -> QuietTypeUpdateResult {
         await progress("Checking GitHub Releases...")
         let (release, asset, latestVersion) = try await latestReleaseAsset()
         let currentVersion = QuietTypeReleaseVersion.current()
@@ -7370,7 +7492,8 @@ private final class QuietTypeGitHubUpdater {
         }
 
         await progress("Found \(display(latestVersion)). Downloading the Apple Silicon DMG...")
-        let dmgURL = try await download(asset)
+        await downloadProgress(UpdateDownloadProgress(bytesDownloaded: 0, totalBytesExpected: asset.size))
+        let dmgURL = try await download(asset, progress: downloadProgress)
         await progress("Downloaded \(asset.name) from \(release.tagName). Verifying the installer...")
         let mountedVolume = try mount(dmgURL)
         defer {
@@ -7444,7 +7567,10 @@ private final class QuietTypeGitHubUpdater {
         }
     }
 
-    private func download(_ asset: QuietTypeGitHubAsset) async throws -> URL {
+    private func download(
+        _ asset: QuietTypeGitHubAsset,
+        progress: @escaping @MainActor @Sendable (UpdateDownloadProgress) -> Void
+    ) async throws -> URL {
         let updatesDirectory = try applicationSupportDirectory()
             .appendingPathComponent("Updates", isDirectory: true)
         try fileManager.createDirectory(at: updatesDirectory, withIntermediateDirectories: true)
@@ -7458,13 +7584,16 @@ private final class QuietTypeGitHubUpdater {
         var request = URLRequest(url: asset.browserDownloadURL)
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
         request.setValue("QuietType-Updater", forHTTPHeaderField: "User-Agent")
-        let (temporaryURL, response) = try await URLSession.shared.download(for: request)
+        let downloader = QuietTypeProgressiveDownloader(
+            destination: destination,
+            fallbackTotalBytes: asset.size,
+            progressHandler: progress
+        )
+        let (downloadedURL, response) = try await downloader.download(request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw QuietTypeUpdaterError.downloadUnavailable(http.statusCode)
         }
-
-        try fileManager.moveItem(at: temporaryURL, to: destination)
-        return destination
+        return downloadedURL
     }
 
     private func mount(_ dmgURL: URL) throws -> URL {
@@ -7742,6 +7871,7 @@ final class MenuBarModel: ObservableObject {
     @Published var updateOverlayTitle = "Updating QuietType"
     @Published var updateOverlayDetail = "Preparing the signed update."
     @Published var updateProgressMessages: [String] = []
+    @Published var updateDownloadProgress: UpdateDownloadProgress?
     @Published var updateInstallCompleted = false
     @Published var updateInstallFailed = false
     @Published var updateInstallRequiresRestart = false
@@ -9044,15 +9174,20 @@ final class MenuBarModel: ObservableObject {
         isCheckingForUpdates = true
         recordUpdateProgress("Preparing QuietType for update.")
         await suspendAppForUpdateInstall()
-        recordUpdateProgress("Checking GitHub Releases.")
         defer {
             isCheckingForUpdates = false
         }
 
         do {
-            let result = try await updateService.checkDownloadBackupAndInstall { [weak self] message in
-                self?.recordUpdateProgress(message)
-            }
+            let result = try await updateService.checkDownloadBackupAndInstall(
+                progress: { [weak self] message in
+                    self?.recordUpdateProgress(message)
+                },
+                downloadProgress: { [weak self] progress in
+                    self?.updateDownloadProgress = progress
+                }
+            )
+            updateDownloadProgress = nil
             updateStatus = result.message
             updateOverlayDetail = result.message
             updateInstallCompleted = true
@@ -9066,6 +9201,7 @@ final class MenuBarModel: ObservableObject {
                 resumeAppServicesAfterUpdateIfNeeded()
             }
         } catch let error as QuietTypeUpdaterError where error.shouldOpenReleasesPage {
+            updateDownloadProgress = nil
             updateStatus = "Update check needs GitHub release access: \(error.localizedDescription) Opening the QuietType releases page."
             updateOverlayTitle = "Update needs release access"
             updateOverlayDetail = error.localizedDescription
@@ -9074,6 +9210,7 @@ final class MenuBarModel: ObservableObject {
             resumeAppServicesAfterUpdateIfNeeded()
             updateService.openReleasesPage()
         } catch {
+            updateDownloadProgress = nil
             updateStatus = "Update check failed: \(error.localizedDescription)"
             updateOverlayTitle = "Update failed"
             updateOverlayDetail = error.localizedDescription
@@ -9088,6 +9225,7 @@ final class MenuBarModel: ObservableObject {
         updateOverlayTitle = "Updating QuietType"
         updateOverlayDetail = "Downloading and verifying the signed update."
         updateProgressMessages = []
+        updateDownloadProgress = nil
         updateInstallCompleted = false
         updateInstallFailed = false
         updateInstallRequiresRestart = false
