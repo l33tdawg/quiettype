@@ -5223,28 +5223,20 @@ private struct QuickTooltipModifier: ViewModifier {
                             isPresented = false
                         }
                     )
-                    .overlay(alignment: .top) {
-                        if isPresented {
-                            Text(text)
-                                .font(.caption)
-                                .foregroundStyle(.primary)
-                                .lineLimit(nil)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(width: 300, alignment: .leading)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                                .background(.regularMaterial)
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                                )
-                                .shadow(color: Color.black.opacity(0.16), radius: 12, y: 6)
-                                .offset(y: -44)
-                                .allowsHitTesting(false)
-                                .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                                .zIndex(1000)
-                        }
+                    .popover(
+                        isPresented: $isPresented,
+                        attachmentAnchor: .rect(.bounds),
+                        arrowEdge: .bottom
+                    ) {
+                        Text(text)
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(width: 300, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .allowsHitTesting(false)
                     }
             } else {
                 content
