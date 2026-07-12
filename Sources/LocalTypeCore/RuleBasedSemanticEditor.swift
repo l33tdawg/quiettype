@@ -45,6 +45,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         var result = text
         let conjunctionPatterns = [
             (#"\bbro\s+just\s+left\b"#, "but just left"),
+            (#"\bbro\s+just\s+part\s+of\b"#, "but just part of"),
             (#"\bbro\s+that\s+was\b"#, "but that was"),
             (#"\bbro\s+far\s+from\b"#, "but far from"),
             (#"\bbro\s+(i(?:'|’)?ll|i\s+will)\s+say\s+it\s+again\b"#, "but $1 say it again"),

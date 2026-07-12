@@ -3398,9 +3398,10 @@ struct TesterView: View {
                         ? "Cancel the current local transcription. Captured audio and pending output will be discarded."
                         : model.isCancellingDictation
                             ? "QuietType is deleting this session's temporary audio before another dictation can start."
-                            : model.isInsertingDictation
+                        : model.isInsertingDictation
                                 ? "QuietType is completing insertion into the app where dictation started."
-                        : "Start local dictation. QuietType listens only while this session is active."
+                        : "Start local dictation. QuietType listens only while this session is active.",
+                arrowEdge: .trailing
             )
             .anchorPreference(key: GuideSpotlightPreferenceKey.self, value: .bounds) { anchor in
                 [.dictate: anchor]
@@ -5190,6 +5191,7 @@ private extension Array {
 
 private struct QuickTooltipModifier: ViewModifier {
     let text: String
+    let arrowEdge: Edge
     @AppStorage("quiettype.showTooltips") private var showTooltips = true
     @State private var isPresented = false
     @State private var hoverTask: Task<Void, Never>?
@@ -5226,7 +5228,7 @@ private struct QuickTooltipModifier: ViewModifier {
                     .popover(
                         isPresented: $isPresented,
                         attachmentAnchor: .rect(.bounds),
-                        arrowEdge: .bottom
+                        arrowEdge: arrowEdge
                     ) {
                         Text(text)
                             .font(.caption)
@@ -5256,14 +5258,14 @@ private struct QuickTooltipModifier: ViewModifier {
 }
 
 private extension View {
-    func quickTooltip(_ text: String) -> some View {
-        modifier(QuickTooltipModifier(text: text))
+    func quickTooltip(_ text: String, arrowEdge: Edge = .bottom) -> some View {
+        modifier(QuickTooltipModifier(text: text, arrowEdge: arrowEdge))
     }
 
     @ViewBuilder
-    func quickTooltip(_ text: String?) -> some View {
+    func quickTooltip(_ text: String?, arrowEdge: Edge = .bottom) -> some View {
         if let text, !text.isEmpty {
-            quickTooltip(text)
+            quickTooltip(text, arrowEdge: arrowEdge)
         } else {
             self
         }

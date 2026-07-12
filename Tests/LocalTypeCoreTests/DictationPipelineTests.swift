@@ -963,6 +963,24 @@ final class DictationPipelineTests: XCTestCase {
         XCTAssertEqual(result.text, "Bro just check this and tell me, bro, that was amazing.")
     }
 
+    func testRepairsButMisheardAsBroBeforeJustPartOf() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Safari", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "Make it available without shaming or punishing people comma bro just part of normal social life",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "Make it available without shaming or punishing people, but just part of normal social life."
+        )
+    }
+
     func testRepairsButMisheardAsBroInAdditionalFootballContexts() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Notes", profile: .notes)
