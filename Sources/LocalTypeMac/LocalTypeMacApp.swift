@@ -164,19 +164,22 @@ private final class DictationOverlayPresentation: ObservableObject {
     @Published var detail: String?
     @Published var transcript: String?
     @Published var onCancel: (() -> Void)?
+    @Published var onCopy: (() -> Void)?
 
     func update(
         state: OverlayState,
         level: Double,
         detail: String?,
         transcript: String?,
-        onCancel: (() -> Void)?
+        onCancel: (() -> Void)?,
+        onCopy: (() -> Void)?
     ) {
         self.state = state
         self.level = level
         self.detail = detail
         self.transcript = transcript
         self.onCancel = onCancel
+        self.onCopy = onCopy
     }
 }
 
@@ -202,6 +205,9 @@ final class DictationOverlayController {
         panel.alphaValue = 1
         let hasTranscript = !(transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasAction = onCancel != nil
+        let copyAction: (() -> Void)? = hasTranscript
+            ? { [weak self] in self?.hide() }
+            : nil
         panel.cancelAction = onCancel
         panel.ignoresMouseEvents = false
         presentation.update(
@@ -209,7 +215,8 @@ final class DictationOverlayController {
             level: level,
             detail: detail,
             transcript: transcript,
-            onCancel: onCancel
+            onCancel: onCancel,
+            onCopy: copyAction
         )
         let isTypingReminder = state.title == OverlayState.typingReminder.title
         let compactWidth: CGFloat = hasAction ? 328 : 280
@@ -475,6 +482,10 @@ private struct DictationOverlayView: View {
         presentation.onCancel
     }
 
+    private var onCopy: (() -> Void)? {
+        presentation.onCopy
+    }
+
     private var cleanedTranscript: String {
         (transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -621,6 +632,7 @@ private struct DictationOverlayView: View {
                 Button {
                     if copyOverlayTranscript(cleanedTranscript) {
                         copiedTranscript = true
+                        onCopy?()
                     }
                 } label: {
                     Label(copiedTranscript ? "Copied" : "Copy transcript", systemImage: copiedTranscript ? "checkmark" : "doc.on.doc")
@@ -12354,8 +12366,7 @@ final class MenuBarModel: ObservableObject {
                 overlayController.show(
                     state: .readyToCopy,
                     detail: activeDictationForcesPreviewOnly ? "Started from QuietType" : "Preview only",
-                    transcript: result.text,
-                    onCancel: { [weak self] in self?.overlayController.hide() }
+                    transcript: result.text
                 )
                 overlayController.hide(after: 4.0)
             } else {
@@ -12363,8 +12374,7 @@ final class MenuBarModel: ObservableObject {
                 overlayController.show(
                     state: .failed,
                     detail: "Copy the transcript instead",
-                    transcript: result.text,
-                    onCancel: { [weak self] in self?.overlayController.hide() }
+                    transcript: result.text
                 )
             }
             completeVoiceFlowMetrics(
