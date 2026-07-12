@@ -19,9 +19,9 @@
   <key>CFBundleShortVersionString</key>
   <string>1.0.0</string>
   <key>CFBundleVersion</key>
-  <string>43</string>
+  <string>44</string>
   <key>QuietTypeReleaseLabel</key>
-  <string>rc.17</string>
+  <string>rc.18</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>

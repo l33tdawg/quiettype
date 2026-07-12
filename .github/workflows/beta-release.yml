@@ -15,11 +15,11 @@ on:
       build:
         description: "Monotonic app build number"
         required: true
-        default: "43"
+        default: "44"
       release_label:
         description: "Release label"
         required: true
-        default: "rc.17"
+        default: "rc.18"
 
 permissions:
   contents: write
