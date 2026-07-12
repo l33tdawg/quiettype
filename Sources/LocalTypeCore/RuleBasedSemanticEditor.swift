@@ -85,10 +85,9 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
 
         var result = text
         let replacementPatterns = [
-            #"\b(.+?)\s+sorry\s+(.+)$"#,
-            #"\b(.+?)\s+actually\s+say\s+(.+)$"#,
-            #"\b(.+?)\s+actually\s+(.+)$"#,
-            #"\b(.+?)\s+make that\s+(.+)$"#
+            #"\b(.+?)[,;]\s+sorry[,]?\s+(?:make that\s+)?(.+)$"#,
+            #"\b(.+?)[,;]\s+actually[,]?\s+say\s+(.+)$"#,
+            #"\b(.+?)[,;]\s+make that\s+(.+)$"#
         ]
 
         for pattern in replacementPatterns {
@@ -112,8 +111,13 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         let replacementWords = replacement.split(separator: " ").map(String.init)
 
         guard let firstReplacement = replacementWords.first?.lowercased(),
-              let overlapIndex = prefixWords.lastIndex(where: { $0.lowercased() == firstReplacement }) else {
-            return replacement
+              let overlapIndex = prefixWords.lastIndex(where: {
+                  $0.trimmingCharacters(in: .punctuationCharacters).lowercased() == firstReplacement
+              }) else {
+            guard !prefixWords.isEmpty else {
+                return replacement
+            }
+            return (prefixWords.dropLast() + replacementWords).joined(separator: " ")
         }
 
         return (prefixWords.prefix(overlapIndex) + replacementWords).joined(separator: " ")
@@ -554,7 +558,17 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             || lower.hasPrefix("by contrast")
             || lower.hasPrefix("that said")
             || lower.hasPrefix("meanwhile")
+            || lower.hasPrefix("now, to me")
         if hasExplicitTransition {
+            return true
+        }
+
+        // In long-form explanatory speech, "and then when ..." often moves
+        // from describing how something works to the next experimental phase
+        // or observation. Require a developed paragraph so ordinary narrative
+        // sequences are not fragmented.
+        if currentParagraph.count >= 3,
+           lower.hasPrefix("and then when ") {
             return true
         }
 

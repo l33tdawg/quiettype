@@ -60,6 +60,51 @@ final class DictationPipelineTests: XCTestCase {
         XCTAssertTrue(result.text.localizedCaseInsensitiveContains("looks like a real menu item"))
     }
 
+    func testPreservesOrdinaryActuallyWithoutDroppingEarlierLongTranscript() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+        let raw = "Given extended DMT there is a new technology called DMTX where DMT is fed directly into the bloodstream by drip. It is possible to keep the individual in the peak DMT state for hours. With DMTX these volunteers actually could be kept in the peak state for hours. Unlike LSD nobody rapidly builds up tolerance."
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: raw, isFinal: true),
+            context: context
+        )
+
+        XCTAssertTrue(result.text.hasPrefix("Given extended DMT"), result.text)
+        XCTAssertTrue(result.text.contains("volunteers actually could be kept"), result.text)
+        XCTAssertTrue(result.text.hasSuffix("nobody rapidly builds up tolerance."), result.text)
+    }
+
+    func testAppliesExplicitSorryCorrectionWithoutDroppingSentencePrefix() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "Schedule the benchmark review for Thursday, sorry, Friday at three pm and invite the performance team",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "Schedule the benchmark review for Friday at 3 PM and invite the performance team."
+        )
+    }
+
+    func testPreservesSemanticSorryWithoutTreatingItAsCorrection() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "I am sorry this took longer than expected", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "I am sorry this took longer than expected.")
+    }
+
     func testProfanityFilterMasksExplicitWordsByDefault() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Slack", profile: .messaging)
@@ -704,6 +749,30 @@ final class DictationPipelineTests: XCTestCase {
         XCTAssertEqual(
             result.text,
             "I tested the latest build. It handled the long recording correctly. I also checked the shorter sample and found no regression."
+        )
+    }
+
+    func testGroupsObservedDMTXExplanationAtStudyAndInterpretationTransitions() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Safari", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "Given extended DMT, there's a new technology, DMTX, where the DMT is fed directly into the bloodstream by drip. And it's possible to keep the individual in the peak DMT state, which normally when you smoke or vape DMT, you're looking if you're lucky at 10 minutes, or if you're unlucky, if it's a bad journey, because those 10 minutes can seem like forever, but with the DMTX, with the drip feeding of DMT into the bloodstream, these volunteers actually could be kept in the peak state for hours. And unlike LSD, where you rapidly build up tolerance, nobody ever builds up tolerance to DMT. It always hits you with the same power, even if you took it yesterday and the day before, and you're taking it tomorrow as well, it's still going to have that same power. There's no tolerance there. So that's how they can use that lack of tolerance to keep the volunteers in this state. And then when they debrief those volunteers, they're also putting them in MRI scanners and looking at what's happening in the brain. But when they debrief them, they're all talking about encounters with sentient others. They're exchanging their experiences, and it's all about encounters with sentient others who wish to teach them moral lessons. Now, to me, that's wild. What is going on here? How do we account for this? Yeah, I get the notion of hallucinations and brightly colored visuals, but the moral lessons that come with it, those are very old.",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            Given extended DMT, there's a new technology, DMTX, where the DMT is fed directly into the bloodstream by drip. And it's possible to keep the individual in the peak DMT state, which normally when you smoke or vape DMT, you're looking if you're lucky at 10 minutes, or if you're unlucky, if it's a bad journey, because those 10 minutes can seem like forever, but with the DMTX, with the drip feeding of DMT into the bloodstream, these volunteers actually could be kept in the peak state for hours. And unlike LSD, where you rapidly build up tolerance, nobody ever builds up tolerance to DMT. It always hits you with the same power, even if you took it yesterday and the day before, and you're taking it tomorrow as well, it's still going to have that same power. There's no tolerance there. So that's how they can use that lack of tolerance to keep the volunteers in this state.
+
+            And then when they debrief those volunteers, they're also putting them in MRI scanners and looking at what's happening in the brain. But when they debrief them, they're all talking about encounters with sentient others. They're exchanging their experiences, and it's all about encounters with sentient others who wish to teach them moral lessons.
+
+            Now, to me, that's wild. What is going on here? How do we account for this? Yeah, I get the notion of hallucinations and brightly colored visuals, but the moral lessons that come with it, those are very old.
+            """
         )
     }
 
