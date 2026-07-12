@@ -667,6 +667,46 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testStartsParagraphWhenLongExplanationSwitchesToSpeakersView() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "The same iconography. People paint their visions after ayahuasca sessions. People were painting in Europe, in the cave of Lascaux, for example. And of course they had access to psilocybe mushrooms in prehistoric Europe. There's a remarkable commonality in the imagery that is painted. I like to give credit where credit is due, and there are two names that need to be mentioned here. One is the late great Terence McKenna and his book Food of the Gods, where he proposed the idea very strongly that it was our ancestral encounters with psychedelics that made us fully human. That's what switched on the modern human mind.",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            The same iconography. People paint their visions after ayahuasca sessions. People were painting in Europe, in the cave of Lascaux, for example. And of course they had access to psilocybe mushrooms in prehistoric Europe. There's a remarkable commonality in the imagery that is painted.
+
+            I like to give credit where credit is due, and there are 2 names that need to be mentioned here. 1 is the late great Terence McKenna and his book Food of the Gods, where he proposed the idea very strongly that it was our ancestral encounters with psychedelics that made us fully human. That's what switched on the modern human mind.
+            """
+        )
+    }
+
+    func testKeepsContinuingFirstPersonSentencesInOneParagraph() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "I tested the latest build. It handled the long recording correctly. I also checked the shorter sample and found no regression.",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "I tested the latest build. It handled the long recording correctly. I also checked the shorter sample and found no regression."
+        )
+    }
+
     func testDoesNotSplitExplanatoryCuesAfterOpenConnectors() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Notes", profile: .notes)

@@ -459,15 +459,10 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             return groupEmailSentences(sentences)
         }
 
-        let hasCueParagraph = sentences.dropFirst().contains(where: shouldStartNewParagraph)
-        guard hasCueParagraph else {
-            return [sentences]
-        }
-
         var paragraphs: [[String]] = []
         var current: [String] = []
         for sentence in sentences {
-            if shouldStartNewParagraph(with: sentence), !current.isEmpty {
+            if shouldStartNewParagraph(with: sentence, after: current), !current.isEmpty {
                 paragraphs.append(current)
                 current = [sentence]
             } else {
@@ -535,9 +530,9 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             || lower.hasPrefix("regards,")
     }
 
-    private func shouldStartNewParagraph(with sentence: String) -> Bool {
+    private func shouldStartNewParagraph(with sentence: String, after currentParagraph: [String]) -> Bool {
         let lower = sentence.lowercased()
-        return lower.hasPrefix("the main issue")
+        let hasExplicitTransition = lower.hasPrefix("the main issue")
             || lower.hasPrefix("the key problem")
             || lower.hasPrefix("the next step")
             || lower.hasPrefix("here's where")
@@ -548,6 +543,47 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             || lower.hasPrefix("finally")
             || lower.hasPrefix("for the ")
             || lower.hasPrefix("on the ")
+            || lower.hasPrefix("another issue")
+            || lower.hasPrefix("another point")
+            || lower.hasPrefix("the other issue")
+            || lower.hasPrefix("moving on")
+            || lower.hasPrefix("turning to")
+            || lower.hasPrefix("as for ")
+            || lower.hasPrefix("regarding ")
+            || lower.hasPrefix("in contrast")
+            || lower.hasPrefix("by contrast")
+            || lower.hasPrefix("that said")
+            || lower.hasPrefix("meanwhile")
+        if hasExplicitTransition {
+            return true
+        }
+
+        // A sustained third-person explanation that deliberately switches to
+        // the speaker's own view is a strong structural transition even when
+        // it lacks a stock phrase such as "the next point". Requiring at least
+        // two completed sentences and no earlier first-person opening keeps
+        // ordinary first-person continuation in a single paragraph.
+        guard currentParagraph.count >= 2,
+              startsWithFirstPersonSubject(sentence) else {
+            return false
+        }
+        return !currentParagraph.contains(where: startsWithFirstPersonSubject)
+    }
+
+    private func startsWithFirstPersonSubject(_ sentence: String) -> Bool {
+        let lower = sentence.lowercased()
+        return lower.hasPrefix("i ")
+            || lower.hasPrefix("i'm ")
+            || lower.hasPrefix("i've ")
+            || lower.hasPrefix("i'd ")
+            || lower.hasPrefix("i'll ")
+            || lower.hasPrefix("we ")
+            || lower.hasPrefix("we're ")
+            || lower.hasPrefix("we've ")
+            || lower.hasPrefix("we'd ")
+            || lower.hasPrefix("we'll ")
+            || lower.hasPrefix("my ")
+            || lower.hasPrefix("our ")
     }
 
     private func wordCount(in text: String) -> Int {
