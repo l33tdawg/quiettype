@@ -83,16 +83,26 @@ struct LocalTypeVoiceBenchmarkCLI {
         let frameSampleCount = max(1, audio.sampleRate / 4)
         let started = DispatchTime.now().uptimeNanoseconds
         var offset = 0
+        var speechActivityTracker = SpeechActivityTracker()
         while offset < audio.samples.count {
             let end = min(audio.samples.count, offset + frameSampleCount)
+            let frameSamples = Array(audio.samples[offset..<end])
             try await client.append(
                 AudioFrame(
-                    samples: Array(audio.samples[offset..<end]),
+                    samples: frameSamples,
                     sampleRate: audio.sampleRate,
                     timestamp: Double(offset) / Double(audio.sampleRate)
                 )
             )
             let duration = Double(end - offset) / Double(audio.sampleRate)
+            let rms = sqrt(
+                frameSamples.reduce(0.0) { partial, sample in
+                    partial + Double(sample * sample)
+                } / Double(max(frameSamples.count, 1))
+            )
+            if speechActivityTracker.observe(rms: rms, frameDurationSeconds: duration).didEndSpeech {
+                await client.flushAtSpeechBoundary()
+            }
             try await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
             offset = end
         }

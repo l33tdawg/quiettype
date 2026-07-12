@@ -13,6 +13,15 @@ public enum LongDictationTranscription {
         return Double(sampleCount) / Double(sampleRate) >= activationDurationSeconds
     }
 
+    public static func requiresPostReleaseRecovery(
+        sampleCount: Int,
+        sampleRate: Int,
+        hasCompleteLiveTranscript: Bool
+    ) -> Bool {
+        requiresChunkedRecovery(sampleCount: sampleCount, sampleRate: sampleRate)
+            && !hasCompleteLiveTranscript
+    }
+
     public static func makeChunks(
         samples: [Float],
         sampleRate: Int,

@@ -76,7 +76,12 @@ index 26ceee1..d6295c7 100644
 +    private var isCancelled = false
 +    private var heardSpeechSinceLastDecode = false
 +    private var consecutiveSilentSamples = 0
++    private var pendingFlushEndSample: Int?
 +    private let minimumNewAudioSeconds = 12.0
++    private let minimumFlushAudioSeconds = 4.0
++    private let maximumNewAudioSeconds = 16.0
++    private let overlapDurationSeconds = 3.0
++    private let boundedCadenceActivationSeconds = 30.0
 +    private let minimumPauseSeconds = 0.55
 +    private let speechRMSThreshold: Float = 0.012
 +
@@ -107,6 +112,17 @@ index 26ceee1..d6295c7 100644
 +            if !isDecoding {
 +                startDecode(endSample: sourceSamples.count, final: true)
 +            }
++        case "flush":
++            let endSample = sourceSamples.count
++            let pendingSeconds = Double(endSample - committedSourceSampleCount) / Double(sampleRate)
++            guard pendingSeconds >= minimumFlushAudioSeconds else {
++                return
++            }
++            if isDecoding {
++                pendingFlushEndSample = max(pendingFlushEndSample ?? 0, endSample)
++            } else {
++                startDecode(endSample: endSample, final: false)
++            }
 +        case "cancel":
 +            cancel()
 +        default:
@@ -128,10 +144,14 @@ index 26ceee1..d6295c7 100644
 +            consecutiveSilentSamples += decoded.count
 +        }
 +        let pendingSeconds = Double(sourceSamples.count - committedSourceSampleCount) / Double(sampleRate)
++        let reachedPauseBoundary = pendingSeconds >= minimumNewAudioSeconds
++            && Double(consecutiveSilentSamples) / Double(sampleRate) >= minimumPauseSeconds
++        let totalAudioSeconds = Double(sourceSamples.count) / Double(sampleRate)
++        let reachedMaximumWindow = totalAudioSeconds >= boundedCadenceActivationSeconds
++            && pendingSeconds >= maximumNewAudioSeconds
 +        if !isDecoding,
 +           heardSpeechSinceLastDecode,
-+           pendingSeconds >= minimumNewAudioSeconds,
-+           Double(consecutiveSilentSamples) / Double(sampleRate) >= minimumPauseSeconds {
++           (reachedPauseBoundary || reachedMaximumWindow) {
 +            heardSpeechSinceLastDecode = false
 +            consecutiveSilentSamples = 0
 +            startDecode(endSample: sourceSamples.count, final: false)
@@ -170,9 +190,10 @@ index 26ceee1..d6295c7 100644
 +
 +        isDecoding = true
 +        let sourceStartSample = committedSourceSampleCount
-+        let sourceSnapshot = Array(sourceSamples[sourceStartSample..<endSample])
-+        let sourceSampleCount = sourceSnapshot.count
 +        let rate = sampleRate
++        let overlapSampleCount = sourceStartSample == 0 ? 0 : Int(overlapDurationSeconds * Double(rate))
++        let decodeStartSample = max(0, sourceStartSample - overlapSampleCount)
++        let sourceSnapshot = Array(sourceSamples[decodeStartSample..<endSample])
 +        Task {
 +            do {
 +                let audio = Self.resample(sourceSnapshot, from: rate, to: 16_000)
@@ -184,7 +205,7 @@ index 26ceee1..d6295c7 100644
 +                decodeCompleted(
 +                    merged,
 +                    sourceStartSample: sourceStartSample,
-+                    sourceEndSample: sourceStartSample + sourceSampleCount,
++                    sourceEndSample: endSample,
 +                    requestedFinal: final
 +                )
 +            } catch {
@@ -239,7 +260,14 @@ index 26ceee1..d6295c7 100644
 +            )
 +        )
 +
-+        if isStopping {
++        if let flushEndSample = pendingFlushEndSample,
++           flushEndSample > committedSourceSampleCount {
++            pendingFlushEndSample = nil
++            startDecode(
++                endSample: flushEndSample,
++                final: isStopping && flushEndSample == sourceSamples.count
++            )
++        } else if isStopping {
 +            startDecode(endSample: sourceSamples.count, final: true)
 +        } else {
 +            startPauseDecodeIfReady()
@@ -266,9 +294,66 @@ index 26ceee1..d6295c7 100644
 +
 +    private func mergedText(_ transcripts: [String]) -> String {
 +        transcripts
-+            .joined(separator: " ")
++            .reduce("") { Self.mergeOverlappingText($0, $1) }
 +            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
 +            .trimmingCharacters(in: .whitespacesAndNewlines)
++    }
++
++    private static func mergeOverlappingText(_ existing: String, _ next: String) -> String {
++        guard !existing.isEmpty else { return next }
++        guard !next.isEmpty else { return existing }
++        let existingWords = existing.split(whereSeparator: { $0.isWhitespace }).map(String.init)
++        let nextWords = next.split(whereSeparator: { $0.isWhitespace }).map(String.init)
++        let maximumOverlap = min(40, existingWords.count, nextWords.count)
++        var overlapCount = 0
++        if maximumOverlap > 0 {
++            for count in stride(from: maximumOverlap, through: 1, by: -1) {
++                let lhs = existingWords.suffix(count).map(normalizedWord)
++                let rhs = nextWords.prefix(count).map(normalizedWord)
++                if lhs == rhs, !lhs.allSatisfy({ $0.isEmpty }) {
++                    overlapCount = count
++                    break
++                }
++            }
++        }
++        let nextDropCount = overlapCount > 0
++            ? overlapCount
++            : anchoredOverlapDropCount(existingWords: existingWords, nextWords: nextWords)
++        let suffix = nextWords.dropFirst(nextDropCount).joined(separator: " ")
++        return suffix.isEmpty ? existing : "\(existing) \(suffix)"
++    }
++
++    private static func anchoredOverlapDropCount(existingWords: [String], nextWords: [String]) -> Int {
++        let existing = existingWords.map(normalizedWord)
++        let next = nextWords.map(normalizedWord)
++        let existingStart = max(0, existing.count - 60)
++        let nextStartLimit = min(12, next.count)
++        var bestRun = 0
++        var bestDropCount = 0
++        guard existingStart < existing.count, nextStartLimit > 0 else { return 0 }
++        for lhsStart in existingStart..<existing.count {
++            for rhsStart in 0..<nextStartLimit {
++                var run = 0
++                while lhsStart + run < existing.count,
++                      rhsStart + run < next.count,
++                      !existing[lhsStart + run].isEmpty,
++                      existing[lhsStart + run] == next[rhsStart + run] {
++                    run += 1
++                }
++                if lhsStart + run == existing.count, run >= 4, run > bestRun {
++                    bestRun = run
++                    bestDropCount = rhsStart + run
++                }
++            }
++        }
++        return bestDropCount
++    }
++
++    private static func normalizedWord(_ word: String) -> String {
++        word.lowercased().unicodeScalars
++            .filter { CharacterSet.alphanumerics.contains($0) }
++            .map(String.init)
++            .joined()
 +    }
 +
 +    private func send(_ event: Event) {

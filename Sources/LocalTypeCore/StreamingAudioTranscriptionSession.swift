@@ -174,7 +174,10 @@ public actor StreamingAudioTranscriptionSession {
                 }
             }
 
-            let suffix = nextWords.dropFirst(overlapCount).joined(separator: " ")
+            let nextDropCount = overlapCount > 0
+                ? overlapCount
+                : Self.anchoredOverlapDropCount(existingWords: existingWords, nextWords: nextWords)
+            let suffix = nextWords.dropFirst(nextDropCount).joined(separator: " ")
             return suffix.isEmpty ? merged : "\(merged) \(suffix)"
         }
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -189,6 +192,37 @@ public actor StreamingAudioTranscriptionSession {
 
     private static func normalizedWord(_ word: String) -> String {
         word.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+    }
+
+    private static func anchoredOverlapDropCount(existingWords: [String], nextWords: [String]) -> Int {
+        let existing = existingWords.map(normalizedWord)
+        let next = nextWords.map(normalizedWord)
+        let existingStart = max(0, existing.count - 60)
+        let nextStartLimit = min(12, next.count)
+        var bestRun = 0
+        var bestDropCount = 0
+
+        guard existingStart < existing.count, nextStartLimit > 0 else {
+            return 0
+        }
+        for lhsStart in existingStart..<existing.count {
+            for rhsStart in 0..<nextStartLimit {
+                var run = 0
+                while lhsStart + run < existing.count,
+                      rhsStart + run < next.count,
+                      !existing[lhsStart + run].isEmpty,
+                      existing[lhsStart + run] == next[rhsStart + run] {
+                    run += 1
+                }
+                if lhsStart + run == existing.count,
+                   run >= 4,
+                   run > bestRun {
+                    bestRun = run
+                    bestDropCount = rhsStart + run
+                }
+            }
+        }
+        return bestDropCount
     }
 }
 

@@ -92,6 +92,19 @@ final class StreamingAudioTranscriptionSessionTests: XCTestCase {
         XCTAssertEqual(result.coveredDurationSeconds, 1.75, accuracy: 0.001)
     }
 
+    func testMergesAnchoredOverlapWithStrayLeadingWord() {
+        let existing = "And then when they debrief those volunteers, they're also putting them in MRI scanners and looking at what's happening in the brain."
+        let next = "of putting them in MRI scanners and looking at what's happening in the brain. But when they debrief them, they're talking about sentient others."
+
+        XCTAssertEqual(
+            StreamingAudioTranscriptionSession.mergeOverlappingTranscripts([
+                (text: existing, hasOverlap: false),
+                (text: next, hasOverlap: true)
+            ]),
+            "And then when they debrief those volunteers, they're also putting them in MRI scanners and looking at what's happening in the brain. But when they debrief them, they're talking about sentient others."
+        )
+    }
+
     func testTailRescueMergesLongOverlapWithoutDuplicatingPriorSentence() {
         let existing = "There is very serious work now being done at Imperial College in London and at the University of California."
         let rescue = "work now being done at Imperial College in London and at the University of California. Let me show you how we"

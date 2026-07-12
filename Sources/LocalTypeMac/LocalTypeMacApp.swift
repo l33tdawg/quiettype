@@ -11468,7 +11468,7 @@ final class MenuBarModel: ObservableObject {
             at: dictationReleasedAt ?? Date(),
             recordingDuration: recordingDuration
         )
-        showProcessingOverlay(detail: "Transcribing locally")
+        showProcessingOverlay(detail: "Finishing local transcription")
 
         let durationText = String(format: "%.1f", recordingDuration)
         if capturedFrameCount == 0 {
@@ -11515,18 +11515,22 @@ final class MenuBarModel: ObservableObject {
                 sampleCount: capturedSampleCount,
                 sampleRate: recordingSampleRate
             )
-            let longRecordingSamples = requiresChunkedRecovery ? recordedSamples : nil
-            let liveResult: LiveTranscriptionResult?
             if requiresChunkedRecovery {
-                await cancelLiveTranscription()
-                liveResult = nil
-            } else {
-                liveResult = await finishLiveTranscription(
-                    expectedSampleCount: capturedSampleCount,
-                    sampleRate: recordingSampleRate
-                )
+                statusMessage = "Long dictation detected"
+                showProcessingOverlay(detail: "Long dictation detected · finishing locally")
             }
-            if liveResult != nil || requiresChunkedRecovery {
+            let liveResult = await finishLiveTranscription(
+                expectedSampleCount: capturedSampleCount,
+                sampleRate: recordingSampleRate,
+                timeoutSeconds: requiresChunkedRecovery ? 15.0 : 5.0
+            )
+            let requiresPostReleaseRecovery = LongDictationTranscription.requiresPostReleaseRecovery(
+                sampleCount: capturedSampleCount,
+                sampleRate: recordingSampleRate,
+                hasCompleteLiveTranscript: liveResult != nil
+            )
+            let longRecordingSamples = requiresPostReleaseRecovery ? recordedSamples : nil
+            if liveResult != nil || requiresPostReleaseRecovery {
                 await cancelIncrementalTranscription()
             } else {
                 incrementalCapturedDurationSeconds = Double(capturedSampleCount) / Double(max(recordingSampleRate, 1))
@@ -11629,7 +11633,9 @@ final class MenuBarModel: ObservableObject {
             voiceFlowMetricAccumulator?.recordAudioFrame(activity: activity)
         }
         let sentToLiveStream = await appendLiveTranscriptionFrame(frame)
-        if !sentToLiveStream {
+        if sentToLiveStream, activity.didEndSpeech {
+            await liveTranscriptionClient?.flushAtSpeechBoundary()
+        } else if !sentToLiveStream {
             beginPauseAlignedFallbackIfNeeded(sampleRate: frame.sampleRate)
             await appendIncrementalFrame(frame, activity: activity, elapsed: elapsed)
         }
@@ -11771,12 +11777,16 @@ final class MenuBarModel: ObservableObject {
         return isValid ? text : nil
     }
 
-    private func finishLiveTranscription(expectedSampleCount: Int, sampleRate: Int) async -> LiveTranscriptionResult? {
+    private func finishLiveTranscription(
+        expectedSampleCount: Int,
+        sampleRate: Int,
+        timeoutSeconds: TimeInterval = 5.0
+    ) async -> LiveTranscriptionResult? {
         guard let client = liveTranscriptionClient else {
             return nil
         }
         liveTranscriptionClient = nil
-        guard let result = await client.finish(timeoutSeconds: 2.0),
+        guard let result = await client.finish(timeoutSeconds: timeoutSeconds),
               result.sampleRate == sampleRate,
               abs(result.coveredSampleCount - expectedSampleCount) <= max(1, sampleRate / 4),
               !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -11978,6 +11988,7 @@ final class MenuBarModel: ObservableObject {
                !longRecordingSamples.isEmpty {
                 do {
                     statusMessage = "Recovering complete long dictation"
+                    showProcessingOverlay(detail: "Long dictation detected · completing locally")
                     recoveredLongTranscript = try await transcribeLongRecording(
                         samples: longRecordingSamples,
                         sampleRate: sampleRate

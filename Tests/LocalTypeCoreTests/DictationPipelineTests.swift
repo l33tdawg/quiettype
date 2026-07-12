@@ -981,6 +981,28 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testRepairsButMisheardAsBroInObservedDMTXContexts() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Safari", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "Bro when they debrief them, they're talking about sentient others. Bro now that most of them have left, they're exchanging experiences. I understand the visuals, bro the moral lessons are very old.",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            But when they debrief them, they're talking about sentient others. But now that most of them have left, they're exchanging experiences.
+
+            I understand the visuals, but the moral lessons are very old.
+            """
+        )
+    }
+
     func testRepairsButMisheardAsBroBeforeNoLongerBaseVerb() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Notes", profile: .notes)

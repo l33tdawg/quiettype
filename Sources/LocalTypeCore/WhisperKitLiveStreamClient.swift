@@ -138,6 +138,13 @@ public actor WhisperKitLiveStreamClient {
         }
     }
 
+    public func flushAtSpeechBoundary() async {
+        guard let socket else {
+            return
+        }
+        try? await send(Control(type: "flush", sampleRate: nil), over: socket)
+    }
+
     public func finish(timeoutSeconds: TimeInterval = 15) async -> LiveTranscriptionResult? {
         guard let socket else {
             return nil

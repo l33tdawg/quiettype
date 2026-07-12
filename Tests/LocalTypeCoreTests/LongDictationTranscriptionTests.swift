@@ -12,6 +12,23 @@ final class LongDictationTranscriptionTests: XCTestCase {
         )
     }
 
+    func testSkipsPostReleaseRecoveryWhenLongLiveTranscriptIsComplete() {
+        XCTAssertFalse(
+            LongDictationTranscription.requiresPostReleaseRecovery(
+                sampleCount: 101_200,
+                sampleRate: 1_000,
+                hasCompleteLiveTranscript: true
+            )
+        )
+        XCTAssertTrue(
+            LongDictationTranscription.requiresPostReleaseRecovery(
+                sampleCount: 101_200,
+                sampleRate: 1_000,
+                hasCompleteLiveTranscript: false
+            )
+        )
+    }
+
     func testChunksObservedLongRecordingWithCompleteNonDuplicatedCoverage() throws {
         let sampleRate = 100
         let sampleCount = 6_540
