@@ -1003,6 +1003,36 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testRepairsButMisheardAsBroBeforeIllSayItAgain() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Safari", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "I've said this a dozen times, bro I'll say it again. If I had the power to do so, I would make it a law.",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "I've said this a dozen times, but I'll say it again. If I had the power to do so, I would make it a law."
+        )
+    }
+
+    func testPreservesGenuineBroBeforePersonalPromise() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "bro I'll send it again after lunch", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "Bro I'll send it again after lunch.")
+    }
+
     func testRepairsButMisheardAsBroBeforeNoLongerBaseVerb() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Notes", profile: .notes)
