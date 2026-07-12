@@ -1164,8 +1164,25 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
                 with: "\(number) $1",
                 options: [.regularExpression, .caseInsensitive]
             )
+            let followingWordPattern: String
+            if word == "one" {
+                // "One" is often a pronoun or part of a grammatical phrase,
+                // not a quantity. Preserve forms such as "one is", "one
+                // where", "one of", and the observed "one continuous map".
+                let grammaticalFollowers = [
+                    "is", "isn't", "was", "wasn't", "were", "has", "had",
+                    "does", "did", "will", "would", "can", "could", "should",
+                    "may", "might", "must", "where", "who", "whom", "whose",
+                    "that", "which", "of", "another", "continuous"
+                ].joined(separator: "|")
+                followingWordPattern = #"\bone\s+(?!(?:"#
+                    + grammaticalFollowers
+                    + #")\b)([A-Za-z][A-Za-z-]*)\b"#
+            } else {
+                followingWordPattern = #"\b\#(word)\s+([A-Za-z][A-Za-z-]*)\b"#
+            }
             result = result.replacingOccurrences(
-                of: #"\b\#(word)\s+([A-Za-z][A-Za-z-]*)\b"#,
+                of: followingWordPattern,
                 with: "\(number) $1",
                 options: [.regularExpression, .caseInsensitive]
             )

@@ -684,7 +684,7 @@ final class DictationPipelineTests: XCTestCase {
             """
             The same iconography. People paint their visions after ayahuasca sessions. People were painting in Europe, in the cave of Lascaux, for example. And of course they had access to psilocybe mushrooms in prehistoric Europe. There's a remarkable commonality in the imagery that is painted.
 
-            I like to give credit where credit is due, and there are 2 names that need to be mentioned here. 1 is the late great Terence McKenna and his book Food of the Gods, where he proposed the idea very strongly that it was our ancestral encounters with psychedelics that made us fully human. That's what switched on the modern human mind.
+            I like to give credit where credit is due, and there are 2 names that need to be mentioned here. One is the late great Terence McKenna and his book Food of the Gods, where he proposed the idea very strongly that it was our ancestral encounters with psychedelics that made us fully human. That's what switched on the modern human mind.
             """
         )
     }
@@ -721,7 +721,7 @@ final class DictationPipelineTests: XCTestCase {
 
         XCTAssertEqual(
             result.text,
-            "The diagram remains accurate because the script identifies each sound and you can think of the output as 1 continuous map."
+            "The diagram remains accurate because the script identifies each sound and you can think of the output as one continuous map."
         )
     }
 
@@ -926,7 +926,25 @@ final class DictationPipelineTests: XCTestCase {
 
         XCTAssertEqual(
             result.text,
-            "It is 1 where you contribute to judgement tastes and decisions but no longer carry coordination overhead."
+            "It is one where you contribute to judgement tastes and decisions but no longer carry coordination overhead."
+        )
+    }
+
+    func testPreservesGrammaticalOneWhileNormalizingActualQuantities() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "One is the primary option. This one was tested first. It is one where the user stays in control. One of the other options took three years. There are two names to review at three pm.",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "One is the primary option. This one was tested first. It is one where the user stays in control. One of the other options took 3 years. There are 2 names to review at 3 PM."
         )
     }
 
