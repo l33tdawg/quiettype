@@ -519,6 +519,42 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testRestoresCapitalizedSentenceBoundariesFromObservedLiveTranscript() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "Just trying the new version seems to be quite stable so far No major bugs seen What do you think should we call this 1.0.0 final?",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "Just trying the new version seems to be quite stable so far. No major bugs seen. What do you think should we call this 1.0.0 final?"
+        )
+    }
+
+    func testDoesNotSplitCapitalizedQuestionWordsInsideTitles() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "the report is called No Major Bugs Seen the appendix is What We Know Today and the memo is titled Why this happens",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "The report is called No Major Bugs Seen the appendix is What We Know Today and the memo is titled Why this happens."
+        )
+    }
+
     func testRuleEditorDoesNotGuessContextualASRConfusion() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Slack", profile: .messaging)

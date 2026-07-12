@@ -236,6 +236,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
 
     private func inferSentences(in text: String, profile: AppProfile) -> String {
         var result = normalizeWhitespacePreservingParagraphs(text)
+        result = inferCapitalizedSentenceBoundaries(in: result)
         guard !result.contains(Self.paragraphBreakToken), result.count >= 120 || profile == .email else {
             return result
         }
@@ -250,6 +251,34 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             guard let matchRange = Range(match.range, in: result),
                   let cueRange = Range(match.range(at: 1), in: result),
                   shouldInferSentenceBoundary(before: matchRange, cue: String(result[cueRange]), in: result) else {
+                continue
+            }
+            result.replaceSubrange(matchRange, with: ". \(result[cueRange])")
+        }
+        return normalizeWhitespacePreservingParagraphs(result)
+    }
+
+    /// Live Whisper can preserve the capitalization that follows a deliberate
+    /// pause while omitting the punctuation itself. Recover only strong
+    /// discourse starters, and require a complete preceding clause so names
+    /// and ordinary title casing remain untouched.
+    private func inferCapitalizedSentenceBoundaries(in text: String) -> String {
+        var result = text
+        guard let regex = try? NSRegularExpression(
+            pattern: #"(?<![.!?])\s+(No|What|Why|How|When|Where|Who)\b(?!\s+\p{Lu})"#
+        ) else {
+            return result
+        }
+
+        let range = NSRange(result.startIndex..<result.endIndex, in: result)
+        for match in regex.matches(in: result, range: range).reversed() {
+            guard let matchRange = Range(match.range, in: result),
+                  let cueRange = Range(match.range(at: 1), in: result) else {
+                continue
+            }
+            let prior = inferredBoundaryPriorText(before: matchRange.lowerBound, in: result)
+            guard wordCount(in: prior) >= 4,
+                  !endsWithOpenConnector(prior) else {
                 continue
             }
             result.replaceSubrange(matchRange, with: ". \(result[cueRange])")
@@ -310,7 +339,20 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             " i think",
             " i guess",
             " it seems",
-            " not sure"
+            " not sure",
+            " is",
+            " are",
+            " was",
+            " were",
+            " says",
+            " reads",
+            " asks",
+            " asked",
+            " called",
+            " titled",
+            " named",
+            " labeled",
+            " labelled"
         ]
         return suffixes.contains { lower == String($0.dropFirst()) || lower.hasSuffix($0) }
     }
