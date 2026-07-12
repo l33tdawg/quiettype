@@ -77,11 +77,6 @@ provider. The macOS app is native Swift/SwiftUI/AppKit, so microphone capture,
 Accessibility insertion, hotkeys, Keychain-backed storage and model execution
 stay aligned with Apple platform security.
 
-For reproducible local debugging, QuietType retains one owner-only plaintext
-WAV of the latest successful dictation and replaces it after the next success.
-It stays on the Mac, is never written to SAGE, and can be removed with Clear
-review audio in Settings.
-
 ### Governed local memory with SAGE
 
 QuietType uses [SAGE](https://github.com/l33tdawg/sage) as the mandatory
@@ -141,7 +136,7 @@ should not leave the Mac.
 
 | Area | Default |
 | --- | --- |
-| Voice audio | Transient local capture; deleted after transcription by default |
+| Voice audio | Local capture for on-device transcription; never uploaded |
 | Voice note audio | Encrypted local file |
 | Voice training samples | Local only |
 | Raw transcript text | Local only |
@@ -211,4 +206,4 @@ swift run localtype-session "ask codex to review the auth flow and preserve the 
 
 QuietType is by Dhillon "l33tdawg" Kannabhiran.
 
-Contact: [dhillon@levelupctf.com](mailto:dhillon@levelupctf.com)
+Bug reports: [l33tdawg@hackinthebox.org](mailto:l33tdawg@hackinthebox.org) or [open a GitHub issue](https://github.com/l33tdawg/quiettype/issues/new).

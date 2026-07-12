@@ -218,5 +218,5 @@ Speak freely. Transcribe locally. Nothing leaves your Mac.
 
 Download the DMG from the GitHub prerelease, drag QuietType to Applications, then open it and follow the setup prompts for Microphone and Accessibility. Voice training is optional.
 
-Contact: Dhillon "l33tdawg" Kannabhiran <dhillon@levelupctf.com>
+Bug reports: Dhillon "l33tdawg" Kannabhiran <l33tdawg@hackinthebox.org> or https://github.com/l33tdawg/quiettype/issues/new
 ```

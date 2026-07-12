@@ -2561,7 +2561,7 @@ struct TesterView: View {
                     ))
                     .toggleStyle(.checkbox)
                     .tint(.primary)
-                    .quickTooltip("Keep the raw and polished transcript text in local review history so you can correct it later. This does not retain microphone audio.")
+                    .quickTooltip("Keep the raw and polished transcript text in local review history so you can correct it later. This setting controls transcript history only.")
 
                     Toggle("Keep review audio", isOn: Binding(
                         get: { model.keepReviewAudio },
@@ -2570,7 +2570,7 @@ struct TesterView: View {
                     .toggleStyle(.checkbox)
                     .tint(.primary)
                     .disabled(!model.historyReviewEnabled)
-                    .quickTooltip("Retain up to ten encrypted review clips. Off by default; when off, dictation audio is deleted after transcription.")
+                    .quickTooltip("Retain up to ten encrypted review clips with transcript history. Off by default; when off, those review-history clips are not kept.")
 
                     Toggle("Filter profanity", isOn: Binding(
                         get: { model.profanityFilterEnabled },
@@ -3122,7 +3122,7 @@ struct TesterView: View {
             Text("Speak freely. Transcribe locally. Nothing leaves your Mac.")
                 .font(.system(size: 26, weight: .semibold, design: .rounded))
                 .multilineTextAlignment(.center)
-            Text("QuietType is a local-first dictation assistant by Dhillon \"l33tdawg\" Kannabhiran. It uses on-device transcription and SAGE BFT-governed memory for corrections, vocabulary, transcript notes, and writing preferences. Contact: dhillon@levelupctf.com.")
+            Text("QuietType is a local-first dictation assistant by Dhillon \"l33tdawg\" Kannabhiran. It uses on-device transcription and SAGE BFT-governed memory for corrections, vocabulary, transcript notes, and writing preferences.")
                 .font(.system(size: 15, weight: .regular))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -3141,6 +3141,30 @@ struct TesterView: View {
                 .disabled(!model.setupComplete && !firstRunAssistantComplete)
                 Button("GitHub") {
                     NSWorkspace.shared.open(URL(string: "https://github.com/l33tdawg/quiettype")!)
+                }
+                .buttonStyle(QuietButtonStyle())
+            }
+
+            VStack(alignment: .center, spacing: 8) {
+                Text("Bug reports")
+                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                Text("Email us or open an issue on GitHub.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    NSWorkspace.shared.open(URL(string: "mailto:l33tdawg@hackinthebox.org?subject=QuietType%20bug%20report")!)
+                } label: {
+                    Label("l33tdawg@hackinthebox.org", systemImage: "envelope")
+                }
+                .buttonStyle(QuietButtonStyle())
+
+                Button {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/l33tdawg/quiettype/issues/new")!)
+                } label: {
+                    Label("Open GitHub issue", systemImage: "ladybug")
                 }
                 .buttonStyle(QuietButtonStyle())
             }
@@ -9201,7 +9225,6 @@ final class MenuBarModel: ObservableObject {
 
     func refreshStorageSnapshot() {
         let reviewAudioDirectory = reviewAudioDirectory
-        let latestDictationAudioDirectory = latestDictationAudioDirectory
         let voiceNoteAudioDirectory = voiceNoteAudioDirectory
         let trainingDirectory = trainingDirectory()
         let updateDownloadsDirectory = updateDownloadsDirectory
@@ -9218,12 +9241,6 @@ final class MenuBarModel: ObservableObject {
                         title: "Encrypted review audio",
                         detail: "Encrypted .qtvoice clips, capped at \(maxReviewAudioFiles) recent dictations.",
                         urls: [reviewAudioDirectory]
-                    ),
-                    Self.storageEntry(
-                        id: "latest-dictation-audio",
-                        title: "Latest dictation debug audio",
-                        detail: "One owner-only LastDictation.wav file, replaced after each successful transcript.",
-                        urls: [latestDictationAudioDirectory]
                     ),
                     Self.storageEntry(
                         id: "voice-notes",
@@ -9267,7 +9284,6 @@ final class MenuBarModel: ObservableObject {
             try removeFiles(in: reviewAudioDirectory) {
                 ["wav", "qtvoice"].contains($0.pathExtension.lowercased())
             }
-            try latestDictationAudioStore.clear()
             storageCleanupStatus = "Review audio cache cleared."
         } catch {
             storageCleanupStatus = "Could not clear review audio: \(error.localizedDescription)"
@@ -13231,6 +13247,7 @@ final class MenuBarModel: ObservableObject {
         didInsert = false
         lastError = nil
         statusMessage = ""
+        try? latestDictationAudioStore.clear()
     }
 
     enum EditorMode: String, CaseIterable, Identifiable {
