@@ -2389,7 +2389,7 @@ struct TesterView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(model.speechEngineFailed ? "Local speech needs attention" : "Preparing local speech")
+                Text(model.speechEngineFailed ? "Local speech needs attention" : "Preparing speech engine")
                     .font(.system(size: 20, weight: .semibold))
                 Text(model.speechEngineFailure ?? "QuietType is warming the on-device speech engine in the background. The first launch after an update can take about a minute; later launches are faster.")
                     .font(.callout)
