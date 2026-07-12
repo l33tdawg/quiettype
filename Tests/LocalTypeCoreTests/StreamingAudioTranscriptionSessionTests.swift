@@ -92,6 +92,16 @@ final class StreamingAudioTranscriptionSessionTests: XCTestCase {
         XCTAssertEqual(result.coveredDurationSeconds, 1.75, accuracy: 0.001)
     }
 
+    func testTailRescueMergesLongOverlapWithoutDuplicatingPriorSentence() {
+        let existing = "There is very serious work now being done at Imperial College in London and at the University of California."
+        let rescue = "work now being done at Imperial College in London and at the University of California. Let me show you how we"
+
+        XCTAssertEqual(
+            StreamingAudioTranscriptionSession.mergeTailRescue(existing: existing, rescue: rescue),
+            "There is very serious work now being done at Imperial College in London and at the University of California. Let me show you how we"
+        )
+    }
+
     func testDoesNotDeduplicateWordsWhenChunksDoNotOverlap() async throws {
         let transcriber = StubAudioTranscriber(outputs: [
             "chunk-0000.wav": "go",

@@ -11511,11 +11511,22 @@ final class MenuBarModel: ObservableObject {
         do {
             let shouldRetainAudio = historyReviewEnabled && keepReviewAudio
             let capturedSampleCount = recordedSamples.count
-            let liveResult = await finishLiveTranscription(
-                expectedSampleCount: capturedSampleCount,
+            let requiresChunkedRecovery = LongDictationTranscription.requiresChunkedRecovery(
+                sampleCount: capturedSampleCount,
                 sampleRate: recordingSampleRate
             )
-            if liveResult != nil {
+            let longRecordingSamples = requiresChunkedRecovery ? recordedSamples : nil
+            let liveResult: LiveTranscriptionResult?
+            if requiresChunkedRecovery {
+                await cancelLiveTranscription()
+                liveResult = nil
+            } else {
+                liveResult = await finishLiveTranscription(
+                    expectedSampleCount: capturedSampleCount,
+                    sampleRate: recordingSampleRate
+                )
+            }
+            if liveResult != nil || requiresChunkedRecovery {
                 await cancelIncrementalTranscription()
             } else {
                 incrementalCapturedDurationSeconds = Double(capturedSampleCount) / Double(max(recordingSampleRate, 1))
@@ -11538,6 +11549,8 @@ final class MenuBarModel: ObservableObject {
                 await self.transcribeAndProcess(
                     url,
                     liveTranscript: liveResult?.text,
+                    longRecordingSamples: longRecordingSamples,
+                    sampleRate: self.recordingSampleRate,
                     retainReviewAudio: shouldRetainAudio
                 )
                 self.dictationFinalizationTask = nil
@@ -11929,6 +11942,8 @@ final class MenuBarModel: ObservableObject {
     private func transcribeAndProcess(
         _ audioURL: URL,
         liveTranscript: String? = nil,
+        longRecordingSamples: [Float]? = nil,
+        sampleRate: Int? = nil,
         retainReviewAudio: Bool = false
     ) async {
         var handedAudioToBackgroundWork = false
@@ -11957,13 +11972,31 @@ final class MenuBarModel: ObservableObject {
             """
             try Task.checkCancellation()
             let incrementalTranscript: String?
-            if let liveTranscript = liveTranscript?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank {
+            let recoveredLongTranscript: String?
+            if let longRecordingSamples,
+               let sampleRate,
+               !longRecordingSamples.isEmpty {
+                do {
+                    statusMessage = "Recovering complete long dictation"
+                    recoveredLongTranscript = try await transcribeLongRecording(
+                        samples: longRecordingSamples,
+                        sampleRate: sampleRate
+                    )
+                } catch {
+                    recoveredLongTranscript = nil
+                }
+                incrementalTranscript = nil
+            } else if let liveTranscript = liveTranscript?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank {
+                recoveredLongTranscript = nil
                 incrementalTranscript = liveTranscript
             } else {
+                recoveredLongTranscript = nil
                 incrementalTranscript = await consumeIncrementalTranscriptIfValid()
             }
             let rawTranscript: String
-            if let incrementalTranscript {
+            if let recoveredLongTranscript {
+                rawTranscript = recoveredLongTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if let incrementalTranscript {
                 rawTranscript = incrementalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
             } else {
                 rawTranscript = try await transcribeFullAudio(audioURL)
@@ -11973,7 +12006,9 @@ final class MenuBarModel: ObservableObject {
             guard !isLikelyNoiseTranscript(rawTranscript) else {
                 throw AudioTranscriberError.noiseOnlyTranscript(rawTranscript)
             }
-            statusMessage = incrementalTranscript == nil ? "Processed full audio" : "Processed during dictation"
+            statusMessage = recoveredLongTranscript != nil
+                ? "Processed complete long audio"
+                : (incrementalTranscript == nil ? "Processed full audio" : "Processed during dictation")
             voiceFlowMetricAccumulator?.markFinalTranscript()
             try Task.checkCancellation()
             transcript = rawTranscript
@@ -12007,6 +12042,52 @@ final class MenuBarModel: ObservableObject {
             }
             completeVoiceFlowMetrics(outcome: .transcriptionFailed)
         }
+    }
+
+    private func transcribeLongRecording(samples: [Float], sampleRate: Int) async throws -> String {
+        let directory = temporaryDictationAudioDirectory
+            .appendingPathComponent("LongRecovery-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let chunks = try LongDictationTranscription.makeChunks(
+            samples: samples,
+            sampleRate: sampleRate,
+            outputDirectory: directory
+        )
+        let transcriber = makeAudioTranscriber()
+        let session = StreamingAudioTranscriptionSession(
+            transcriber: transcriber,
+            options: activeTranscriptionOptions
+        )
+        for chunk in chunks {
+            await session.enqueue(chunk)
+        }
+        let result = await session.finish()
+        let expectedDuration = Double(samples.count) / Double(max(sampleRate, 1))
+        guard LongDictationTranscription.isComplete(
+            result,
+            expectedDurationSeconds: expectedDuration
+        ) else {
+            throw AudioTranscriberError.allBackendsFailed(
+                result.errors.isEmpty ? ["Long dictation chunk coverage was incomplete."] : result.errors
+            )
+        }
+        guard let tailRescue = try LongDictationTranscription.makeTailRescueChunk(
+            samples: samples,
+            sampleRate: sampleRate,
+            sequence: chunks.count,
+            outputDirectory: directory
+        ),
+        let rescueText = try? await transcriber.transcribe(
+            audioFile: tailRescue.url,
+            options: activeTranscriptionOptions
+        ) else {
+            return result.text
+        }
+        return StreamingAudioTranscriptionSession.mergeTailRescue(
+            existing: result.text,
+            rescue: rescueText
+        )
     }
 
     private func transcribeFullAudio(_ audioURL: URL) async throws -> String {

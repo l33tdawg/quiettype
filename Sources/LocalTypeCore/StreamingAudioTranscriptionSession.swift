@@ -160,7 +160,7 @@ public actor StreamingAudioTranscriptionSession {
 
             let existingWords = merged.split(whereSeparator: { $0.isWhitespace }).map(String.init)
             let nextWords = trimmedNext.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-            let maximumOverlap = min(12, existingWords.count, nextWords.count)
+            let maximumOverlap = min(80, existingWords.count, nextWords.count)
             var overlapCount = 0
 
             if maximumOverlap > 0 {
@@ -178,6 +178,13 @@ public actor StreamingAudioTranscriptionSession {
             return suffix.isEmpty ? merged : "\(merged) \(suffix)"
         }
         .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public static func mergeTailRescue(existing: String, rescue: String) -> String {
+        mergeOverlappingTranscripts([
+            (text: existing, hasOverlap: false),
+            (text: rescue, hasOverlap: true)
+        ])
     }
 
     private static func normalizedWord(_ word: String) -> String {
