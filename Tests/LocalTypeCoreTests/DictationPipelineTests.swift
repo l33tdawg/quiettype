@@ -872,6 +872,36 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testRepairsButMisheardAsBroBeforeNoLongerBaseVerb() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "It is one where you contribute to judgement tastes and decisions bro no longer carry coordination overhead",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "It is 1 where you contribute to judgement tastes and decisions but no longer carry coordination overhead."
+        )
+    }
+
+    func testPreservesGenuineBroBeforeNoLongerThirdPersonVerb() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "my bro no longer needs help and bro no longer works there", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "My bro no longer needs help and bro no longer works there.")
+    }
+
     func testRepairsLatestVersionMisheardAsBajunAtSentenceStart() async throws {
         let context = AppContext(appName: "Notes", profile: .notes)
 

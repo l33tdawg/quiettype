@@ -46,7 +46,11 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         let conjunctionPatterns = [
             (#"\bbro\s+just\s+left\b"#, "but just left"),
             (#"\bbro\s+that\s+was\b"#, "but that was"),
-            (#"\bbro\s+far\s+from\b"#, "but far from")
+            (#"\bbro\s+far\s+from\b"#, "but far from"),
+            (
+                #"\bbro\s+no\s+longer\s+(carry|have|need|handle|manage|own|do)\b"#,
+                "but no longer $1"
+            )
         ]
         for (pattern, replacement) in conjunctionPatterns {
             result = result.replacingOccurrences(
