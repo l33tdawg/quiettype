@@ -142,18 +142,22 @@ public actor WhisperKitLiveStreamClient {
         guard let socket else {
             return nil
         }
+
+        // Cover the entire stop/final handshake. URLSessionWebSocketTask.send
+        // can itself stall, so starting this only after `send` returns leaves
+        // release-to-text waiting without a real deadline.
+        let timeoutTask = Task { [weak self] in
+            let nanoseconds = UInt64(max(0.1, timeoutSeconds) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled else { return }
+            await self?.timeoutFinish()
+        }
         do {
             try await send(Control(type: "stop", sampleRate: nil), over: socket)
         } catch {
+            timeoutTask.cancel()
             await cancel()
             return nil
-        }
-
-        let timeoutTask = Task { [weak self] in
-            let nanoseconds = UInt64(max(1, timeoutSeconds) * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: nanoseconds)
-            guard !Task.isCancelled else { return }
-            await self?.completeTerminal(nil)
         }
         let result = await waitForTerminal()
         timeoutTask.cancel()
@@ -162,6 +166,11 @@ public actor WhisperKitLiveStreamClient {
         socket.cancel(with: .normalClosure, reason: nil)
         self.socket = nil
         return result
+    }
+
+    private func timeoutFinish() {
+        socket?.cancel(with: .goingAway, reason: nil)
+        completeTerminal(nil)
     }
 
     public func cancel() async {

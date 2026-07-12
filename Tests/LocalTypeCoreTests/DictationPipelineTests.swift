@@ -790,6 +790,43 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testRepairsLatestVersionMisheardAsBajunAtSentenceStart() async throws {
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        for raw in [
+            "It says Bajun is pretty good",
+            "It has Bajun is pretty good",
+            "The update landed period it says Bajun is pretty good"
+        ] {
+            let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+            let result = try await pipeline.processStableSegment(
+                StableSegment(text: raw, isFinal: true),
+                context: context
+            )
+            let expected = raw.hasPrefix("The update")
+                ? "The update landed. Latest version is pretty good."
+                : "Latest version is pretty good."
+            XCTAssertEqual(result.text, expected, raw)
+        }
+    }
+
+    func testPreservesGenuineBajunReferences() async throws {
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        for raw in [
+            "Bajun is pretty good",
+            "It says Bajun plays pretty well",
+            "I think it says Bajun is pretty good"
+        ] {
+            let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+            let result = try await pipeline.processStableSegment(
+                StableSegment(text: raw, isFinal: true),
+                context: context
+            )
+            XCTAssertTrue(result.text.localizedCaseInsensitiveContains("Bajun"), raw)
+        }
+    }
+
     func testPreservesBroBeforeNamesOutsideAtTheConstruction() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Messages", profile: .messaging)

@@ -11625,7 +11625,7 @@ final class MenuBarModel: ObservableObject {
             return nil
         }
         liveTranscriptionClient = nil
-        guard let result = await client.finish(),
+        guard let result = await client.finish(timeoutSeconds: 2.0),
               result.sampleRate == sampleRate,
               abs(result.coveredSampleCount - expectedSampleCount) <= max(1, sampleRate / 4),
               !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

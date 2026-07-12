@@ -24,6 +24,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
 
         text = resolveSimpleCorrections(text)
         text = repairButMisheardAsBro(text)
+        text = repairLatestVersionMisheardAsBajun(text)
         text = format(text, for: request.appContext.profile)
         text = applySpellingPreference(text, request.profile.spellingPreference)
         if request.profile.profanityFilterEnabled {
@@ -60,6 +61,17 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             options: .regularExpression
         )
         return result
+    }
+
+    /// A short "latest version is" can be decoded as the grammatically invalid
+    /// sentence opening "it says/has Bajun is". Anchor the repair to a sentence
+    /// boundary so genuine references to a person named Bajun remain untouched.
+    private func repairLatestVersionMisheardAsBajun(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: #"(^|[.!?]\s+|\bperiod\s+)it\s+(?:says|has)\s+bajun\s+is\b"#,
+            with: "$1Latest version is",
+            options: [.regularExpression, .caseInsensitive]
+        )
     }
 
     private func resolveSimpleCorrections(_ text: String) -> String {
