@@ -16,6 +16,7 @@ final class QuietTypeReleaseVersionTests: XCTestCase {
         let rc10 = try XCTUnwrap(QuietTypeReleaseVersion.parse("v1.0.0-rc.10"))
         let rc11 = try XCTUnwrap(QuietTypeReleaseVersion.parse("v1.0.0-rc.11"))
         let rc12 = try XCTUnwrap(QuietTypeReleaseVersion.parse("v1.0.0-rc.12"))
+        let rc13 = try XCTUnwrap(QuietTypeReleaseVersion.parse("v1.0.0-rc.13"))
         let stable = try XCTUnwrap(QuietTypeReleaseVersion.parse("v1.0.0"))
 
         XCTAssertLessThan(beta26, rc1)
@@ -30,7 +31,8 @@ final class QuietTypeReleaseVersionTests: XCTestCase {
         XCTAssertLessThan(rc9, rc10)
         XCTAssertLessThan(rc10, rc11)
         XCTAssertLessThan(rc11, rc12)
-        XCTAssertLessThan(rc12, stable)
+        XCTAssertLessThan(rc12, rc13)
+        XCTAssertLessThan(rc13, stable)
     }
 
     func testParsesTagAndArtifactNamesWithExpectedLabels() throws {
