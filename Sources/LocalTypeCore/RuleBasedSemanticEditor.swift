@@ -287,7 +287,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
     }
 
     private var inferredBoundaryPattern: String {
-        #"(?<![.!?])\s+(the main issue is|the key problem is|the next step is|separately|finally|for the [a-z ]{3,40} section|on the [a-z ]{3,40} side)\b"#
+        #"(?<![.!?])\s+(the main issue is|the key problem is|the next step is|here's where|i've developed|the script identifies|you can think of|my question|i'm not going to|separately|finally|for the [a-z ]{3,40} section|on the [a-z ]{3,40} side)\b"#
     }
 
     private func shouldInferSentenceBoundary(before matchRange: Range<String.Index>, cue: String, in text: String) -> Bool {
@@ -536,6 +536,10 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         return lower.hasPrefix("the main issue")
             || lower.hasPrefix("the key problem")
             || lower.hasPrefix("the next step")
+            || lower.hasPrefix("here's where")
+            || lower.hasPrefix("i've developed")
+            || lower.hasPrefix("my question")
+            || lower.hasPrefix("i'm not going to")
             || lower.hasPrefix("separately")
             || lower.hasPrefix("finally")
             || lower.hasPrefix("for the ")

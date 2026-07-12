@@ -639,6 +639,52 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testGroupsObservedExplanatorySpeechIntoLogicalParagraphs() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "Japanese or Hebrew, yet these descriptions fail to fully convey the complexity and novelty of this perceived script. What's clear is that it has some visual similarity to scripts we're familiar with, and it's distinctly of unknown origin. Here's where my work in language and semiotics comes in, and the question that I have for anyone who's experienced this phenomenon. I've developed a sound meaning-based writing system called the Abazi, also known as the Universal Language of energy and it looks like this the script identifies the 24 basic sound components of language and their 120 vowel articulations as expressions of the fundamental behaviors of energy that create reality you can think of these symbols as choreography notations for the eternal dance of the cosmos and their designs are a synthesis of 6 000 plus years of semantics wisdom my question for the world is this. Are these the symbols you've been seeing? I'm not going to do the experiment myself because I do not promote drug use of any kind.",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            Japanese or Hebrew, yet these descriptions fail to fully convey the complexity and novelty of this perceived script. What's clear is that it has some visual similarity to scripts we're familiar with, and it's distinctly of unknown origin.
+
+            Here's where my work in language and semiotics comes in, and the question that I have for anyone who's experienced this phenomenon.
+
+            I've developed a sound meaning-based writing system called the Abazi, also known as the Universal Language of energy and it looks like this. The script identifies the 24 basic sound components of language and their 120 vowel articulations as expressions of the fundamental behaviors of energy that create reality. You can think of these symbols as choreography notations for the eternal dance of the cosmos and their designs are a synthesis of 6 000 plus years of semantics wisdom.
+
+            My question for the world is this. Are these the symbols you've been seeing?
+
+            I'm not going to do the experiment myself because I do not promote drug use of any kind.
+            """
+        )
+    }
+
+    func testDoesNotSplitExplanatoryCuesAfterOpenConnectors() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Notes", profile: .notes)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "the diagram remains accurate because the script identifies each sound and you can think of the output as one continuous map",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "The diagram remains accurate because the script identifies each sound and you can think of the output as 1 continuous map."
+        )
+    }
+
     func testPreservesParagraphBreaksAcrossStableSegments() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Notes", profile: .notes)
