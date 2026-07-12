@@ -13,8 +13,8 @@ with no cloud processing path for normal dictation.
 ![QuietType home dashboard](docs/screenshots/quiettype-home.png)
 
 <p align="center">
-  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-rc.14/QuietType-1.0.0-rc.14-macOS-arm64.dmg">
-    <img alt="Download QuietType 1.0.0 RC14 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.0%20RC14-black?style=for-the-badge&logo=apple">
+  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-rc.15/QuietType-1.0.0-rc.15-macOS-arm64.dmg">
+    <img alt="Download QuietType 1.0.0 RC15 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.0%20RC15-black?style=for-the-badge&logo=apple">
   </a>
 </p>
 
