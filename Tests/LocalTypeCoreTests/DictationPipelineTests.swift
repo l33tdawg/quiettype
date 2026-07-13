@@ -67,6 +67,24 @@ final class DictationPipelineTests: XCTestCase {
         XCTAssertFalse(result.text.contains("\n- "))
     }
 
+    func testNormalizesSpokenNumberInsideMixedDigitSequence() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Codex", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "Pick whichever item that you think makes the most sense ideally i would like to finish everything off like 1 two 3 and 4 and then And then, yeah, I guess figure that 1 out first and then we'll take a look at the next substantive feature.",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "Pick whichever item that you think makes the most sense ideally i would like to finish everything off like 1 2 3 and 4 and then And then, yeah, I guess figure that 1 out first and then we'll take a look at the next substantive feature."
+        )
+    }
+
     func testDoesNotTreatCornerAndVersionNumberAsGroceryList() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Codex", profile: .balanced)

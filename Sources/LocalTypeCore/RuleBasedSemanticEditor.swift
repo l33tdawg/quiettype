@@ -1211,7 +1211,11 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
                     + grammaticalFollowers
                     + #")\b)([A-Za-z][A-Za-z-]*)\b"#
             } else {
-                followingWordPattern = #"\b\#(word)\s+([A-Za-z][A-Za-z-]*)\b"#
+                // Mixed enumerations can arrive from ASR with only some values
+                // rendered as digits (for example, "1 two 3 and 4"). Treat a
+                // following digit as quantity context too so the sequence stays
+                // internally consistent.
+                followingWordPattern = #"\b\#(word)\s+([A-Za-z][A-Za-z-]*|[0-9]+)\b"#
             }
             result = result.replacingOccurrences(
                 of: followingWordPattern,
