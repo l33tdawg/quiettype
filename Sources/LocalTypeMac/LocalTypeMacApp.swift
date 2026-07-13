@@ -7433,7 +7433,7 @@ private final class SageGitHubInstaller {
 
 private extension QuietTypeReleaseVersion {
     static func current() -> QuietTypeReleaseVersion {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.2"
         let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
         let releaseLabel = Bundle.main.object(forInfoDictionaryKey: "QuietTypeReleaseLabel") as? String
         return fromBundleMetadata(version: version, build: build, releaseLabel: releaseLabel)

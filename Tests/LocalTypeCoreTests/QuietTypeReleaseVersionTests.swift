@@ -4,24 +4,24 @@ import XCTest
 final class QuietTypeReleaseVersionTests: XCTestCase {
     func testEmptyBundleReleaseLabelIsStable() {
         let version = QuietTypeReleaseVersion.fromBundleMetadata(
-            version: "1.0.1",
-            build: 48,
+            version: "1.0.2",
+            build: 49,
             releaseLabel: ""
         )
 
         XCTAssertEqual(version.channel, .stable)
-        XCTAssertEqual(version.displayLabel, "v1.0.1")
+        XCTAssertEqual(version.displayLabel, "v1.0.2")
     }
 
     func testMissingBundleReleaseLabelRemainsDevelopmentBeta() {
         let version = QuietTypeReleaseVersion.fromBundleMetadata(
-            version: "1.0.1",
-            build: 48,
+            version: "1.0.2",
+            build: 49,
             releaseLabel: nil
         )
 
         XCTAssertEqual(version.channel, .beta)
-        XCTAssertEqual(version.displayLabel, "v1.0.1 beta.48")
+        XCTAssertEqual(version.displayLabel, "v1.0.2 beta.49")
     }
 
     func testOrdersBetaReleaseCandidateAndStableChannels() throws {

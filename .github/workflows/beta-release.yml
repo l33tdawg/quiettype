@@ -11,11 +11,11 @@ on:
       version:
         description: "App version"
         required: true
-        default: "1.0.1"
+        default: "1.0.2"
       build:
         description: "Monotonic app build number"
         required: true
-        default: "48"
+        default: "49"
       release_label:
         description: "Optional prerelease label (for example rc.21); leave empty for stable"
         required: false
@@ -230,5 +230,5 @@ jobs:
             gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
               --repo "$GITHUB_REPOSITORY" \
               --title "QuietType ${QUIETTYPE_VERSION}" \
-              --notes "QuietType ${QUIETTYPE_VERSION} for macOS Apple Silicon. This patch preserves correctly transcribed but/bro wording and prevents ordinary prose from becoming an unintended list."
+              --notes "QuietType ${QUIETTYPE_VERSION} for macOS Apple Silicon. This patch keeps mixed spoken and digit number sequences consistent while preserving all prior dictation polish fixes."
           fi
