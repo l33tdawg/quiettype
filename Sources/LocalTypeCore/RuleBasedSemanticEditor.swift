@@ -65,6 +65,16 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             )
         }
         result = result.replacingOccurrences(
+            of: #"([,;])\s+bro\s+(it|that|this|there|he|she|they|we)\b"#,
+            with: "$1 but $2",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        result = result.replacingOccurrences(
+            of: #"\b(comma|semicolon)\s+bro\s+(it|that|this|there|he|she|they|we)\b"#,
+            with: "$1 but $2",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        result = result.replacingOccurrences(
             of: #"\b[Bb]ro\s+(\p{Lu}[\p{L}'’\-]*)\s+at\s+the\b"#,
             with: "but $1 at the",
             options: .regularExpression

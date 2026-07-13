@@ -981,6 +981,36 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testRepairsMidSentenceBroStartingAThirdPersonClause() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Safari", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "Much like pi has a decimal that isn't random comma bro it will go on forever without repeating",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "Much like pi has a decimal that isn't random, but it will go on forever without repeating."
+        )
+    }
+
+    func testPreservesPunctuatedBroVocativeBeforeThirdPersonClause() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Messages", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "Thanks comma bro comma it will be okay", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "Thanks, bro, it will be okay.")
+    }
+
     func testRepairsButMisheardAsBroInAdditionalFootballContexts() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Notes", profile: .notes)
