@@ -88,6 +88,10 @@ public struct SanityEditValidator: Sendable {
             return nil
         }
 
+        guard preservesButBroDistinction(candidate: trimmed, draft: draft) else {
+            return nil
+        }
+
         guard !introducesUnsupportedList(candidate: trimmed, draft: draft, rawTranscript: rawTranscript) else {
             return nil
         }
@@ -112,6 +116,30 @@ public struct SanityEditValidator: Sendable {
             }
         }
         return true
+    }
+
+    /// A local LLM may repeat an earlier vocative "bro" by changing a later,
+    /// correctly transcribed conjunction "but". Accept contextual bro-to-but
+    /// cleanup, but never accept the opposite lexical drift from the draft.
+    private func preservesButBroDistinction(candidate: String, draft: String) -> Bool {
+        let draftButCount = wordCount("but", in: draft)
+        let draftBroCount = wordCount("bro", in: draft)
+        let candidateButCount = wordCount("but", in: candidate)
+        let candidateBroCount = wordCount("bro", in: candidate)
+        return !(candidateButCount < draftButCount && candidateBroCount > draftBroCount)
+    }
+
+    private func wordCount(_ word: String, in text: String) -> Int {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"(?<![A-Za-z0-9])\#(NSRegularExpression.escapedPattern(for: word))(?![A-Za-z0-9])"#,
+            options: [.caseInsensitive]
+        ) else {
+            return 0
+        }
+        return regex.numberOfMatches(
+            in: text,
+            range: NSRange(text.startIndex..<text.endIndex, in: text)
+        )
     }
 
     private func introducesUnsupportedList(candidate: String, draft: String, rawTranscript: String) -> Bool {

@@ -660,10 +660,13 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
                     || lower.contains("pick up")
             ))
 
-        let hasMessyGroceryIntent = lower.contains("what else")
-            || lower.contains("might as well order")
-            || (lower.contains("order") && containsGroceryTerm(in: lower))
-            || (lower.contains("washing liquid") && containsGroceryTerm(in: lower))
+        let hasMessyGroceryIntent = hasGroceryContext
+            && (
+                lower.contains("what else")
+                    || lower.contains("might as well order")
+                    || lower.contains("order")
+                    || lower.contains("washing liquid")
+            )
 
         let hasDigitQuantitySequence = digitQuantityMarkerCount(in: text) >= 2
         let hasStructuredQuantityIntent = hasDigitQuantitySequence

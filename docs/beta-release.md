@@ -7,8 +7,8 @@ This is the repeatable path for publishing a signed, notarized QuietType DMG.
 Use the installed Developer ID Application identity:
 
 ```bash
-QUIETTYPE_VERSION="1.0.0" \
-QUIETTYPE_BUILD="47" \
+QUIETTYPE_VERSION="1.0.1" \
+QUIETTYPE_BUILD="48" \
 QUIETTYPE_RELEASE_LABEL="" \
 QUIETTYPE_NOTARIZE="1" \
 SAGE_RELEASE_TAG="v11.4.11" \
@@ -70,8 +70,8 @@ bundled because QuietType requires SAGE governed local memory.
 Expected output:
 
 ```text
-dist/QuietType-1.0.0-macOS-arm64.dmg
-dist/QuietType-1.0.0-macOS-arm64.dmg.sha256
+dist/QuietType-1.0.1-macOS-arm64.dmg
+dist/QuietType-1.0.1-macOS-arm64.dmg.sha256
 ```
 
 ## 2. Validate the signed artifact
@@ -80,7 +80,7 @@ Before sharing a release, validate the exact DMG artifact that users will
 install:
 
 ```bash
-bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-macOS-arm64.dmg
+bash scripts/validate-release-artifact.sh dist/QuietType-1.0.1-macOS-arm64.dmg
 ```
 
 The validator mounts the DMG read-only, checks that `CFBundleExecutable` exists
@@ -90,7 +90,7 @@ app and the DMG. For clean-machine Launch Services validation, run the same
 command with:
 
 ```bash
-QUIETTYPE_VALIDATE_LAUNCH=1 bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-macOS-arm64.dmg
+QUIETTYPE_VALIDATE_LAUNCH=1 bash scripts/validate-release-artifact.sh dist/QuietType-1.0.1-macOS-arm64.dmg
 ```
 
 ## 3. Notarization
@@ -125,17 +125,17 @@ QUIETTYPE_NOTARIZE=1 bash scripts/beta-release.sh
 The repository is public, so the release and its assets are visible to everyone.
 
 ```bash
-VERSION="v1.0.0"
-DMG="dist/QuietType-1.0.0-macOS-arm64.dmg"
+VERSION="v1.0.1"
+DMG="dist/QuietType-1.0.1-macOS-arm64.dmg"
 
-git tag -a "$VERSION" -m "QuietType 1.0.0"
+git tag -a "$VERSION" -m "QuietType 1.0.1"
 git push origin "$VERSION"
 
 gh release create "$VERSION" "$DMG" "$DMG.sha256" \
   --repo l33tdawg/quiettype \
   --verify-tag \
-  --title "QuietType 1.0.0" \
-  --notes "QuietType 1.0 for macOS Apple Silicon. Local dictation, local memory, no cloud processing."
+  --title "QuietType 1.0.1" \
+  --notes "QuietType 1.0.1 for macOS Apple Silicon. Local dictation, local memory, no cloud processing."
 ```
 
 ## 5. Enable GitHub Pages
@@ -172,7 +172,7 @@ GitHub Pages is enabled from `main:/docs` and deploys after pushes to `main`.
 
 The workflow at `.github/workflows/beta-release.yml` builds, signs, notarizes,
 staples and uploads a release DMG on pushes to `main`. When the push is a stable
-tag like `v1.0.0`, it creates a public GitHub release; prerelease tags remain supported.
+tag like `v1.0.1`, it creates a public GitHub release; prerelease tags remain supported.
 
 Required repository secrets:
 

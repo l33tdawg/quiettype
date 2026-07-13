@@ -11,6 +11,9 @@ public struct CorrectionEngine: Sendable {
         var corrected = transcript
 
         for confusion in profile.confusions.sorted(by: { $0.heard.count > $1.heard.count }) {
+            guard !isUnsafeButBroRewrite(from: confusion.heard, to: confusion.corrected) else {
+                continue
+            }
             corrected = replacePhrase(confusion.heard, with: confusion.corrected, in: corrected)
         }
 
@@ -30,6 +33,9 @@ public struct CorrectionEngine: Sendable {
 
         for entry in profile.vocabulary {
             for spokenForm in entry.spokenForms.sorted(by: { $0.count > $1.count }) {
+                guard !isUnsafeButBroRewrite(from: spokenForm, to: entry.preferredSpelling) else {
+                    continue
+                }
                 corrected = replacePhrase(spokenForm, with: entry.preferredSpelling, in: corrected)
             }
         }
@@ -37,6 +43,17 @@ public struct CorrectionEngine: Sendable {
         return corrected
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// "but" and "bro" are both common, intentional words. A transcript
+    /// review can safely teach contextual repairs, but a global one-token
+    /// memory in either direction corrupts genuine speech throughout every
+    /// app. Leave this ambiguous pair to the grammar-aware semantic repair.
+    private func isUnsafeButBroRewrite(from source: String, to replacement: String) -> Bool {
+        let source = source.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let replacement = replacement.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return (source == "but" && replacement == "bro")
+            || (source == "bro" && replacement == "but")
     }
 
     private func replacePhrase(_ phrase: String, with replacement: String, in text: String) -> String {

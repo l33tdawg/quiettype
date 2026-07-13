@@ -48,6 +48,48 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testPreservesOrdinaryWhatElseQuestionAsProse() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Terminal", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "So how's it going? I see two or three agents done and spending nearly an hour. What else is there that we are still waiting on?",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "So how's it going? I see 2 or 3 agents done and spending nearly an hour. What else is there that we are still waiting on?"
+        )
+        XCTAssertFalse(result.text.contains("\n- "))
+    }
+
+    func testProtectsRawButFromLearnedBroCorrection() async throws {
+        let profile = DictationProfile(
+            vocabulary: [],
+            confusions: [
+                ASRConfusion(heard: "but", corrected: "bro", contextTerms: [], confidence: 0.93)
+            ]
+        )
+        let pipeline = DictationPipeline(profile: profile, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Terminal", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "Hey bro, what's next on our to-do list? The guys were asking if the documents and PRD stuff has already been updated to mention about the products that Red and Blue are now separate products. I think we did this but just take a look.",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertTrue(result.text.contains("Hey bro"), result.text)
+        XCTAssertTrue(result.text.contains("but just take a look"), result.text)
+        XCTAssertFalse(result.text.contains("bro just take a look"), result.text)
+    }
+
     func testPreservesLikeWhenItCarriesMeaningInProse() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Slack", profile: .messaging)

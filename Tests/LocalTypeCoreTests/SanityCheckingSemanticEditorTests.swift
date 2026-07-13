@@ -87,6 +87,29 @@ final class SanityCheckingSemanticEditorTests: XCTestCase {
 
         XCTAssertEqual(result.text, "Maybe we should replace it with something clearer.")
     }
+
+    func testFallsBackWhenSanityPassChangesButToBro() async throws {
+        let editor = SanityCheckingSemanticEditor(
+            primary: RuleBasedSemanticEditor(),
+            sanityEditor: FixedSemanticEditor(
+                text: "Hey bro, what's next on our to-do list? I think we did this bro just take a look."
+            )
+        )
+
+        let result = try await editor.edit(
+            EditorRequest(
+                stableText: "Hey bro, what's next on our to-do list? I think we did this but just take a look.",
+                appContext: AppContext(appName: "Terminal", profile: .balanced),
+                profile: .development,
+                isFinal: true
+            )
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "Hey bro, what's next on our to-do list? I think we did this but just take a look."
+        )
+    }
 }
 
 private struct FixedSemanticEditor: SemanticEditor {
