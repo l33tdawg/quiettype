@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$ROOT/dist/QuietType.app"
-VERSION="${QUIETTYPE_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo "1.0.2")}"
+VERSION="${QUIETTYPE_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo "1.0.3")}"
 BUILD="${QUIETTYPE_BUILD:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Contents/Info.plist" 2>/dev/null || echo "1")}"
 RELEASE_LABEL="${QUIETTYPE_RELEASE_LABEL:-$(/usr/libexec/PlistBuddy -c 'Print :QuietTypeReleaseLabel' "$APP/Contents/Info.plist" 2>/dev/null || echo "beta.${BUILD}")}"
 RELEASE_SUFFIX=""

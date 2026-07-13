@@ -706,7 +706,19 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             || lower.contains("shopping list")
             || lower.contains("grocery list")
             || lower.contains("grocery order")
-        let items = splitListItems(from: body, numbered: numbered, splitSpaceSeparated: allowsBareWordItems && !hasBulletMarkers)
+        let items: [String]
+        if hasNumberedMarkerIntent {
+            // Spoken section markers are authoritative boundaries. Do not
+            // split their prose bodies again at punctuation or conjunctions;
+            // a long answer to five numbered prompts must remain five items.
+            items = splitExplicitNumberedItems(from: body)
+        } else {
+            items = splitListItems(
+                from: body,
+                numbered: numbered,
+                splitSpaceSeparated: allowsBareWordItems && !hasBulletMarkers
+            )
+        }
 
         let minimumItems = hasExplicitListIntent || hasShoppingIntent || hasMessyGroceryIntent || hasStructuredQuantityIntent || hasNumberedMarkerIntent || hasBulletListIntent ? 2 : 3
         guard items.count >= minimumItems else {
@@ -881,6 +893,21 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         return dedupeItems(rawItems)
             .map(cleanListItem)
             .filter { !$0.isEmpty }
+    }
+
+    private func splitExplicitNumberedItems(from text: String) -> [String] {
+        let markers = numberedMarkerRanges(in: text, includeOrdinals: false)
+        guard markers.count >= 2 else {
+            return []
+        }
+
+        return markers.enumerated().compactMap { index, marker in
+            let upperBound = index + 1 < markers.count
+                ? markers[index + 1].lowerBound
+                : text.endIndex
+            let item = cleanListItem(String(text[marker.upperBound..<upperBound]))
+            return item.isEmpty ? nil : item
+        }
     }
 
     private func splitSpaceSeparatedItemsIfNeeded(_ value: String) -> [String] {
@@ -1169,8 +1196,8 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             "tenth"
         ].joined(separator: "|")
         let pattern = includeOrdinals
-            ? #"\b(?:number\s+(?:"# + spokenMarkers + #")|"# + ordinalMarkers + #")\b"#
-            : #"\bnumber\s+(?:"# + spokenMarkers + #")\b"#
+            ? #"\b(?:(?:for\s+)?number\s+(?:"# + spokenMarkers + #")|"# + ordinalMarkers + #")\b"#
+            : #"\b(?:for\s+)?number\s+(?:"# + spokenMarkers + #")\b"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
             return []
         }

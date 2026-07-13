@@ -6349,9 +6349,11 @@ private struct DictionaryMemoryRow: View {
                     } label: {
                         Image(systemName: "square.and.pencil")
                             .font(.system(size: 14 + typeDelta, weight: .semibold))
-                            .frame(width: 30, height: 28)
+                            .frame(width: 36, height: 32)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .contentShape(RoundedRectangle(cornerRadius: 7))
                     .background(Color.primary.opacity(0.06))
                     .clipShape(RoundedRectangle(cornerRadius: 7))
                     .quickTooltip("Edit the raw and polished transcript text for this review item.")
@@ -7433,7 +7435,7 @@ private final class SageGitHubInstaller {
 
 private extension QuietTypeReleaseVersion {
     static func current() -> QuietTypeReleaseVersion {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.2"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.3"
         let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
         let releaseLabel = Bundle.main.object(forInfoDictionaryKey: "QuietTypeReleaseLabel") as? String
         return fromBundleMetadata(version: version, build: build, releaseLabel: releaseLabel)

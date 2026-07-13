@@ -85,6 +85,28 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testKeepsLongNumberedResponsesGroupedBySpokenMarkers() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "WhatsApp", profile: .messaging)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "For number one, yes. For number two, there will no longer be an essentials program and a spring advanced track. The first intake folks who come in will have sessions with the trainer and weekend gaming sessions together. those bits they will have that all the way until the May semi-finals the second batch that come in they will do the same cycle but they will just simply start later because they join the intake the second intake which is subsequent which is later for number 3 out of the 500, for the May semi-finals, 50. will reach the boot camp. In that case, I have a feeling before the semi-final, we need to add another quarter-final. before you do that though please check ctf.ae's proposal to see the scope of what they offer don't check based on what we put in this deck based on what they had emailed to us their original proposal that should be in my google drive local drive or even in this chain already Number 4. So the intake window... No. The intake window for intake 1 and 2, I can only decide after you tell me what are the UAE's kind academic year cycle when does an intake start for them and when does it end and the next one start that way we can schedule intake 1 and 2 and also the semifinal and the grand finals number 5 Rochelle should appear as a continued work stream yes but will reflect different phases either it's the phase that focuses on generating enough hype for the per intake funneling or whether it's to maintain hype for the semifinals or the finals and the finals.",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        let items = result.text.split(separator: "\n", omittingEmptySubsequences: true)
+        XCTAssertEqual(items.count, 5, result.text)
+        XCTAssertTrue(result.text.hasPrefix("1. Yes\n2. There will no longer"), result.text)
+        XCTAssertTrue(result.text.contains("weekend gaming sessions together. those bits"), result.text)
+        XCTAssertTrue(result.text.contains("3. Out of the 500, for the May semi-finals, 50. will reach the boot camp"), result.text)
+        XCTAssertTrue(result.text.contains("4. So the intake window... No. The intake window for intake 1 and 2"), result.text)
+        XCTAssertTrue(result.text.contains("5. Rochelle should appear as a continued work stream"), result.text)
+        XCTAssertFalse(result.text.contains("6. "), result.text)
+    }
+
     func testDoesNotTreatCornerAndVersionNumberAsGroceryList() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Codex", profile: .balanced)
