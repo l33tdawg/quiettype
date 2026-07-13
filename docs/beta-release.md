@@ -1,15 +1,15 @@
-# QuietType public beta release
+# QuietType release process
 
-This is the repeatable path for publishing a signed, notarized public beta DMG.
+This is the repeatable path for publishing a signed, notarized QuietType DMG.
 
-## 1. Build the beta DMG
+## 1. Build the release DMG
 
 Use the installed Developer ID Application identity:
 
 ```bash
 QUIETTYPE_VERSION="1.0.0" \
-QUIETTYPE_BUILD="46" \
-QUIETTYPE_RELEASE_LABEL="rc.20" \
+QUIETTYPE_BUILD="47" \
+QUIETTYPE_RELEASE_LABEL="" \
 QUIETTYPE_NOTARIZE="1" \
 SAGE_RELEASE_TAG="v11.4.11" \
 QUIETTYPE_CODESIGN_IDENTITY="Developer ID Application: Dhillon Kannabhiran (2N7GKZ8D8Z)" \
@@ -19,9 +19,9 @@ QUIETTYPE_CODESIGN_IDENTITY="Developer ID Application: Dhillon Kannabhiran (2N7G
 This runs tests, builds the arm64 release binary, packages `dist/QuietType.app`, signs the app and bundled helpers, creates a DMG, verifies it, and writes a SHA-256 checksum next to it.
 
 Run this script on Apple Silicon or an arm64 macOS CI runner. It invokes Swift
-under `arch -arm64` so tests and the app binary match the arm64-only beta DMG.
+under `arch -arm64` so tests and the app binary match the arm64-only release DMG.
 
-By default the public beta package also bundles the local WhisperKit/Core ML ASR model from:
+By default the public package also bundles the local WhisperKit/Core ML ASR model from:
 
 ```text
 .model-cache/whisperkit-coreml/openai_whisper-large-v3-v20240930_626MB
@@ -29,7 +29,7 @@ By default the public beta package also bundles the local WhisperKit/Core ML ASR
 
 That makes the DMG much larger, but it gives testers the expected install-and-run experience. To intentionally ship a smaller app that uses an already-installed model, set `QUIETTYPE_BUNDLE_MODELS=0`.
 
-The beta package also bundles `SAGE.app` when available at:
+The release package also bundles `SAGE.app` when available at:
 
 ```text
 vendor/SAGE.app
@@ -43,7 +43,7 @@ bash scripts/download-sage-gui.sh
 ```
 
 By default this script downloads the latest release from
-`https://github.com/l33tdawg/sage`. Current beta builds pin SAGE to `v11.4.11`
+`https://github.com/l33tdawg/sage`. Current release builds pin SAGE to `v11.4.11`
 for reproducibility:
 
 ```bash
@@ -70,17 +70,17 @@ bundled because QuietType requires SAGE governed local memory.
 Expected output:
 
 ```text
-dist/QuietType-1.0.0-rc.20-macOS-arm64.dmg
-dist/QuietType-1.0.0-rc.20-macOS-arm64.dmg.sha256
+dist/QuietType-1.0.0-macOS-arm64.dmg
+dist/QuietType-1.0.0-macOS-arm64.dmg.sha256
 ```
 
 ## 2. Validate the signed artifact
 
-Before sharing a beta, validate the exact DMG artifact that testers will
+Before sharing a release, validate the exact DMG artifact that users will
 install:
 
 ```bash
-bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-rc.20-macOS-arm64.dmg
+bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-macOS-arm64.dmg
 ```
 
 The validator mounts the DMG read-only, checks that `CFBundleExecutable` exists
@@ -90,7 +90,7 @@ app and the DMG. For clean-machine Launch Services validation, run the same
 command with:
 
 ```bash
-QUIETTYPE_VALIDATE_LAUNCH=1 bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-rc.20-macOS-arm64.dmg
+QUIETTYPE_VALIDATE_LAUNCH=1 bash scripts/validate-release-artifact.sh dist/QuietType-1.0.0-macOS-arm64.dmg
 ```
 
 ## 3. Notarization
@@ -120,23 +120,22 @@ Or run notarization as part of the build:
 QUIETTYPE_NOTARIZE=1 bash scripts/beta-release.sh
 ```
 
-## 4. Create a public GitHub prerelease
+## 4. Create a public GitHub release
 
-The repository is public, so the prerelease and its assets are visible to everyone.
+The repository is public, so the release and its assets are visible to everyone.
 
 ```bash
-VERSION="v1.0.0-rc.20"
-DMG="dist/QuietType-1.0.0-rc.20-macOS-arm64.dmg"
+VERSION="v1.0.0"
+DMG="dist/QuietType-1.0.0-macOS-arm64.dmg"
 
-git tag -a "$VERSION" -m "QuietType 1.0.0 RC20"
+git tag -a "$VERSION" -m "QuietType 1.0.0"
 git push origin "$VERSION"
 
 gh release create "$VERSION" "$DMG" "$DMG.sha256" \
   --repo l33tdawg/quiettype \
   --verify-tag \
-  --prerelease \
-  --title "QuietType 1.0.0 RC20" \
-  --notes "Public beta for macOS Apple Silicon. Local dictation, local memory, no cloud processing."
+  --title "QuietType 1.0.0" \
+  --notes "QuietType 1.0 for macOS Apple Silicon. Local dictation, local memory, no cloud processing."
 ```
 
 ## 5. Enable GitHub Pages
@@ -172,8 +171,8 @@ GitHub Pages is enabled from `main:/docs` and deploys after pushes to `main`.
 ## 6. GitHub Actions release automation
 
 The workflow at `.github/workflows/beta-release.yml` builds, signs, notarizes,
-staples and uploads a public beta DMG on pushes to `main`. When the push is a
-tag like `v1.0.0-beta.1`, it also creates a GitHub prerelease.
+staples and uploads a release DMG on pushes to `main`. When the push is a stable
+tag like `v1.0.0`, it creates a public GitHub release; prerelease tags remain supported.
 
 Required repository secrets:
 
@@ -203,7 +202,7 @@ It also downloads the SAGE GUI release into `vendor/SAGE.app` before packaging.
 `SAGE_RELEASE_TAG` is currently pinned to `v11.4.11` to avoid version drift.
 
 If these secrets are not configured, the workflow records a notice and skips
-the signed build, artifact upload and prerelease steps. In that case, use the
+the signed build, artifact upload and release steps. In that case, use the
 local notarized build and manual `gh release create` flow above; a green skipped
 workflow is not proof that a release artifact was produced.
 
@@ -212,11 +211,11 @@ workflow is not proof that a release artifact was produced.
 Send testers:
 
 ```text
-QuietType public beta
+QuietType
 
 Speak freely. Transcribe locally. Nothing leaves your Mac.
 
-Download the DMG from the GitHub prerelease, drag QuietType to Applications, then open it and follow the setup prompts for Microphone and Accessibility. Voice training is optional.
+Download the DMG from the GitHub release, drag QuietType to Applications, then open it and follow the setup prompts for Microphone and Accessibility. Voice training is optional.
 
 Bug reports: Dhillon "l33tdawg" Kannabhiran <l33tdawg@hackinthebox.org> or https://github.com/l33tdawg/quiettype/issues/new
 ```

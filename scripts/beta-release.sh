@@ -21,13 +21,18 @@ export QUIETTYPE_CODESIGN_IDENTITY="$SIGN_IDENTITY"
 export QUIETTYPE_CODESIGN_OPTIONS="${QUIETTYPE_CODESIGN_OPTIONS:---options runtime}"
 export QUIETTYPE_REQUIRE_ASR_ASSETS="${QUIETTYPE_REQUIRE_ASR_ASSETS:-1}"
 
+RELEASE_SUFFIX=""
+if [[ -n "$QUIETTYPE_RELEASE_LABEL" ]]; then
+  RELEASE_SUFFIX="-$QUIETTYPE_RELEASE_LABEL"
+fi
+
 bash "$ROOT/scripts/build-whisperkit-server.sh"
 arch -arm64 swift test --arch arm64 --disable-swift-testing
 arch -arm64 swift build -c release --arch arm64 --product LocalTypeMac
 bash "$ROOT/scripts/package-app.sh"
 codesign --verify --deep --strict --verbose=2 "$ROOT/dist/QuietType.app"
 bash "$ROOT/scripts/create-dmg.sh"
-DMG="$ROOT/dist/QuietType-${QUIETTYPE_VERSION}-${QUIETTYPE_RELEASE_LABEL}-macOS-arm64.dmg"
+DMG="$ROOT/dist/QuietType-${QUIETTYPE_VERSION}${RELEASE_SUFFIX}-macOS-arm64.dmg"
 bash "$ROOT/scripts/verify-dmg-app.sh" "$DMG"
 
 if [[ "$NOTARIZE" == "1" || "$NOTARIZE" == "true" ]]; then

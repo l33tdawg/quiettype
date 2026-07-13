@@ -15,11 +15,11 @@ on:
       build:
         description: "Monotonic app build number"
         required: true
-        default: "44"
+        default: "47"
       release_label:
-        description: "Release label"
-        required: true
-        default: "rc.20"
+        description: "Optional prerelease label (for example rc.21); leave empty for stable"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -49,25 +49,45 @@ jobs:
           SOURCE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' resources/LocalTypeMac/Info.plist)"
           SOURCE_BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' resources/LocalTypeMac/Info.plist)"
           SOURCE_LABEL="$(/usr/libexec/PlistBuddy -c 'Print :QuietTypeReleaseLabel' resources/LocalTypeMac/Info.plist)"
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-(beta|rc)\.([0-9]+)$ ]]; then
-            TAG_VERSION="${BASH_REMATCH[1]}"
-            TAG_LABEL="${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            if [[ "${GITHUB_REF_NAME}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-(beta|rc)\.([0-9]+)$ ]]; then
+              TAG_VERSION="${BASH_REMATCH[1]}"
+              TAG_LABEL="${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+            elif [[ "${GITHUB_REF_NAME}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              TAG_VERSION="${BASH_REMATCH[1]}"
+              TAG_LABEL=""
+            else
+              echo "Unsupported release tag: ${GITHUB_REF_NAME}" >&2
+              exit 1
+            fi
             if [[ "$TAG_VERSION" != "$SOURCE_VERSION" || "$TAG_LABEL" != "$SOURCE_LABEL" ]]; then
-              echo "Tag $GITHUB_REF_NAME does not match source metadata ${SOURCE_VERSION}-${SOURCE_LABEL}." >&2
+              echo "Tag $GITHUB_REF_NAME does not match source metadata version='$SOURCE_VERSION' label='$SOURCE_LABEL'." >&2
               exit 1
             fi
             echo "QUIETTYPE_VERSION=$SOURCE_VERSION" >> "$GITHUB_ENV"
             echo "QUIETTYPE_BUILD=$SOURCE_BUILD" >> "$GITHUB_ENV"
             echo "QUIETTYPE_RELEASE_LABEL=$SOURCE_LABEL" >> "$GITHUB_ENV"
+            EFFECTIVE_VERSION="$SOURCE_VERSION"
+            EFFECTIVE_LABEL="$SOURCE_LABEL"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             echo "QUIETTYPE_VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
             echo "QUIETTYPE_BUILD=${{ inputs.build }}" >> "$GITHUB_ENV"
             echo "QUIETTYPE_RELEASE_LABEL=${{ inputs.release_label }}" >> "$GITHUB_ENV"
+            EFFECTIVE_VERSION="${{ inputs.version }}"
+            EFFECTIVE_LABEL="${{ inputs.release_label }}"
           else
             echo "QUIETTYPE_VERSION=$SOURCE_VERSION" >> "$GITHUB_ENV"
             echo "QUIETTYPE_BUILD=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
             echo "QUIETTYPE_RELEASE_LABEL=ci.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+            EFFECTIVE_VERSION="$SOURCE_VERSION"
+            EFFECTIVE_LABEL="ci.${GITHUB_RUN_NUMBER}"
           fi
+
+          RELEASE_SUFFIX=""
+          if [[ -n "$EFFECTIVE_LABEL" ]]; then
+            RELEASE_SUFFIX="-$EFFECTIVE_LABEL"
+          fi
+          echo "QUIETTYPE_ARTIFACT_STEM=QuietType-${EFFECTIVE_VERSION}${RELEASE_SUFFIX}-macOS-arm64" >> "$GITHUB_ENV"
 
       - name: Select Xcode
         shell: bash
@@ -187,21 +207,28 @@ jobs:
         if: steps.release-secrets.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: QuietType-${{ env.QUIETTYPE_VERSION }}-${{ env.QUIETTYPE_RELEASE_LABEL }}-macOS-arm64
+          name: ${{ env.QUIETTYPE_ARTIFACT_STEM }}
           path: |
-            dist/QuietType-${{ env.QUIETTYPE_VERSION }}-${{ env.QUIETTYPE_RELEASE_LABEL }}-macOS-arm64.dmg
-            dist/QuietType-${{ env.QUIETTYPE_VERSION }}-${{ env.QUIETTYPE_RELEASE_LABEL }}-macOS-arm64.dmg.sha256
+            dist/${{ env.QUIETTYPE_ARTIFACT_STEM }}.dmg
+            dist/${{ env.QUIETTYPE_ARTIFACT_STEM }}.dmg.sha256
           if-no-files-found: error
 
-      - name: Publish GitHub prerelease
+      - name: Publish GitHub release
         if: github.ref_type == 'tag' && steps.release-secrets.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          DMG="dist/QuietType-${QUIETTYPE_VERSION}-${QUIETTYPE_RELEASE_LABEL}-macOS-arm64.dmg"
-          gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
-            --repo "$GITHUB_REPOSITORY" \
-            --prerelease \
-            --title "QuietType ${QUIETTYPE_VERSION} ${QUIETTYPE_RELEASE_LABEL}" \
-            --notes "Signed prerelease for macOS Apple Silicon. Fast local voice input, governed local memory, and no cloud transcription."
+          DMG="dist/${QUIETTYPE_ARTIFACT_STEM}.dmg"
+          if [[ -n "$QUIETTYPE_RELEASE_LABEL" ]]; then
+            gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "QuietType ${QUIETTYPE_VERSION} ${QUIETTYPE_RELEASE_LABEL}" \
+              --notes "Signed prerelease for macOS Apple Silicon. Fast local voice input, governed local memory, and no cloud transcription."
+          else
+            gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "QuietType ${QUIETTYPE_VERSION}" \
+              --notes "QuietType 1.0 is now available for macOS Apple Silicon. Fast local voice input, governed local memory, and no cloud transcription."
+          fi

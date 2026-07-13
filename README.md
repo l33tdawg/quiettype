@@ -13,8 +13,8 @@ with no cloud processing path for normal dictation.
 ![QuietType home dashboard](docs/screenshots/quiettype-home.png)
 
 <p align="center">
-  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0-rc.20/QuietType-1.0.0-rc.20-macOS-arm64.dmg">
-    <img alt="Download QuietType 1.0.0 RC20 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.0%20RC20-black?style=for-the-badge&logo=apple">
+  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.0/QuietType-1.0.0-macOS-arm64.dmg">
+    <img alt="Download QuietType 1.0.0 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.0-black?style=for-the-badge&logo=apple">
   </a>
 </p>
 
@@ -71,7 +71,7 @@ natural speech
 
 ### Local-only speech processing
 
-The beta bundles a local WhisperKit/Core ML speech model for Apple Silicon.
+QuietType bundles a local WhisperKit/Core ML speech model for Apple Silicon.
 Normal dictation does not require OpenAI, Gemini, Anthropic or any hosted ASR
 provider. The macOS app is native Swift/SwiftUI/AppKit, so microphone capture,
 Accessibility insertion, hotkeys, Keychain-backed storage and model execution
@@ -87,7 +87,7 @@ governed, inspectable and designed for local-first AI and desktop workflows.
 
 Learn more at the [SAGE public page](https://l33tdawg.github.io/sage/).
 
-Beta builds are designed to bundle SAGE GUI so first-run setup can
+Release builds bundle SAGE GUI so first-run setup can
 start the local SAGE node without asking users to hunt for a separate download.
 Release builds can pin a known-good SAGE GUI release to avoid version drift.
 
@@ -127,7 +127,7 @@ user's machine.
 - encrypted Voice Notes with playback, transcript editing and optional SAGE transcript copies
 - bundled SAGE GUI for first-run governed memory setup
 - signed update checks with visible download/install status and restart flow
-- signed beta DMG
+- signed and notarized DMG
 
 ## Privacy Model
 
@@ -152,8 +152,8 @@ local-only unless the user explicitly changes a future SAGE network policy.
 
 ## Status
 
-QuietType is in public beta for macOS Apple Silicon. The current public beta
-ships as a signed Apple Silicon DMG through GitHub Releases.
+QuietType 1.0 is available for macOS Apple Silicon as a signed and notarized
+DMG through GitHub Releases.
 
 Landing page target:
 
@@ -170,7 +170,7 @@ https://github.com/l33tdawg/quiettype/releases
 ```
 
 The download badge and landing-page links point at the latest published GitHub
-Release. Source on `main` may be ahead of the published beta while a new signed
+Release. Source on `main` may be ahead of the published build while a new signed
 DMG is being prepared.
 
 ## Development
@@ -180,8 +180,8 @@ See [docs/dev-setup.md](docs/dev-setup.md) for local development setup.
 See [docs/voice-flow-benchmark.md](docs/voice-flow-benchmark.md) for the
 content-free, offline voice benchmark and opt-in local flow metrics.
 See [docs/macos-signing.md](docs/macos-signing.md) for signing notes.
-See [docs/beta-release.md](docs/beta-release.md) for local and GitHub Actions
-release notes.
+See the [release process documentation](docs/beta-release.md) for local and
+GitHub Actions release notes.
 
 Run tests:
 
