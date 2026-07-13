@@ -89,6 +89,41 @@ public struct QuietTypeReleaseVersion: Comparable, Equatable, Sendable {
         )
     }
 
+    public static func fromBundleMetadata(
+        version: String,
+        build: Int,
+        releaseLabel: String?
+    ) -> QuietTypeReleaseVersion {
+        let trimmedLabel = releaseLabel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmedLabel, !trimmedLabel.isEmpty,
+           let prerelease = parse("v\(version)-\(trimmedLabel)") {
+            return prerelease
+        }
+
+        if trimmedLabel != nil, trimmedLabel?.isEmpty == true,
+           let stable = parse("v\(version)") {
+            return stable
+        }
+
+        if let base = parse("v\(version)") {
+            return QuietTypeReleaseVersion(
+                major: base.major,
+                minor: base.minor,
+                patch: base.patch,
+                channel: .beta,
+                prereleaseNumber: max(build, 1)
+            )
+        }
+
+        return QuietTypeReleaseVersion(
+            major: 1,
+            minor: 0,
+            patch: 0,
+            channel: .beta,
+            prereleaseNumber: max(build, 1)
+        )
+    }
+
     public var displayLabel: String {
         let version = "v\(major).\(minor).\(patch)"
         switch channel {

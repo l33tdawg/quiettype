@@ -2,6 +2,28 @@ import XCTest
 @testable import LocalTypeCore
 
 final class QuietTypeReleaseVersionTests: XCTestCase {
+    func testEmptyBundleReleaseLabelIsStable() {
+        let version = QuietTypeReleaseVersion.fromBundleMetadata(
+            version: "1.0.1",
+            build: 48,
+            releaseLabel: ""
+        )
+
+        XCTAssertEqual(version.channel, .stable)
+        XCTAssertEqual(version.displayLabel, "v1.0.1")
+    }
+
+    func testMissingBundleReleaseLabelRemainsDevelopmentBeta() {
+        let version = QuietTypeReleaseVersion.fromBundleMetadata(
+            version: "1.0.1",
+            build: 48,
+            releaseLabel: nil
+        )
+
+        XCTAssertEqual(version.channel, .beta)
+        XCTAssertEqual(version.displayLabel, "v1.0.1 beta.48")
+    }
+
     func testOrdersBetaReleaseCandidateAndStableChannels() throws {
         let beta26 = try XCTUnwrap(QuietTypeReleaseVersion.parse("v1.0.0-beta.26"))
         let rc1 = try XCTUnwrap(QuietTypeReleaseVersion.parse("v1.0.0-rc.1"))

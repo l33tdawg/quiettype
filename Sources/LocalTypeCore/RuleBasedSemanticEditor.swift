@@ -1238,7 +1238,12 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
 
     private func containsGroceryTerm(in text: String) -> Bool {
         groceryContextTerms.contains { term in
-            text.contains(term)
+            let escaped = NSRegularExpression.escapedPattern(for: term)
+                .replacingOccurrences(of: #"\ "#, with: #"\s+"#)
+            return text.range(
+                of: #"(?<![A-Za-z0-9])\#(escaped)(?![A-Za-z0-9])"#,
+                options: [.regularExpression, .caseInsensitive]
+            ) != nil
         }
     }
 

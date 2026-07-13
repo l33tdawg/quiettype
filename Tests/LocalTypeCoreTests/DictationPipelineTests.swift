@@ -67,6 +67,25 @@ final class DictationPipelineTests: XCTestCase {
         XCTAssertFalse(result.text.contains("\n- "))
     }
 
+    func testDoesNotTreatCornerAndVersionNumberAsGroceryList() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Codex", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "This thing here at the top left hand corner still says beta. We should remove that so that it's very clear that this is the final release already, 1.0.1.",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "This thing here at the top left hand corner still says beta. We should remove that so that it's very clear that this is the final release already, 1.0.1."
+        )
+        XCTAssertFalse(result.text.contains("\n- "))
+    }
+
     func testProtectsRawButFromLearnedBroCorrection() async throws {
         let profile = DictationProfile(
             vocabulary: [],

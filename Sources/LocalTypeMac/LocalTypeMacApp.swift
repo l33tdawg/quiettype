@@ -7436,18 +7436,7 @@ private extension QuietTypeReleaseVersion {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
         let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
         let releaseLabel = Bundle.main.object(forInfoDictionaryKey: "QuietTypeReleaseLabel") as? String
-        let taggedVersion = releaseLabel.map { "v\(version)-\($0)" } ?? "v\(version)-beta.\(build)"
-        if let parsed = parse(taggedVersion) {
-            return parsed
-        }
-        return parse("v\(version)-beta.\(max(build, 1))")
-            ?? QuietTypeReleaseVersion(
-                major: 1,
-                minor: 0,
-                patch: 0,
-                channel: .beta,
-                prereleaseNumber: max(build, 1)
-            )
+        return fromBundleMetadata(version: version, build: build, releaseLabel: releaseLabel)
     }
 }
 
@@ -8125,16 +8114,7 @@ final class MenuBarModel: ObservableObject {
     }
 
     var appVersionLabel: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.1"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
-        if let releaseLabel = Bundle.main.object(forInfoDictionaryKey: "QuietTypeReleaseLabel") as? String,
-           let parsed = QuietTypeReleaseVersion.parse("v\(version)-\(releaseLabel)") {
-            return parsed.displayLabel
-        }
-        if build.isEmpty {
-            return "v\(version)"
-        }
-        return "v\(version) beta.\(build)"
+        QuietTypeReleaseVersion.current().displayLabel
     }
 
     var primaryPrompt: String {
