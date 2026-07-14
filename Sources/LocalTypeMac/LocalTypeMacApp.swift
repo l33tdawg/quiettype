@@ -1429,6 +1429,9 @@ struct TesterView: View {
                     speechEngineWarmupPanel
                 }
                 metricsGrid
+                if !model.recoveredRecordings.isEmpty {
+                    recoveredRecordingsPanel
+                }
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 22) {
                         VStack(alignment: .leading, spacing: 16) {
@@ -1452,6 +1455,56 @@ struct TesterView: View {
             }
             .padding(34)
         }
+    }
+
+    private var recoveredRecordingsPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "arrow.clockwise.icloud.fill")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Recovered recordings")
+                        .font(.headline)
+                    Text("QuietType saved these local checkpoints before recording was interrupted. Audio is available through the last successful save.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            ForEach(model.recoveredRecordings) { recording in
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Recovered up to \(model.recoveryDurationLabel(recording))")
+                            .font(.callout.weight(.semibold))
+                        Text(recording.reason ?? "Interrupted recording")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Button("Resume") {
+                        Task { await model.resumeRecoveredRecording(id: recording.id) }
+                    }
+                    .buttonStyle(QuietButtonStyle())
+                    Button("Transcribe") {
+                        Task { await model.transcribeRecoveredRecording(id: recording.id) }
+                    }
+                    .buttonStyle(QuietButtonStyle())
+                    Button("Discard") {
+                        model.discardRecoveredRecording(id: recording.id)
+                    }
+                    .buttonStyle(QuietButtonStyle())
+                }
+                .padding(10)
+                .background(Color(nsColor: .windowBackgroundColor).opacity(0.7))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .padding(16)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private var historyPage: some View {
@@ -2600,6 +2653,14 @@ struct TesterView: View {
                     .tint(.primary)
                     .quickTooltip("When you type four words with the keyboard, QuietType can occasionally show a local overlay reminding you to press Fn and speak. It is capped at 3 reminders per week with at least 48 hours between reminders.")
 
+                    Toggle("Recording countdown sounds", isOn: Binding(
+                        get: { model.recordingWarningsEnabled },
+                        set: { model.setRecordingWarningsEnabled($0) }
+                    ))
+                    .toggleStyle(.checkbox)
+                    .tint(.primary)
+                    .quickTooltip("Play an optional local sound at 5 minutes, 1 minute, and 15 seconds before each automatic long-recording segment checkpoint.")
+
                 }
 
                 QuietSegmentedControl(
@@ -3413,6 +3474,10 @@ struct TesterView: View {
             SegmentedLevelMeter(level: model.inputLevel, isActive: model.isRecording)
                 .frame(width: 285)
 
+            if model.isRecording {
+                recordingHealthPanel
+            }
+
             Text(model.helperText)
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -3422,6 +3487,45 @@ struct TesterView: View {
         .padding(28)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var recordingHealthPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "checkmark.shield.fill")
+                    .foregroundStyle(.secondary)
+                Text("Recovery protected")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                Text("Segment \(model.recordingSegmentNumber)")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("\(model.recordingHealthElapsed) · \(model.recordingHealthLastSave)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text("Mic \(model.recordingHealthMicrophone) · \(model.recordingHealthConnection)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text(model.recordingStorageEstimate)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !model.recordingWarningText.isEmpty {
+                Text(model.recordingWarningText)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.primary)
+            }
+        }
+        .frame(maxWidth: 350, alignment: .leading)
+        .padding(12)
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Recording health. \(model.recordingHealthElapsed). \(model.recordingHealthLastSave). \(model.recordingHealthMicrophone). \(model.recordingHealthConnection).")
     }
 
     private var securityPanel: some View {
@@ -7435,7 +7539,7 @@ private final class SageGitHubInstaller {
 
 private extension QuietTypeReleaseVersion {
     static func current() -> QuietTypeReleaseVersion {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.3"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.4"
         let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
         let releaseLabel = Bundle.main.object(forInfoDictionaryKey: "QuietTypeReleaseLabel") as? String
         return fromBundleMetadata(version: version, build: build, releaseLabel: releaseLabel)
@@ -7805,6 +7909,12 @@ final class MenuBarModel: ObservableObject {
     @Published private var dictationState = QuietTypeDictationState.idle
     @Published var isRecording = false
     @Published var recordingDuration = 0.0
+    @Published private(set) var recordingLastCheckpointAt: Date?
+    @Published private(set) var recordingStorageEstimate = "Calculating local space…"
+    @Published private(set) var recordingWarningText = ""
+    @Published private(set) var recordingSegmentNumber = 1
+    @Published private(set) var recoveredRecordings: [RecordingRecoveryManifest] = []
+    @Published var recordingWarningsEnabled = true
     @Published var lastDictationDuration = 0.0
     @Published var sessionsToday = 0
     @Published var totalTranslatedWordCount = 0
@@ -7903,13 +8013,15 @@ final class MenuBarModel: ObservableObject {
     private var recordingStartedAt: Date?
     private var dictationReleasedAt: Date?
     private var activeDictationAudioURL: URL?
+    private var crashSafeRecordingSession: CrashSafeRecordingSession?
+    private var activeRecoveryRecordingID: String?
+    private var recoveryContinuationSourceID: String?
     private var activeDictationContext: AppContext?
     private var activeDictationForcesPreviewOnly = false
     private var lastExternalApplication: NSRunningApplication?
     private var trainingStartedAt: Date?
     private var teachingStartedAt: Date?
     private var voiceNoteStartedAt: Date?
-    private var recordedSamples: [Float] = []
     private var trainingSamples: [Float] = []
     private var teachingSamples: [Float] = []
     private var voiceNoteSamples: [Float] = []
@@ -7938,6 +8050,7 @@ final class MenuBarModel: ObservableObject {
     private lazy var voiceNoteAudioStore = EncryptedVoiceNoteAudioStore(directory: voiceNoteAudioDirectory)
     private lazy var reviewAudioStore = EncryptedVoiceNoteAudioStore(directory: reviewAudioDirectory)
     private lazy var latestDictationAudioStore = LatestDictationAudioStore(directory: latestDictationAudioDirectory)
+    private lazy var crashSafeRecordingStore = CrashSafeRecordingStore(directory: recoveryRecordingsDirectory)
     private lazy var voiceFlowMetricsStore = LocalVoiceFlowMetricsStore(fileURL: voiceFlowMetricsURL)
     private var speechActivityTracker = SpeechActivityTracker()
     private var liveTranscriptionClient: WhisperKitLiveStreamClient?
@@ -7953,6 +8066,7 @@ final class MenuBarModel: ObservableObject {
     private var activeTranscriptionOptions = AudioTranscriptionOptions.none
     private var lastListeningUIUpdateAt = Date.distantPast
     private var lastListeningOverlayUpdateAt = Date.distantPast
+    private var deliveredRecordingMilestones: Set<Int> = []
     private var lastVoiceNoteOverlayUpdateAt = Date.distantPast
     private var lastVoiceNoteUIUpdateAt = Date.distantPast
     private var hotKeyController: CarbonHotKeyController?
@@ -7977,6 +8091,7 @@ final class MenuBarModel: ObservableObject {
     private static let lastWordsPerMinuteKey = "quiettype.lastWordsPerMinute"
     private static let historyReviewEnabledKey = "quiettype.historyReviewEnabled"
     private static let keepReviewAudioKey = "quiettype.keepReviewAudio"
+    private static let recordingWarningsEnabledKey = "quiettype.recordingWarningsEnabled"
     private static let saveVoiceNotesToSageKey = "quiettype.saveVoiceNotesToSage"
     private static let hiddenReviewMemoryIDsKey = "quiettype.hiddenReviewMemoryIDs"
     private static let availableUpdateKey = "quiettype.availableUpdate"
@@ -7986,7 +8101,8 @@ final class MenuBarModel: ObservableObject {
     private static let backgroundUpdateRefreshInterval: UInt64 = 60 * 60 * 1_000_000_000
     private static let nativeSpeechLaunchTimeoutSeconds: TimeInterval = 120
     private static let requiredCalibrationSets = 3
-    private static let maxDictationDurationSeconds = 300.0
+    private static let recordingContinuationIntervalSeconds = 9 * 60.0
+    private static let maxAuxiliaryRecordingDurationSeconds = 300.0
     private static let maxTrainingPairCount = 10
     private static let maxReviewAudioFiles = 10
     private static let minimumUsableRMS = 0.0015
@@ -8004,6 +8120,7 @@ final class MenuBarModel: ObservableObject {
         hiddenReviewMemoryIDs = Set(UserDefaults.standard.stringArray(forKey: Self.hiddenReviewMemoryIDsKey) ?? [])
         historyReviewEnabled = storedBool(forKey: Self.historyReviewEnabledKey, defaultValue: true)
         keepReviewAudio = storedBool(forKey: Self.keepReviewAudioKey, defaultValue: false)
+        recordingWarningsEnabled = storedBool(forKey: Self.recordingWarningsEnabledKey, defaultValue: true)
         saveVoiceNotesToSage = storedBool(forKey: Self.saveVoiceNotesToSageKey, defaultValue: true)
         if let storedSpelling = UserDefaults.standard.string(forKey: Self.spellingPreferenceKey),
            let preference = SpellingPreference(rawValue: storedSpelling) {
@@ -8078,6 +8195,22 @@ final class MenuBarModel: ObservableObject {
 
     var isRunning: Bool {
         dictationState.isProcessing
+    }
+
+    var recordingHealthElapsed: String {
+        durationLabel(recordingDuration)
+    }
+
+    var recordingHealthLastSave: String {
+        recordingLastCheckpointAt.map { checkpointLabel(for: $0) } ?? "saving first checkpoint"
+    }
+
+    var recordingHealthMicrophone: String {
+        capturedFrameCount > 0 ? "active" : "waiting"
+    }
+
+    var recordingHealthConnection: String {
+        nativeSpeechServerReady ? "local speech connected" : "local recording only"
     }
 
     var isFinalizingDictation: Bool {
@@ -8506,6 +8639,11 @@ final class MenuBarModel: ObservableObject {
             .appendingPathComponent("LatestDictationAudio", isDirectory: true)
     }
 
+    private var recoveryRecordingsDirectory: URL {
+        quietTypeApplicationSupportDirectory
+            .appendingPathComponent("Recording Recovery", isDirectory: true)
+    }
+
     private var temporaryDictationAudioDirectory: URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("QuietType/Dictation", isDirectory: true)
@@ -8522,7 +8660,40 @@ final class MenuBarModel: ObservableObject {
         }
         try? FileManager.default.removeItem(at: temporaryDictationAudioDirectory)
         activeDictationAudioURL = nil
-        recordedSamples.removeAll(keepingCapacity: false)
+    }
+
+    private func discardActiveRecoveryRecording() {
+        if let activeRecoveryRecordingID {
+            try? crashSafeRecordingStore.discard(id: activeRecoveryRecordingID)
+        }
+        crashSafeRecordingSession = nil
+        activeRecoveryRecordingID = nil
+        refreshRecoveredRecordings()
+    }
+
+    private func markActiveRecoveryAsFailed(reason: String) {
+        if let activeRecoveryRecordingID {
+            _ = try? crashSafeRecordingStore.update(
+                id: activeRecoveryRecordingID,
+                state: .transcriptionFailed,
+                reason: reason
+            )
+        }
+        crashSafeRecordingSession = nil
+        activeRecoveryRecordingID = nil
+        refreshRecoveredRecordings()
+    }
+
+    private func markRecoveryRecordingsAsFailed(_ ids: [String], reason: String) {
+        for id in Set(ids) {
+            _ = try? crashSafeRecordingStore.update(
+                id: id,
+                state: .transcriptionFailed,
+                reason: reason
+            )
+        }
+        activeRecoveryRecordingID = nil
+        refreshRecoveredRecordings()
     }
 
     private func discardPlaintextVoiceNoteAudio() {
@@ -9298,6 +9469,7 @@ final class MenuBarModel: ObservableObject {
         isBooting = true
         discardPlaintextDictationAudio()
         discardPlaintextVoiceNoteAudio()
+        recoverInterruptedRecordings()
         Task.detached(priority: .utility) {
             QuietTypeGitHubUpdater().pruneRetainedArtifacts()
         }
@@ -9327,6 +9499,7 @@ final class MenuBarModel: ObservableObject {
         let directories = [
             reviewAudioDirectory,
             latestDictationAudioDirectory,
+            recoveryRecordingsDirectory,
             voiceNoteAudioDirectory,
             trainingDirectory()
         ]
@@ -9352,6 +9525,7 @@ final class MenuBarModel: ObservableObject {
     func refreshStorageSnapshot() {
         let reviewAudioDirectory = reviewAudioDirectory
         let voiceNoteAudioDirectory = voiceNoteAudioDirectory
+        let recoveryRecordingsDirectory = recoveryRecordingsDirectory
         let trainingDirectory = trainingDirectory()
         let updateDownloadsDirectory = updateDownloadsDirectory
         let updateBackupsDirectory = updateBackupsDirectory
@@ -9367,6 +9541,12 @@ final class MenuBarModel: ObservableObject {
                         title: "Encrypted review audio",
                         detail: "Encrypted .qtvoice clips, capped at \(maxReviewAudioFiles) recent dictations.",
                         urls: [reviewAudioDirectory]
+                    ),
+                    Self.storageEntry(
+                        id: "recording-recovery",
+                        title: "Recording recovery",
+                        detail: "Crash-safe local WAV checkpoints retained until recovered or discarded.",
+                        urls: [recoveryRecordingsDirectory]
                     ),
                     Self.storageEntry(
                         id: "voice-notes",
@@ -10690,7 +10870,7 @@ final class MenuBarModel: ObservableObject {
         didInsert = false
         statusMessage = ""
 
-        await processTranscript(transcript)
+        _ = await processTranscript(transcript)
         statusMessage = editorMode == .ollama ? "Ollama mode, loopback only" : "Rule editor"
     }
 
@@ -10747,7 +10927,11 @@ final class MenuBarModel: ObservableObject {
         didDetectSpeech = false
         inputNoiseFloorRMS = 0.006
         recordingDuration = 0
-        recordedSamples = []
+        recordingLastCheckpointAt = nil
+        recordingStorageEstimate = storageEstimate(forSampleRate: 16_000)
+        recordingWarningText = ""
+        recordingSegmentNumber = 1
+        deliveredRecordingMilestones = []
         recordingSampleRate = 16_000
         activeTranscriptionOptions = currentTranscriptionOptions()
         liveTranscriptionClient = WhisperKitLiveStreamClient()
@@ -10763,6 +10947,19 @@ final class MenuBarModel: ObservableObject {
         activeDictationAudioURL = nil
         lastListeningUIUpdateAt = .distantPast
         lastListeningOverlayUpdateAt = .distantPast
+
+        do {
+            let session = try crashSafeRecordingStore.begin(continuationOf: recoveryContinuationSourceID)
+            crashSafeRecordingSession = session
+            activeRecoveryRecordingID = session.manifest.id
+        } catch {
+            dictationState = .failed
+            lastError = "QuietType could not create a protected local recording: \(error.localizedDescription)"
+            statusMessage = "Recording storage unavailable"
+            clearActiveDictationTarget()
+            recoveryContinuationSourceID = nil
+            return
+        }
 
         let service = AVAudioCaptureService { [weak self] frame in
             await self?.record(frame)
@@ -10786,6 +10983,12 @@ final class MenuBarModel: ObservableObject {
         } catch {
             await cancelIncrementalTranscription()
             captureService = nil
+            if let activeRecoveryRecordingID {
+                try? crashSafeRecordingStore.discard(id: activeRecoveryRecordingID)
+            }
+            crashSafeRecordingSession = nil
+            activeRecoveryRecordingID = nil
+            recoveryContinuationSourceID = nil
             voiceFlowMetricAccumulator = nil
             recordingStartedAt = nil
             isRecording = false
@@ -10816,6 +11019,13 @@ final class MenuBarModel: ObservableObject {
         dictationState = .cancelled
         lastDictationDuration = recordingDuration
         await cancelIncrementalTranscription()
+        if let activeRecoveryRecordingID {
+            try? crashSafeRecordingStore.discard(id: activeRecoveryRecordingID)
+        }
+        crashSafeRecordingSession = nil
+        activeRecoveryRecordingID = nil
+        recoveryContinuationSourceID = nil
+        refreshRecoveredRecordings()
         discardPlaintextDictationAudio()
         capturedFrameCount = 0
         lastRecordingURL = nil
@@ -10836,6 +11046,105 @@ final class MenuBarModel: ObservableObject {
     func setSaveVoiceNotesToSage(_ enabled: Bool) {
         saveVoiceNotesToSage = enabled
         UserDefaults.standard.set(enabled, forKey: Self.saveVoiceNotesToSageKey)
+    }
+
+    func setRecordingWarningsEnabled(_ enabled: Bool) {
+        recordingWarningsEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.recordingWarningsEnabledKey)
+    }
+
+    func discardRecoveredRecording(id: String) {
+        do {
+            try crashSafeRecordingStore.discard(id: id)
+            refreshRecoveredRecordings()
+            statusMessage = "Recovered recording discarded"
+        } catch {
+            lastError = "Could not discard the recovered recording: \(error.localizedDescription)"
+        }
+    }
+
+    func transcribeRecoveredRecording(id: String) async {
+        guard !isRecording, !isRunning, !isVoiceNoteRecording, !isVoiceNoteTranscribing else {
+            lastError = "Finish the current recording before recovering another one."
+            return
+        }
+        guard await ensureSageReadyForDictation(), await ensureNativeSpeechServerReadyForTranscription() else {
+            lastError = "QuietType needs its local memory and speech services before it can recover this recording."
+            return
+        }
+
+        do {
+            let manifest = try crashSafeRecordingStore.update(
+                id: id,
+                state: .readyForTranscription,
+                reason: "Recovering after an interrupted recording."
+            )
+            let url = temporaryDictationAudioURL()
+            _ = try crashSafeRecordingStore.mergeRecording(id: id, to: url)
+            activeDictationAudioURL = url
+            activeRecoveryRecordingID = id
+            activeDictationForcesPreviewOnly = true
+            recordingDuration = manifest.capturedDurationSeconds
+            lastDictationDuration = manifest.capturedDurationSeconds
+            dictationState = .finalizing
+            statusMessage = "Recovering \(recoveryDurationLabel(manifest)) of local audio"
+            showProcessingOverlay(detail: "Recovered recording · transcribing locally")
+            dictationFinalizationTask?.cancel()
+            dictationFinalizationTask = Task { @MainActor [weak self] in
+                guard let self else {
+                    return
+                }
+                await self.transcribeAndProcess(url, recoveryRecordingID: id)
+                self.dictationFinalizationTask = nil
+            }
+        } catch {
+            lastError = "Could not recover this recording: \(error.localizedDescription)"
+            statusMessage = "Recovery needs attention"
+            refreshRecoveredRecordings()
+        }
+    }
+
+    func resumeRecoveredRecording(id: String) async {
+        guard !isRecording, !isRunning else {
+            lastError = "Finish the current dictation before resuming a recovered recording."
+            return
+        }
+        guard recoveredRecordings.contains(where: { $0.id == id }) else {
+            lastError = "That recovered recording is no longer available."
+            return
+        }
+        recoveryContinuationSourceID = id
+        statusMessage = "Recovered audio linked · continuing recording"
+        await startRecording(source: .inAppControl)
+    }
+
+    private func recoverInterruptedRecordings() {
+        do {
+            _ = try crashSafeRecordingStore.markActiveRecordingsInterrupted()
+            refreshRecoveredRecordings()
+            if let recording = recoveredRecordings.first {
+                statusMessage = "Recovered \(recoveryDurationLabel(recording)) of local audio"
+            }
+        } catch {
+            lastError = "Could not inspect recording recovery: \(error.localizedDescription)"
+        }
+    }
+
+    private func refreshRecoveredRecordings() {
+        do {
+            recoveredRecordings = try crashSafeRecordingStore.recoverableRecordings()
+        } catch {
+            recoveredRecordings = []
+            lastError = "Could not load recovered recordings: \(error.localizedDescription)"
+        }
+        refreshStorageSnapshot()
+    }
+
+    func recoveryDurationLabel(_ recording: RecordingRecoveryManifest) -> String {
+        let duration = max(recording.capturedDurationSeconds, 0)
+        let minutes = Int(duration) / 60
+        let seconds = Int(duration) % 60
+        return minutes > 0 ? "\(minutes)m \(seconds)s" : "\(seconds)s"
     }
 
     func setVoiceNotePlaybackVolume(_ volume: Double) {
@@ -11040,7 +11349,7 @@ final class MenuBarModel: ObservableObject {
         voiceNoteNoiseFloorRMS = Self.updatedNoiseFloor(currentFloor: voiceNoteNoiseFloorRMS, rms: rms)
         let displayLevel = Self.displayLevel(rms: rms, noiseFloor: voiceNoteNoiseFloorRMS, previous: voiceNoteInputLevel)
 
-        if elapsed >= Self.maxDictationDurationSeconds && isVoiceNoteRecording {
+        if elapsed >= Self.maxAuxiliaryRecordingDurationSeconds && isVoiceNoteRecording {
             voiceNoteDuration = elapsed
             voiceNoteInputLevel = displayLevel
             statusMessage = "5 minute note limit reached"
@@ -11461,6 +11770,7 @@ final class MenuBarModel: ObservableObject {
         let durationText = String(format: "%.1f", recordingDuration)
         if capturedFrameCount == 0 {
             await cancelIncrementalTranscription()
+            discardActiveRecoveryRecording()
             discardPlaintextDictationAudio()
             output = "I could not detect microphone audio. Check your input device and microphone permission."
             statusMessage = "No audio captured"
@@ -11472,6 +11782,7 @@ final class MenuBarModel: ObservableObject {
         }
         if peakInputRMS < Self.minimumUsableRMS {
             await cancelIncrementalTranscription()
+            markActiveRecoveryAsFailed(reason: "QuietType could not verify enough microphone signal to transcribe automatically.")
             discardPlaintextDictationAudio()
             output = "QuietType could open the microphone, but the input signal was too low to transcribe."
             statusMessage = "No usable microphone signal"
@@ -11485,6 +11796,7 @@ final class MenuBarModel: ObservableObject {
         if recordingDuration >= 0.8,
            (!didDetectSpeech || detectedSpeechDurationMS < 90) {
             await cancelIncrementalTranscription()
+            markActiveRecoveryAsFailed(reason: "QuietType could not verify sustained speech to transcribe automatically.")
             discardPlaintextDictationAudio()
             output = "QuietType heard microphone input, but could not identify a sustained voice."
             statusMessage = "No clear speech detected"
@@ -11498,27 +11810,20 @@ final class MenuBarModel: ObservableObject {
 
         do {
             let shouldRetainAudio = historyReviewEnabled && keepReviewAudio
-            let capturedSampleCount = recordedSamples.count
-            let requiresChunkedRecovery = LongDictationTranscription.requiresChunkedRecovery(
-                sampleCount: capturedSampleCount,
-                sampleRate: recordingSampleRate
-            )
-            if requiresChunkedRecovery {
-                statusMessage = "Long dictation detected"
-                showProcessingOverlay(detail: "Long dictation detected · finishing locally")
+            guard var recoverySession = crashSafeRecordingSession else {
+                throw CrashSafeRecordingError.missingRecording("active dictation")
             }
+            let recoveryManifest = try recoverySession.seal(reason: "Stopped by user")
+            crashSafeRecordingSession = nil
+            activeRecoveryRecordingID = recoveryManifest.id
+            recordingLastCheckpointAt = recoveryManifest.lastCheckpointAt
+            let capturedSampleCount = Int(recoveryManifest.capturedDurationSeconds * Double(recoveryManifest.sampleRate))
             let liveResult = await finishLiveTranscription(
                 expectedSampleCount: capturedSampleCount,
                 sampleRate: recordingSampleRate,
-                timeoutSeconds: requiresChunkedRecovery ? 15.0 : 5.0
+                timeoutSeconds: recordingDuration >= Self.recordingContinuationIntervalSeconds ? 15.0 : 5.0
             )
-            let requiresPostReleaseRecovery = LongDictationTranscription.requiresPostReleaseRecovery(
-                sampleCount: capturedSampleCount,
-                sampleRate: recordingSampleRate,
-                hasCompleteLiveTranscript: liveResult != nil
-            )
-            let longRecordingSamples = requiresPostReleaseRecovery ? recordedSamples : nil
-            if liveResult != nil || requiresPostReleaseRecovery {
+            if liveResult != nil {
                 await cancelIncrementalTranscription()
             } else {
                 incrementalCapturedDurationSeconds = Double(capturedSampleCount) / Double(max(recordingSampleRate, 1))
@@ -11526,12 +11831,10 @@ final class MenuBarModel: ObservableObject {
             }
             let url = temporaryDictationAudioURL()
             activeDictationAudioURL = url
-            try OwnerOnlyFileSecurity.prepareDirectory(url.deletingLastPathComponent())
-            try WavFileWriter.writeMonoPCM16(samples: recordedSamples, sampleRate: recordingSampleRate, to: url)
-            recordedSamples.removeAll(keepingCapacity: false)
+            _ = try crashSafeRecordingStore.mergeRecording(id: recoveryManifest.id, to: url)
             lastRecordingURL = nil
             output = "Captured \(durationText)s of local audio. Looking for the local speech engine..."
-            statusMessage = "Saved \(url.lastPathComponent)"
+            statusMessage = "Saved locally · transcribing"
             lastError = nil
             dictationFinalizationTask?.cancel()
             dictationFinalizationTask = Task { @MainActor [weak self] in
@@ -11541,9 +11844,9 @@ final class MenuBarModel: ObservableObject {
                 await self.transcribeAndProcess(
                     url,
                     liveTranscript: liveResult?.text,
-                    longRecordingSamples: longRecordingSamples,
-                    sampleRate: self.recordingSampleRate,
-                    retainReviewAudio: shouldRetainAudio
+                    retainReviewAudio: shouldRetainAudio,
+                    recoveryRecordingID: recoveryManifest.id,
+                    continuationRecordingID: self.recoveryContinuationSourceID
                 )
                 self.dictationFinalizationTask = nil
             }
@@ -11552,7 +11855,7 @@ final class MenuBarModel: ObservableObject {
             output = "Captured \(durationText)s of local audio, but could not save the WAV file."
             lastError = String(describing: error)
             dictationState = .failed
-            discardPlaintextDictationAudio()
+            markActiveRecoveryAsFailed(reason: "QuietType could not prepare the recording for transcription.")
             clearActiveDictationTarget()
             overlayController.hide(after: 1.1)
             completeVoiceFlowMetrics(outcome: .transcriptionFailed)
@@ -11601,7 +11904,18 @@ final class MenuBarModel: ObservableObject {
 
         capturedFrameCount += 1
         recordingSampleRate = frame.sampleRate
-        recordedSamples.append(contentsOf: frame.samples)
+        guard var recoverySession = crashSafeRecordingSession else {
+            await stopForRecoveryStorageFailure(CrashSafeRecordingError.missingRecording("active dictation"))
+            return
+        }
+        do {
+            let manifest = try recoverySession.append(frame)
+            crashSafeRecordingSession = recoverySession
+            recordingLastCheckpointAt = manifest.lastCheckpointAt
+        } catch {
+            await stopForRecoveryStorageFailure(error)
+            return
+        }
         let elapsed = recordingStartedAt.map { Date().timeIntervalSince($0) } ?? recordingDuration
         let rms = sqrt(frame.samples.reduce(0.0) { partial, sample in
             partial + Double(sample * sample)
@@ -11631,18 +11945,12 @@ final class MenuBarModel: ObservableObject {
         inputNoiseFloorRMS = Self.updatedNoiseFloor(currentFloor: inputNoiseFloorRMS, rms: rms)
         let displayLevel = Self.displayLevel(rms: rms, noiseFloor: inputNoiseFloorRMS, previous: inputLevel)
         peakInputLevel = max(peakInputLevel, displayLevel)
-
-        if elapsed >= Self.maxDictationDurationSeconds && isRecording {
-            recordingDuration = elapsed
-            inputLevel = displayLevel
-            statusMessage = "5 minute limit reached"
-            await stopRecording()
-            return
-        }
+        updateRecordingMilestones(elapsed: elapsed)
 
         if isRecording, shouldRefreshRecordingUI(&lastListeningUIUpdateAt, interval: Self.recordingUIRefreshInterval) {
             recordingDuration = elapsed
             inputLevel = displayLevel
+            recordingStorageEstimate = storageEstimate(forSampleRate: frame.sampleRate)
             showListeningOverlay()
         }
     }
@@ -11814,7 +12122,83 @@ final class MenuBarModel: ObservableObject {
     }
 
     private var listeningOverlayDetail: String {
-        "\(String(format: "%.1f", recordingDuration))s · Esc cancels"
+        let saved = recordingLastCheckpointAt.map { checkpointLabel(for: $0) } ?? "saving first checkpoint"
+        return "\(durationLabel(recordingDuration)) · \(saved) · segment \(recordingSegmentNumber) · Esc cancels"
+    }
+
+    private func updateRecordingMilestones(elapsed: TimeInterval) {
+        let cycle = Int(elapsed / Self.recordingContinuationIntervalSeconds)
+        recordingSegmentNumber = cycle + 1
+        let cycleStart = Double(cycle) * Self.recordingContinuationIntervalSeconds
+        let milestones: [(offset: TimeInterval, message: String)] = [
+            (4 * 60, "5 minutes until the next protected segment"),
+            (8 * 60, "1 minute until the next protected segment"),
+            (8 * 60 + 45, "15 seconds until the next protected segment")
+        ]
+        for milestone in milestones {
+            let identifier = Int(cycleStart + milestone.offset)
+            guard elapsed >= cycleStart + milestone.offset,
+                  deliveredRecordingMilestones.insert(identifier).inserted else {
+                continue
+            }
+            recordingWarningText = milestone.message
+            statusMessage = milestone.message
+            if recordingWarningsEnabled {
+                NSSound.beep()
+            }
+        }
+        guard cycle > 0,
+              deliveredRecordingMilestones.insert(-cycle).inserted else {
+            return
+        }
+        recordingWarningText = "Saved segment \(cycle) · continuing automatically"
+        statusMessage = recordingWarningText
+        if recordingWarningsEnabled {
+            NSSound.beep()
+        }
+    }
+
+    private func stopForRecoveryStorageFailure(_ error: Error) async {
+        guard isRecording else {
+            return
+        }
+        captureService?.stop()
+        captureService = nil
+        isRecording = false
+        await cancelIncrementalTranscription()
+        markActiveRecoveryAsFailed(reason: "QuietType could not write a local recovery checkpoint.")
+        dictationState = .failed
+        recordingWarningText = "Recording stopped because local storage could not be saved."
+        statusMessage = "Recording saved only up to the last checkpoint"
+        output = "QuietType stopped recording because it could not write a protected local checkpoint. Your recovered audio remains available up to the last successful save."
+        hasCopyableOutput = false
+        lastError = error.localizedDescription
+        clearActiveDictationTarget()
+        overlayController.show(state: .failed, detail: "Recovered audio is available")
+        completeVoiceFlowMetrics(outcome: .transcriptionFailed)
+    }
+
+    private func storageEstimate(forSampleRate sampleRate: Int) -> String {
+        let byteRate = max(sampleRate, 1) * 2
+        let values = try? quietTypeApplicationSupportDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        guard let available = values?.volumeAvailableCapacityForImportantUsage, available > 0 else {
+            return "Storage space unavailable"
+        }
+        let seconds = Int64(available) / Int64(byteRate)
+        if seconds >= 3_600 {
+            return "~\(seconds / 3_600)h of local recording space"
+        }
+        return "~\(max(seconds / 60, 0))m of local recording space"
+    }
+
+    private func durationLabel(_ duration: TimeInterval) -> String {
+        let totalSeconds = max(0, Int(duration.rounded(.down)))
+        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+    }
+
+    private func checkpointLabel(for date: Date) -> String {
+        let seconds = max(0, Int(Date().timeIntervalSince(date)))
+        return seconds <= 1 ? "saved now" : "saved \(seconds)s ago"
     }
 
     private static func updatedNoiseFloor(currentFloor: Double, rms: Double) -> Double {
@@ -11914,9 +12298,10 @@ final class MenuBarModel: ObservableObject {
            lastRecordingURL != activeDictationAudioURL {
             try? FileManager.default.removeItem(at: lastRecordingURL)
         }
+        discardActiveRecoveryRecording()
+        recoveryContinuationSourceID = nil
         activeDictationAudioURL = nil
         lastRecordingURL = nil
-        recordedSamples = []
         dictationReleasedAt = nil
         clearActiveDictationTarget()
         await finalizationTask?.value
@@ -11940,9 +12325,9 @@ final class MenuBarModel: ObservableObject {
     private func transcribeAndProcess(
         _ audioURL: URL,
         liveTranscript: String? = nil,
-        longRecordingSamples: [Float]? = nil,
-        sampleRate: Int? = nil,
-        retainReviewAudio: Bool = false
+        retainReviewAudio: Bool = false,
+        recoveryRecordingID: String? = nil,
+        continuationRecordingID: String? = nil
     ) async {
         var handedAudioToBackgroundWork = false
         defer {
@@ -11970,58 +12355,68 @@ final class MenuBarModel: ObservableObject {
             """
             try Task.checkCancellation()
             let incrementalTranscript: String?
-            let recoveredLongTranscript: String?
-            if let longRecordingSamples,
-               let sampleRate,
-               !longRecordingSamples.isEmpty {
-                do {
-                    statusMessage = "Recovering complete long dictation"
-                    showProcessingOverlay(detail: "Long dictation detected · completing locally")
-                    recoveredLongTranscript = try await transcribeLongRecording(
-                        samples: longRecordingSamples,
-                        sampleRate: sampleRate
-                    )
-                } catch {
-                    recoveredLongTranscript = nil
-                }
-                incrementalTranscript = nil
-            } else if let liveTranscript = liveTranscript?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank {
-                recoveredLongTranscript = nil
+            if let liveTranscript = liveTranscript?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank {
                 incrementalTranscript = liveTranscript
             } else {
-                recoveredLongTranscript = nil
                 incrementalTranscript = await consumeIncrementalTranscriptIfValid()
             }
-            let rawTranscript: String
-            if let recoveredLongTranscript {
-                rawTranscript = recoveredLongTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-            } else if let incrementalTranscript {
-                rawTranscript = incrementalTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            let currentTranscript: String
+            if let incrementalTranscript {
+                currentTranscript = incrementalTranscript
             } else {
-                rawTranscript = try await transcribeFullAudio(audioURL)
+                currentTranscript = try await transcribeFullAudio(audioURL)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let rawTranscript: String
+            if let continuationRecordingID {
+                let continuationURL = temporaryDictationAudioURL()
+                defer { try? FileManager.default.removeItem(at: continuationURL) }
+                _ = try crashSafeRecordingStore.mergeRecording(id: continuationRecordingID, to: continuationURL)
+                statusMessage = "Joining recovered recording locally"
+                let recoveredPrefix = try await transcribeFullAudio(continuationURL)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                rawTranscript = [recoveredPrefix, currentTranscript]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
+            } else {
+                rawTranscript = currentTranscript
             }
             try Task.checkCancellation()
             guard !isLikelyNoiseTranscript(rawTranscript) else {
                 throw AudioTranscriberError.noiseOnlyTranscript(rawTranscript)
             }
-            statusMessage = recoveredLongTranscript != nil
-                ? "Processed complete long audio"
-                : (incrementalTranscript == nil ? "Processed full audio" : "Processed during dictation")
+            statusMessage = incrementalTranscript == nil ? "Processed full audio" : "Processed during dictation"
             voiceFlowMetricAccumulator?.markFinalTranscript()
             try Task.checkCancellation()
             transcript = rawTranscript
             handedAudioToBackgroundWork = true
-            await processTranscript(
+            let didProcess = await processTranscript(
                 rawTranscript,
                 sourceAudioURL: audioURL,
                 retainReviewAudio: retainReviewAudio
             )
+            if didProcess {
+                for id in Set([recoveryRecordingID, continuationRecordingID].compactMap { $0 }) {
+                    try? crashSafeRecordingStore.discard(id: id)
+                }
+                activeRecoveryRecordingID = nil
+                recoveryContinuationSourceID = nil
+                refreshRecoveredRecordings()
+            } else {
+                markRecoveryRecordingsAsFailed(
+                    [recoveryRecordingID, continuationRecordingID].compactMap { $0 },
+                    reason: "QuietType transcribed this recording but could not finish processing it."
+                )
+            }
         } catch {
             await cancelIncrementalTranscription()
             if error is CancellationError || Task.isCancelled {
                 return
             }
+            markRecoveryRecordingsAsFailed(
+                [recoveryRecordingID, continuationRecordingID].compactMap { $0 },
+                reason: "QuietType could not finish local transcription."
+            )
             dictationState = .failed
             clearActiveDictationTarget()
             overlayController.hide(after: 1.1)
@@ -12281,7 +12676,7 @@ final class MenuBarModel: ObservableObject {
         _ rawTranscript: String,
         sourceAudioURL: URL? = nil,
         retainReviewAudio: Bool = false
-    ) async {
+    ) async -> Bool {
         do {
             let shouldPreviewOnly = previewOnly || activeDictationForcesPreviewOnly
             let context = activeDictationContext
@@ -12385,6 +12780,7 @@ final class MenuBarModel: ObservableObject {
                     activeDictationAudioURL = nil
                 }
             }
+            return true
         } catch {
             if let sourceAudioURL {
                 try? FileManager.default.removeItem(at: sourceAudioURL)
@@ -12393,7 +12789,7 @@ final class MenuBarModel: ObservableObject {
                 }
             }
             if error is CancellationError || Task.isCancelled {
-                return
+                return false
             }
             dictationState = .failed
             clearActiveDictationTarget()
@@ -12402,6 +12798,7 @@ final class MenuBarModel: ObservableObject {
             lastError = String(describing: error)
             overlayController.hide(after: 1.1)
             completeVoiceFlowMetrics(outcome: .transcriptionFailed)
+            return false
         }
     }
 
@@ -13299,7 +13696,7 @@ final class MenuBarModel: ObservableObject {
         trainingInputLevel = Self.displayLevel(rms: rms, noiseFloor: trainingNoiseFloorRMS, previous: trainingInputLevel)
         peakTrainingInputLevel = max(peakTrainingInputLevel, trainingInputLevel)
 
-        if trainingDuration >= Self.maxDictationDurationSeconds && isTrainingRecording {
+        if trainingDuration >= Self.maxAuxiliaryRecordingDurationSeconds && isTrainingRecording {
             statusMessage = "5 minute training limit reached"
             await stopCalibrationRecording()
         }

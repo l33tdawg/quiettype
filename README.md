@@ -13,8 +13,8 @@ with no cloud processing path for normal dictation.
 ![QuietType home dashboard](docs/screenshots/quiettype-home.png)
 
 <p align="center">
-  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.3/QuietType-1.0.3-macOS-arm64.dmg">
-    <img alt="Download QuietType 1.0.3 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.3-black?style=for-the-badge&logo=apple">
+  <a href="https://github.com/l33tdawg/quiettype/releases/download/v1.0.4/QuietType-1.0.4-macOS-arm64.dmg">
+    <img alt="Download QuietType 1.0.4 for Apple Silicon Mac" src="https://img.shields.io/badge/Download%20for%20Mac-QuietType%201.0.4-black?style=for-the-badge&logo=apple">
   </a>
 </p>
 
@@ -76,6 +76,16 @@ Normal dictation does not require OpenAI, Gemini, Anthropic or any hosted ASR
 provider. The macOS app is native Swift/SwiftUI/AppKit, so microphone capture,
 Accessibility insertion, hotkeys, Keychain-backed storage and model execution
 stay aligned with Apple platform security.
+
+### Crash-safe long recordings
+
+QuietType saves normal dictation to owner-only local WAV checkpoints every few
+seconds while you speak. Long Recording mode continues automatically across
+protected segments, shows elapsed time, microphone and local-connection health,
+storage estimates and countdown warnings, and never ends a recording silently.
+If the app closes unexpectedly, reopening QuietType offers the saved recording
+for recovery, transcription, continuation, or deletion. Network issues can
+delay processing, never destroy captured local audio.
 
 ### Governed local memory with SAGE
 
