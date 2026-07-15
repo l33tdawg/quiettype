@@ -684,12 +684,18 @@
 
     footer .shell {
       display: grid;
-      gap: 8px;
+      gap: 6px;
+      justify-items: center;
+      text-align: center;
+    }
+
+    .footer-copy {
+      margin: 0;
+      line-height: 1.45;
     }
 
     .footer-note {
       max-width: 760px;
-      line-height: 1.45;
     }
 
     .reveal {
@@ -1054,9 +1060,9 @@
 
   <footer>
     <div class="shell">
-      QuietType is native on-device dictation for macOS Apple Silicon by Dhillon "l33tdawg" Kannabhiran.
-      Bug reports: <a href="mailto:l33tdawg@hackinthebox.org">l33tdawg@hackinthebox.org</a> or <a href="https://github.com/l33tdawg/quiettype/issues/new">open a GitHub issue</a>.
-      <span class="footer-note">Page visits are measured with GoatCounter; dictation audio, transcripts, corrections and vocabulary remain local.</span>
+      <p class="footer-copy">QuietType is native on-device dictation for macOS Apple Silicon by Dhillon "l33tdawg" Kannabhiran.</p>
+      <p class="footer-copy">Bug reports: <a href="mailto:l33tdawg@hackinthebox.org">l33tdawg@hackinthebox.org</a> or <a href="https://github.com/l33tdawg/quiettype/issues/new">open a GitHub issue</a>.</p>
+      <p class="footer-copy footer-note">Page visits are measured with GoatCounter; dictation audio, transcripts, corrections and vocabulary remain local.</p>
     </div>
   </footer>
 
