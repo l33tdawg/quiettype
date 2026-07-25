@@ -11,11 +11,11 @@ on:
       version:
         description: "App version"
         required: true
-        default: "1.0.5"
+        default: "1.0.6"
       build:
         description: "Monotonic app build number"
         required: true
-        default: "50"
+        default: "53"
       release_label:
         description: "Optional prerelease label (for example rc.21); leave empty for stable"
         required: false
@@ -230,5 +230,5 @@ jobs:
             gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
               --repo "$GITHUB_REPOSITORY" \
               --title "QuietType ${QUIETTYPE_VERSION}" \
-              --notes "QuietType ${QUIETTYPE_VERSION} for macOS Apple Silicon. This patch makes keyboard dictation reminders more discoverable and adds a privacy-explicit bug-report email flow with optional local transcript and audio diagnostics."
+              --notes "QuietType ${QUIETTYPE_VERSION} for macOS Apple Silicon. This performance patch avoids copying completed recordings before local transcription when the local filesystem supports secure links, while preserving the optional privacy-explicit bug-report diagnostics."
           fi

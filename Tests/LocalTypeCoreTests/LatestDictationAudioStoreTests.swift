@@ -45,4 +45,20 @@ final class LatestDictationAudioStoreTests: XCTestCase {
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.retainedAudioURL.path))
     }
+
+    func testRetainedWAVSurvivesSourceCleanup() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("latest-dictation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("source.wav")
+        let audio = Data("audio retained for a report".utf8)
+        try audio.write(to: source)
+        let store = LatestDictationAudioStore(directory: root.appendingPathComponent("retained"))
+
+        try store.retainWAV(at: source)
+        try FileManager.default.removeItem(at: source)
+
+        XCTAssertEqual(try Data(contentsOf: store.retainedAudioURL), audio)
+    }
 }

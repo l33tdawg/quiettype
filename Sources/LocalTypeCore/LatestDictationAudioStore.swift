@@ -22,7 +22,17 @@ public struct LatestDictationAudioStore: Sendable {
         let temporaryURL = directory.appendingPathComponent(".latest-\(UUID().uuidString).wav")
         defer { try? fileManager.removeItem(at: temporaryURL) }
 
-        try fileManager.copyItem(at: sourceURL, to: temporaryURL)
+        // Recording files and Application Support normally live on the same
+        // local APFS volume. Linking keeps the completed WAV available for a
+        // report without copying its bytes on the transcription hot path. The
+        // source is never written after recording stops, and later cleanup
+        // simply removes its directory entry. Fall back to a secure copy for
+        // uncommon cross-volume locations.
+        do {
+            try fileManager.linkItem(at: sourceURL, to: temporaryURL)
+        } catch {
+            try fileManager.copyItem(at: sourceURL, to: temporaryURL)
+        }
         try OwnerOnlyFileSecurity.protectFile(temporaryURL, fileManager: fileManager)
         if fileManager.fileExists(atPath: retainedAudioURL.path) {
             try fileManager.removeItem(at: retainedAudioURL)
