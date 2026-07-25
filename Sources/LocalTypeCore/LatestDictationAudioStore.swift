@@ -1,8 +1,8 @@
 import Foundation
 
 /// Retains exactly one owner-only plaintext WAV for local debugging. A new
-/// successful dictation replaces the previous file; nothing is synced or
-/// referenced from transcript memory.
+/// completed transcription attempt replaces the previous file; nothing is
+/// synced or referenced from transcript memory.
 public struct LatestDictationAudioStore: Sendable {
     public let directory: URL
     public let filename: String

@@ -809,6 +809,7 @@ struct TesterView: View {
     @State private var showingTeachSheet = false
     @State private var showingRecognizedTerms = false
     @State private var showingAboutSheet = false
+    @State private var showingBugReportSheet = false
     @State private var pendingReviewDeleteMemory: DictionaryMemoryItem?
     @State private var isDeletingReviewMemory = false
     @State private var guideStep: QuietTypeGuideStep?
@@ -863,6 +864,9 @@ struct TesterView: View {
         }
         .sheet(isPresented: $showingAboutSheet) {
             aboutSheet
+        }
+        .sheet(isPresented: $showingBugReportSheet) {
+            BugReportSheet(model: model)
         }
         .onAppear {
             model.startAppServices()
@@ -2219,6 +2223,15 @@ struct TesterView: View {
                         ) {
                             selectedSection = .dictionary
                         }
+
+                        HelpActionCard(
+                            icon: "ladybug",
+                            title: "Report a bug",
+                            detail: "Open a ready-to-review email with optional local transcript and recording diagnostics.",
+                            actionTitle: "Create Report"
+                        ) {
+                            showingBugReportSheet = true
+                        }
                     }
                 }
             }
@@ -2645,13 +2658,13 @@ struct TesterView: View {
                     .tint(.primary)
                     .quickTooltip("Masks common explicit words in polished output. Turn this off when you want QuietType to preserve exactly what you said.")
 
-                    Toggle("Keyboard reminders (opt-in)", isOn: Binding(
+                    Toggle("Keyboard reminders", isOn: Binding(
                         get: { model.typingReminderEnabled },
                         set: { model.setTypingReminderEnabled($0) }
                     ))
                     .toggleStyle(.checkbox)
                     .tint(.primary)
-                    .quickTooltip("When you type four words with the keyboard, QuietType can occasionally show a local overlay reminding you to press Fn and speak. It is capped at 3 reminders per week with at least 48 hours between reminders.")
+                    .quickTooltip("When you type four words with the keyboard, QuietType can occasionally show a local overlay reminding you to press Fn and speak. It is capped at 5 reminders per week with at least 36 hours between reminders.")
 
                     Toggle("Recording countdown sounds", isOn: Binding(
                         get: { model.recordingWarningsEnabled },
@@ -4437,6 +4450,109 @@ private struct HelpActionCard: View {
     }
 }
 
+private struct BugReportSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var model: MenuBarModel
+    @State private var details = ""
+    @State private var includeTranscript = false
+    @State private var includeAudio = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "ladybug.fill")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Report a QuietType bug")
+                        .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    Text("Describe what went wrong, then choose which local diagnostics to place in the email draft.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            TextEditor(text: $details)
+                .font(.body)
+                .frame(minHeight: 120)
+                .padding(8)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                )
+                .overlay(alignment: .topLeading) {
+                    if details.isEmpty {
+                        Text("What happened? What did you expect?")
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 16)
+                            .allowsHitTesting(false)
+                    }
+                }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("Include the last transcript and processing error", isOn: $includeTranscript)
+                    .toggleStyle(.checkbox)
+                    .disabled(!model.hasBugReportTranscript)
+
+                if model.hasBugReportTranscript {
+                    Text(model.bugReportTranscriptPreview)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(Color.primary.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                } else {
+                    Text("No recent transcript or processing error is available.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Toggle("Attach the last local dictation recording", isOn: $includeAudio)
+                    .toggleStyle(.checkbox)
+                    .disabled(!model.hasBugReportAudio)
+
+                Text(model.bugReportAudioSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+
+            Text("Nothing is uploaded automatically. QuietType opens your mail app so you can review the message and attachment before sending.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Button("Cancel") {
+                    dismiss()
+                }
+                .buttonStyle(QuietButtonStyle())
+
+                Spacer()
+
+                Button {
+                    model.composeBugReportEmail(
+                        details: details,
+                        includeTranscript: includeTranscript,
+                        includeAudio: includeAudio
+                    )
+                    dismiss()
+                } label: {
+                    Label("Open Email Draft", systemImage: "envelope")
+                }
+                .buttonStyle(QuietButtonStyle(prominence: .primary))
+            }
+        }
+        .padding(24)
+        .frame(width: 620)
+    }
+}
+
 private struct HelpInfoCard: View {
     @Environment(\.quietTypeTypeDelta) private var typeDelta
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -5123,9 +5239,9 @@ private final class TypingReminderMonitor {
     private let wordsBeforeReminder = 4
     private let idleResetSeconds: TimeInterval = 8
     private let burstWindowSeconds: TimeInterval = 45
-    private let reminderCooldownSeconds: TimeInterval = 60 * 60 * 48
+    private let reminderCooldownSeconds: TimeInterval = 60 * 60 * 36
     private let reminderWindowSeconds: TimeInterval = 60 * 60 * 24 * 7
-    private let maxRemindersPerWindow = 3
+    private let maxRemindersPerWindow = 5
     private let reminderHistoryKey = "quiettype.typingReminderHistory"
 
     func register() {
@@ -7539,7 +7655,7 @@ private final class SageGitHubInstaller {
 
 private extension QuietTypeReleaseVersion {
     static func current() -> QuietTypeReleaseVersion {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.4"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.5"
         let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
         let releaseLabel = Bundle.main.object(forInfoDictionaryKey: "QuietTypeReleaseLabel") as? String
         return fromBundleMetadata(version: version, build: build, releaseLabel: releaseLabel)
@@ -7932,7 +8048,7 @@ final class MenuBarModel: ObservableObject {
     @Published var ollamaModel = "qwen3:4b"
     @Published var spellingPreference = SpellingPreference.system
     @Published var profanityFilterEnabled = true
-    @Published var typingReminderEnabled = false
+    @Published var typingReminderEnabled = true
     @Published var teachRaw = ""
     @Published var teachCorrected = ""
     @Published var teachingKind = TeachingKind.correction
@@ -8082,7 +8198,6 @@ final class MenuBarModel: ObservableObject {
     private static let profanityFilterEnabledKey = "quiettype.profanityFilterEnabled"
     private static let typingReminderEnabledKey = "quiettype.typingReminderEnabled"
     private static let typingReminderOptInMigrationKey = "quiettype.typingReminderOptInMigrationVersion"
-    private static let typingReminderOptInMigrationVersion = 1
     private static let calibrationSavedCountKey = "quiettype.calibrationSavedCount"
     private static let trainingPairCountKey = "quiettype.trainingPairCount"
     private static let sessionsTodayKey = "quiettype.sessionsToday"
@@ -8127,11 +8242,13 @@ final class MenuBarModel: ObservableObject {
             spellingPreference = preference
         }
         profanityFilterEnabled = storedBool(forKey: Self.profanityFilterEnabledKey, defaultValue: true)
-        if UserDefaults.standard.integer(forKey: Self.typingReminderOptInMigrationKey) < Self.typingReminderOptInMigrationVersion {
-            UserDefaults.standard.set(false, forKey: Self.typingReminderEnabledKey)
-            UserDefaults.standard.set(Self.typingReminderOptInMigrationVersion, forKey: Self.typingReminderOptInMigrationKey)
+        if UserDefaults.standard.object(forKey: Self.typingReminderEnabledKey) == nil,
+           UserDefaults.standard.integer(forKey: Self.typingReminderOptInMigrationKey) == 0 {
+            // New installs begin with reminders on. Existing installations
+            // retain the preference chosen under the earlier opt-in flow.
+            UserDefaults.standard.set(true, forKey: Self.typingReminderEnabledKey)
         }
-        typingReminderEnabled = storedBool(forKey: Self.typingReminderEnabledKey, defaultValue: false)
+        typingReminderEnabled = storedBool(forKey: Self.typingReminderEnabledKey, defaultValue: true)
         if let storedHotKey = UserDefaults.standard.string(forKey: Self.hotKeyChoiceKey),
            let choice = HotKeyChoice(rawValue: storedHotKey) {
             hotKeyChoice = choice
@@ -10917,8 +11034,10 @@ final class MenuBarModel: ObservableObject {
 
         output = ""
         hasCopyableOutput = false
+        transcript = ""
         lastError = nil
         statusMessage = ""
+        try? latestDictationAudioStore.clear()
         capturedFrameCount = 0
         inputLevel = 0
         peakInputLevel = 0
@@ -11027,6 +11146,7 @@ final class MenuBarModel: ObservableObject {
         recoveryContinuationSourceID = nil
         refreshRecoveredRecordings()
         discardPlaintextDictationAudio()
+        try? latestDictationAudioStore.clear()
         capturedFrameCount = 0
         lastRecordingURL = nil
         recordingStartedAt = nil
@@ -12313,6 +12433,7 @@ final class MenuBarModel: ObservableObject {
         }
         activeDictationAudioURL = nil
         lastRecordingURL = nil
+        try? latestDictationAudioStore.clear()
         dictationFinalizationTask = nil
         dictationState = .cancelled
         statusMessage = "Dictation cancelled"
@@ -12329,6 +12450,10 @@ final class MenuBarModel: ObservableObject {
         recoveryRecordingID: String? = nil,
         continuationRecordingID: String? = nil
     ) async {
+        // Keep the most recent attempt available even when transcription or
+        // cleanup fails. It remains owner-only on this Mac and is replaced by
+        // the next dictation.
+        _ = try? latestDictationAudioStore.retainWAV(at: audioURL)
         var handedAudioToBackgroundWork = false
         defer {
             if !handedAudioToBackgroundWork {
@@ -12382,13 +12507,13 @@ final class MenuBarModel: ObservableObject {
                 rawTranscript = currentTranscript
             }
             try Task.checkCancellation()
+            transcript = rawTranscript
             guard !isLikelyNoiseTranscript(rawTranscript) else {
                 throw AudioTranscriberError.noiseOnlyTranscript(rawTranscript)
             }
             statusMessage = incrementalTranscript == nil ? "Processed full audio" : "Processed during dictation"
             voiceFlowMetricAccumulator?.markFinalTranscript()
             try Task.checkCancellation()
-            transcript = rawTranscript
             handedAudioToBackgroundWork = true
             let didProcess = await processTranscript(
                 rawTranscript,
@@ -12752,9 +12877,6 @@ final class MenuBarModel: ObservableObject {
                 outcome: didInsert ? .inserted : .readyToCopy,
                 finalWordCount: translatedWords
             )
-            if let sourceAudioURL {
-                _ = try? latestDictationAudioStore.retainWAV(at: sourceAudioURL)
-            }
             clearActiveDictationTarget()
             if historyReviewEnabled, let sourceAudioURL {
                 let previousPersistenceTask = transcriptPersistenceTask
@@ -13861,6 +13983,139 @@ final class MenuBarModel: ObservableObject {
         lastError = nil
         statusMessage = ""
         try? latestDictationAudioStore.clear()
+    }
+
+    var hasBugReportTranscript: Bool {
+        transcript.nilIfBlank != nil
+            || output.nilIfBlank != nil
+            || lastError?.nilIfBlank != nil
+    }
+
+    var bugReportTranscriptPreview: String {
+        let value = transcript.nilIfBlank
+            ?? output.nilIfBlank
+            ?? lastError?.nilIfBlank
+            ?? "No recent transcript is available."
+        return String(value.prefix(600))
+    }
+
+    var hasBugReportAudio: Bool {
+        FileManager.default.fileExists(atPath: latestDictationAudioStore.retainedAudioURL.path)
+    }
+
+    var bugReportAudioSummary: String {
+        guard hasBugReportAudio else {
+            return "No recent dictation recording is available to attach."
+        }
+        let url = latestDictationAudioStore.retainedAudioURL
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+        let formattedSize = ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+        return "LastDictation.wav (\(formattedSize)) stays unchecked unless you choose to attach it."
+    }
+
+    func composeBugReportEmail(
+        details: String,
+        includeTranscript: Bool,
+        includeAudio: Bool
+    ) {
+        let subject = "QuietType bug report — \(appVersionLabel)"
+
+        guard let service = NSSharingService(named: .composeEmail) else {
+            let audioAttachmentCouldNotBeAdded = includeAudio && hasBugReportAudio
+            let body = bugReportBody(
+                details: details,
+                includeTranscript: includeTranscript,
+                diagnosticTextLimit: 1_500,
+                audioAttachmentNote: audioAttachmentCouldNotBeAdded
+                    ? "QuietType could not attach LastDictation.wav to this mail client. The file has been revealed in Finder so you can attach it manually."
+                    : nil
+            )
+            var components = URLComponents()
+            components.scheme = "mailto"
+            components.path = "l33tdawg@hackinthebox.org"
+            components.queryItems = [
+                URLQueryItem(name: "subject", value: subject),
+                URLQueryItem(name: "body", value: body)
+            ]
+            if let url = components.url {
+                NSWorkspace.shared.open(url)
+                if audioAttachmentCouldNotBeAdded {
+                    NSWorkspace.shared.activateFileViewerSelecting([latestDictationAudioStore.retainedAudioURL])
+                    statusMessage = "Opened email and revealed audio to attach"
+                } else {
+                    statusMessage = "Opened bug report email"
+                }
+            } else {
+                lastError = "QuietType could not open an email draft."
+            }
+            return
+        }
+
+        service.recipients = ["l33tdawg@hackinthebox.org"]
+        service.subject = subject
+        let body = bugReportBody(details: details, includeTranscript: includeTranscript)
+        var items: [Any] = [body]
+        if includeAudio, hasBugReportAudio {
+            items.append(latestDictationAudioStore.retainedAudioURL)
+        }
+        service.perform(withItems: items)
+        statusMessage = "Opened bug report email"
+    }
+
+    private func bugReportBody(
+        details: String,
+        includeTranscript: Bool,
+        diagnosticTextLimit: Int = 20_000,
+        audioAttachmentNote: String? = nil
+    ) -> String {
+        let cleanedDetails = details.trimmingCharacters(in: .whitespacesAndNewlines)
+        var sections = [
+            "QuietType bug report",
+            "",
+            "What happened:",
+            cleanedDetails.isEmpty ? "Please describe the problem here." : cleanedDetails,
+            "",
+            "App version: \(appVersionLabel)",
+            "macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
+            "Shortcut: \(hotKeyLabel)",
+            "Last status: \(statusMessage.nilIfBlank ?? "Unavailable")"
+        ]
+
+        if includeTranscript {
+            sections.append(contentsOf: [
+                "",
+                "Local diagnostics (included with permission):",
+                "Raw transcript:",
+                limitedBugReportText(transcript, limit: diagnosticTextLimit),
+                "",
+                "Processed result:",
+                limitedBugReportText(output, limit: diagnosticTextLimit),
+                "",
+                "Last error:",
+                limitedBugReportText(lastError ?? "", limit: diagnosticTextLimit)
+            ])
+        }
+
+        if let audioAttachmentNote {
+            sections.append(contentsOf: ["", audioAttachmentNote])
+        }
+
+        sections.append(contentsOf: [
+            "",
+            "This email was prepared locally by QuietType. The user reviewed which transcript and audio diagnostics to include."
+        ])
+        return sections.joined(separator: "\n")
+    }
+
+    private func limitedBugReportText(_ value: String, limit: Int = 20_000) -> String {
+        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else {
+            return "Unavailable"
+        }
+        guard cleaned.count > limit else {
+            return cleaned
+        }
+        return String(cleaned.prefix(limit)) + "\n[truncated]"
     }
 
     enum EditorMode: String, CaseIterable, Identifiable {

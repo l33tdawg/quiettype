@@ -11,7 +11,7 @@ on:
       version:
         description: "App version"
         required: true
-        default: "1.0.3"
+        default: "1.0.5"
       build:
         description: "Monotonic app build number"
         required: true
@@ -230,5 +230,5 @@ jobs:
             gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
               --repo "$GITHUB_REPOSITORY" \
               --title "QuietType ${QUIETTYPE_VERSION}" \
-              --notes "QuietType ${QUIETTYPE_VERSION} for macOS Apple Silicon. This patch keeps long numbered responses grouped under their spoken markers and expands the Review edit-button hit area."
+              --notes "QuietType ${QUIETTYPE_VERSION} for macOS Apple Silicon. This patch makes keyboard dictation reminders more discoverable and adds a privacy-explicit bug-report email flow with optional local transcript and audio diagnostics."
           fi
