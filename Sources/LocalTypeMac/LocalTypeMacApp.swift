@@ -4456,6 +4456,7 @@ private struct BugReportSheet: View {
     @State private var details = ""
     @State private var includeTranscript = false
     @State private var includeAudio = false
+    @State private var selectedSampleID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -4489,15 +4490,35 @@ private struct BugReportSheet: View {
                             .padding(.vertical, 16)
                             .allowsHitTesting(false)
                     }
-                }
+            }
 
             VStack(alignment: .leading, spacing: 12) {
-                Toggle("Include the last transcript and processing error", isOn: $includeTranscript)
-                    .toggleStyle(.checkbox)
-                    .disabled(!model.hasBugReportTranscript)
+                if !model.recentBugReportSamples.isEmpty {
+                    Picker("Diagnostic sample", selection: Binding(
+                        get: { selectedSampleID ?? model.recentBugReportSamples.first?.id ?? "" },
+                        set: { newID in
+                            selectedSampleID = newID
+                            if !model.hasBugReportTranscript(sampleID: newID) {
+                                includeTranscript = false
+                            }
+                            if !model.hasBugReportAudio(sampleID: newID) {
+                                includeAudio = false
+                            }
+                        }
+                    )) {
+                        ForEach(Array(model.recentBugReportSamples.enumerated()), id: \.element.id) { index, sample in
+                            Text(model.bugReportSampleLabel(sample, position: index)).tag(sample.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
 
-                if model.hasBugReportTranscript {
-                    Text(model.bugReportTranscriptPreview)
+                Toggle("Include the selected transcript and processing error", isOn: $includeTranscript)
+                    .toggleStyle(.checkbox)
+                    .disabled(!model.hasBugReportTranscript(sampleID: selectedSampleID))
+
+                if model.hasBugReportTranscript(sampleID: selectedSampleID) {
+                    Text(model.bugReportTranscriptPreview(sampleID: selectedSampleID))
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(4)
@@ -4511,19 +4532,34 @@ private struct BugReportSheet: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Toggle("Attach the last local dictation recording", isOn: $includeAudio)
+                Toggle("Attach the selected local dictation recording", isOn: $includeAudio)
                     .toggleStyle(.checkbox)
-                    .disabled(!model.hasBugReportAudio)
+                    .disabled(!model.hasBugReportAudio(sampleID: selectedSampleID))
 
-                Text(model.bugReportAudioSummary)
+                Text(model.bugReportAudioSummary(sampleID: selectedSampleID))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if !model.recentBugReportSamples.isEmpty {
+                    Button("Clear Local Diagnostic History", role: .destructive) {
+                        model.clearBugReportHistory()
+                        selectedSampleID = nil
+                        includeTranscript = false
+                        includeAudio = false
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                }
             }
             .padding(14)
             .background(Color(nsColor: .controlBackgroundColor))
             .clipShape(RoundedRectangle(cornerRadius: 9))
 
             Text("Nothing is uploaded automatically. QuietType opens your mail app so you can review the message and attachment before sending.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text("QuietType keeps the newest three diagnostic recordings and their local processing details on this Mac. Clear Local Diagnostic History removes them.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -4538,6 +4574,7 @@ private struct BugReportSheet: View {
                 Button {
                     model.composeBugReportEmail(
                         details: details,
+                        sampleID: selectedSampleID,
                         includeTranscript: includeTranscript,
                         includeAudio: includeAudio
                     )
@@ -4550,6 +4587,15 @@ private struct BugReportSheet: View {
         }
         .padding(24)
         .frame(width: 620)
+        .onAppear {
+            selectedSampleID = model.recentBugReportSamples.first?.id
+        }
+        .onChange(of: model.recentBugReportSamples.map(\.id)) { ids in
+            if let selectedSampleID, ids.contains(selectedSampleID) {
+                return
+            }
+            self.selectedSampleID = ids.first
+        }
     }
 }
 
@@ -7655,7 +7701,7 @@ private final class SageGitHubInstaller {
 
 private extension QuietTypeReleaseVersion {
     static func current() -> QuietTypeReleaseVersion {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.6"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.7"
         let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
         let releaseLabel = Bundle.main.object(forInfoDictionaryKey: "QuietTypeReleaseLabel") as? String
         return fromBundleMetadata(version: version, build: build, releaseLabel: releaseLabel)
@@ -8102,6 +8148,7 @@ final class MenuBarModel: ObservableObject {
     @Published var sageInstallStatus = ""
     @Published var storageSnapshot = QuietTypeStorageSnapshot.empty
     @Published var storageCleanupStatus = ""
+    @Published private(set) var recentBugReportSamples: [RecentDictationDiagnostic] = []
 
     private let permissionService = MacOSPermissionService()
     private let memoryStore = SQLiteMemoryStore.persistentDefault()
@@ -8166,6 +8213,7 @@ final class MenuBarModel: ObservableObject {
     private lazy var voiceNoteAudioStore = EncryptedVoiceNoteAudioStore(directory: voiceNoteAudioDirectory)
     private lazy var reviewAudioStore = EncryptedVoiceNoteAudioStore(directory: reviewAudioDirectory)
     private lazy var latestDictationAudioStore = LatestDictationAudioStore(directory: latestDictationAudioDirectory)
+    private var activeBugReportSampleID: String?
     private lazy var crashSafeRecordingStore = CrashSafeRecordingStore(directory: recoveryRecordingsDirectory)
     private lazy var voiceFlowMetricsStore = LocalVoiceFlowMetricsStore(fileURL: voiceFlowMetricsURL)
     private var speechActivityTracker = SpeechActivityTracker()
@@ -9586,6 +9634,7 @@ final class MenuBarModel: ObservableObject {
         isBooting = true
         discardPlaintextDictationAudio()
         discardPlaintextVoiceNoteAudio()
+        refreshBugReportSamples()
         recoverInterruptedRecordings()
         Task.detached(priority: .utility) {
             QuietTypeGitHubUpdater().pruneRetainedArtifacts()
@@ -11037,7 +11086,7 @@ final class MenuBarModel: ObservableObject {
         transcript = ""
         lastError = nil
         statusMessage = ""
-        try? latestDictationAudioStore.clear()
+        activeBugReportSampleID = nil
         capturedFrameCount = 0
         inputLevel = 0
         peakInputLevel = 0
@@ -11146,7 +11195,6 @@ final class MenuBarModel: ObservableObject {
         recoveryContinuationSourceID = nil
         refreshRecoveredRecordings()
         discardPlaintextDictationAudio()
-        try? latestDictationAudioStore.clear()
         capturedFrameCount = 0
         lastRecordingURL = nil
         recordingStartedAt = nil
@@ -12433,7 +12481,11 @@ final class MenuBarModel: ObservableObject {
         }
         activeDictationAudioURL = nil
         lastRecordingURL = nil
-        try? latestDictationAudioStore.clear()
+        if let activeBugReportSampleID {
+            try? latestDictationAudioStore.remove(id: activeBugReportSampleID)
+            self.activeBugReportSampleID = nil
+            refreshBugReportSamples()
+        }
         dictationFinalizationTask = nil
         dictationState = .cancelled
         statusMessage = "Dictation cancelled"
@@ -12450,10 +12502,11 @@ final class MenuBarModel: ObservableObject {
         recoveryRecordingID: String? = nil,
         continuationRecordingID: String? = nil
     ) async {
-        // Keep the most recent attempt available even when transcription or
-        // cleanup fails. It remains owner-only on this Mac and is replaced by
-        // the next dictation.
-        _ = try? latestDictationAudioStore.retainWAV(at: audioURL)
+        // Keep a small owner-only local history so a report can refer to the
+        // actual attempt that failed, not only the most recent dictation.
+        let diagnosticSample = try? latestDictationAudioStore.retainSample(at: audioURL)
+        activeBugReportSampleID = diagnosticSample?.id
+        refreshBugReportSamples()
         var handedAudioToBackgroundWork = false
         defer {
             if !handedAudioToBackgroundWork {
@@ -12533,9 +12586,25 @@ final class MenuBarModel: ObservableObject {
                     reason: "QuietType transcribed this recording but could not finish processing it."
                 )
             }
+            if let diagnosticSample {
+                try? latestDictationAudioStore.update(
+                    id: diagnosticSample.id,
+                    transcript: rawTranscript,
+                    output: output,
+                    error: lastError,
+                    status: statusMessage
+                )
+                refreshBugReportSamples()
+            }
+            activeBugReportSampleID = nil
         } catch {
             await cancelIncrementalTranscription()
             if error is CancellationError || Task.isCancelled {
+                if let diagnosticSample {
+                    try? latestDictationAudioStore.remove(id: diagnosticSample.id)
+                    refreshBugReportSamples()
+                }
+                activeBugReportSampleID = nil
                 return
             }
             markRecoveryRecordingsAsFailed(
@@ -12560,6 +12629,17 @@ final class MenuBarModel: ObservableObject {
                 lastError = String(describing: error)
             }
             completeVoiceFlowMetrics(outcome: .transcriptionFailed)
+            if let diagnosticSample {
+                try? latestDictationAudioStore.update(
+                    id: diagnosticSample.id,
+                    transcript: transcript,
+                    output: output,
+                    error: lastError,
+                    status: statusMessage
+                )
+                refreshBugReportSamples()
+            }
+            activeBugReportSampleID = nil
         }
     }
 
@@ -13982,52 +14062,88 @@ final class MenuBarModel: ObservableObject {
         didInsert = false
         lastError = nil
         statusMessage = ""
+    }
+
+    func refreshBugReportSamples() {
+        recentBugReportSamples = (try? latestDictationAudioStore.samples()) ?? []
+    }
+
+    func clearBugReportHistory() {
         try? latestDictationAudioStore.clear()
+        activeBugReportSampleID = nil
+        refreshBugReportSamples()
+        statusMessage = "Cleared local diagnostic history"
     }
 
-    var hasBugReportTranscript: Bool {
-        transcript.nilIfBlank != nil
-            || output.nilIfBlank != nil
-            || lastError?.nilIfBlank != nil
+    private func bugReportSample(id: String?) -> RecentDictationDiagnostic? {
+        if let id, let sample = recentBugReportSamples.first(where: { $0.id == id }) {
+            return sample
+        }
+        return recentBugReportSamples.first
     }
 
-    var bugReportTranscriptPreview: String {
-        let value = transcript.nilIfBlank
-            ?? output.nilIfBlank
-            ?? lastError?.nilIfBlank
+    func bugReportSampleLabel(_ sample: RecentDictationDiagnostic, position: Int) -> String {
+        let prefix = position == 0 ? "Most recent — " : ""
+        return prefix + sample.createdAt.formatted(date: .abbreviated, time: .shortened) + " — " + sample.status
+    }
+
+    func hasBugReportTranscript(sampleID: String? = nil) -> Bool {
+        guard let sample = bugReportSample(id: sampleID) else {
+            return false
+        }
+        return sample.transcript.nilIfBlank != nil
+            || sample.output.nilIfBlank != nil
+            || sample.error?.nilIfBlank != nil
+    }
+
+    func bugReportTranscriptPreview(sampleID: String? = nil) -> String {
+        guard let sample = bugReportSample(id: sampleID) else {
+            return "No recent transcript is available."
+        }
+        let value = sample.transcript.nilIfBlank
+            ?? sample.output.nilIfBlank
+            ?? sample.error?.nilIfBlank
             ?? "No recent transcript is available."
         return String(value.prefix(600))
     }
 
-    var hasBugReportAudio: Bool {
-        FileManager.default.fileExists(atPath: latestDictationAudioStore.retainedAudioURL.path)
+    func hasBugReportAudio(sampleID: String? = nil) -> Bool {
+        guard let sample = bugReportSample(id: sampleID) else {
+            return false
+        }
+        return FileManager.default.fileExists(atPath: latestDictationAudioStore.audioURL(for: sample).path)
     }
 
-    var bugReportAudioSummary: String {
-        guard hasBugReportAudio else {
-            return "No recent dictation recording is available to attach."
+    func bugReportAudioSummary(sampleID: String? = nil) -> String {
+        guard let sample = bugReportSample(id: sampleID), hasBugReportAudio(sampleID: sample.id) else {
+            return "No local dictation recording is available to attach."
         }
-        let url = latestDictationAudioStore.retainedAudioURL
+        let url = latestDictationAudioStore.audioURL(for: sample)
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
         let formattedSize = ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
-        return "LastDictation.wav (\(formattedSize)) stays unchecked unless you choose to attach it."
+        return "Local recording (\(formattedSize)) stays unchecked unless you choose to attach it."
     }
 
     func composeBugReportEmail(
         details: String,
+        sampleID: String?,
         includeTranscript: Bool,
         includeAudio: Bool
     ) {
         let subject = "QuietType bug report — \(appVersionLabel)"
+        let sample = bugReportSample(id: sampleID)
+        let audioURL = sample.map { latestDictationAudioStore.audioURL(for: $0) }
+        let hasAudio = audioURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
 
         guard let service = NSSharingService(named: .composeEmail) else {
-            let audioAttachmentCouldNotBeAdded = includeAudio && hasBugReportAudio
+            let audioAttachmentCouldNotBeAdded = includeAudio && hasAudio
             let body = bugReportBody(
                 details: details,
+                sample: sample,
                 includeTranscript: includeTranscript,
                 diagnosticTextLimit: 1_500,
                 audioAttachmentNote: audioAttachmentCouldNotBeAdded
-                    ? "QuietType could not attach LastDictation.wav to this mail client. The file has been revealed in Finder so you can attach it manually."
+                    ? "QuietType could not attach the selected local recording to this mail client. The file has been revealed in Finder so you can attach it manually."
                     : nil
             )
             var components = URLComponents()
@@ -14039,8 +14155,8 @@ final class MenuBarModel: ObservableObject {
             ]
             if let url = components.url {
                 NSWorkspace.shared.open(url)
-                if audioAttachmentCouldNotBeAdded {
-                    NSWorkspace.shared.activateFileViewerSelecting([latestDictationAudioStore.retainedAudioURL])
+                if audioAttachmentCouldNotBeAdded, let audioURL {
+                    NSWorkspace.shared.activateFileViewerSelecting([audioURL])
                     statusMessage = "Opened email and revealed audio to attach"
                 } else {
                     statusMessage = "Opened bug report email"
@@ -14053,10 +14169,10 @@ final class MenuBarModel: ObservableObject {
 
         service.recipients = ["l33tdawg@hackinthebox.org"]
         service.subject = subject
-        let body = bugReportBody(details: details, includeTranscript: includeTranscript)
+        let body = bugReportBody(details: details, sample: sample, includeTranscript: includeTranscript)
         var items: [Any] = [body]
-        if includeAudio, hasBugReportAudio {
-            items.append(latestDictationAudioStore.retainedAudioURL)
+        if includeAudio, hasAudio, let audioURL {
+            items.append(audioURL)
         }
         service.perform(withItems: items)
         statusMessage = "Opened bug report email"
@@ -14064,6 +14180,7 @@ final class MenuBarModel: ObservableObject {
 
     private func bugReportBody(
         details: String,
+        sample: RecentDictationDiagnostic?,
         includeTranscript: Bool,
         diagnosticTextLimit: Int = 20_000,
         audioAttachmentNote: String? = nil
@@ -14078,7 +14195,7 @@ final class MenuBarModel: ObservableObject {
             "App version: \(appVersionLabel)",
             "macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
             "Shortcut: \(hotKeyLabel)",
-            "Last status: \(statusMessage.nilIfBlank ?? "Unavailable")"
+            "Selected status: \(sample?.status.nilIfBlank ?? "Unavailable")"
         ]
 
         if includeTranscript {
@@ -14086,13 +14203,13 @@ final class MenuBarModel: ObservableObject {
                 "",
                 "Local diagnostics (included with permission):",
                 "Raw transcript:",
-                limitedBugReportText(transcript, limit: diagnosticTextLimit),
+                limitedBugReportText(sample?.transcript ?? "", limit: diagnosticTextLimit),
                 "",
                 "Processed result:",
-                limitedBugReportText(output, limit: diagnosticTextLimit),
+                limitedBugReportText(sample?.output ?? "", limit: diagnosticTextLimit),
                 "",
                 "Last error:",
-                limitedBugReportText(lastError ?? "", limit: diagnosticTextLimit)
+                limitedBugReportText(sample?.error ?? "", limit: diagnosticTextLimit)
             ])
         }
 

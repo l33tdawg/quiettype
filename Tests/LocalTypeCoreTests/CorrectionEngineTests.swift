@@ -14,6 +14,15 @@ final class CorrectionEngineTests: XCTestCase {
         XCTAssertTrue(corrected.contains("Ed25519"))
     }
 
+    func testRepairsObservedOpenRouterASRVariant() {
+        let engine = CorrectionEngine(profile: .development)
+
+        XCTAssertEqual(
+            engine.apply(to: "try the open and author key first, then try the open router one"),
+            "try the OpenRouter key first, then try the OpenRouter one"
+        )
+    }
+
     func testDoesNotReplaceVocabularyInsideLargerWords() {
         let engine = CorrectionEngine(
             profile: DictationProfile(

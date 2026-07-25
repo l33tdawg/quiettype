@@ -152,7 +152,8 @@ public struct DictationProfile: Codable, Equatable, Sendable {
             VocabularyEntry(term: "Ollama", spokenForms: ["ollama", "all llama"], preferredSpelling: "Ollama", category: "technical_term", confidenceBoost: 0.92),
             VocabularyEntry(term: "Utimaco", spokenForms: ["utimaco", "ultimate go"], preferredSpelling: "Utimaco", category: "technical_term", confidenceBoost: 0.92),
             VocabularyEntry(term: "CSe100", spokenForms: ["cse100", "see as e one hundred"], preferredSpelling: "CSe100", category: "technical_term", confidenceBoost: 0.92),
-            VocabularyEntry(term: "Ed25519", spokenForms: ["ed25519", "ed twenty five five nineteen"], preferredSpelling: "Ed25519", category: "technical_term", confidenceBoost: 0.92)
+            VocabularyEntry(term: "Ed25519", spokenForms: ["ed25519", "ed twenty five five nineteen"], preferredSpelling: "Ed25519", category: "technical_term", confidenceBoost: 0.92),
+            VocabularyEntry(term: "OpenRouter", spokenForms: ["openrouter", "open router", "open and author"], preferredSpelling: "OpenRouter", category: "technical_term", confidenceBoost: 0.92)
         ],
         confusions: [
             ASRConfusion(heard: "ultimate go", corrected: "Utimaco", contextTerms: ["HSM", "security", "hardware"], confidence: 0.9),
