@@ -23,6 +23,15 @@ final class CorrectionEngineTests: XCTestCase {
         )
     }
 
+    func testRepairsObservedOllamaASRVariant() {
+        let engine = CorrectionEngine(profile: .development)
+
+        XCTAssertEqual(
+            engine.apply(to: "Make sure Ulama, Ullama, and SAGE are working optimally."),
+            "Make sure Ollama, Ollama, and SAGE are working optimally."
+        )
+    }
+
     func testDoesNotReplaceVocabularyInsideLargerWords() {
         let engine = CorrectionEngine(
             profile: DictationProfile(

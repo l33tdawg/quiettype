@@ -129,7 +129,7 @@ public enum ProfileMemoryCompiler {
         let custom: [String: [String]] = [
             "SAGE": ["sage"],
             "CometBFT": ["comet bft", "comet b f t", "comet bee eff tee", "comet beef tea"],
-            "Ollama": ["ollama", "all llama", "oh llama"],
+            "Ollama": ["ollama", "all llama", "oh llama", "ulama", "ullama"],
             "WhisperKit": ["whisper kit"],
             "Utimaco": ["utimaco", "ultimate go"],
             "CSe100": ["cse100", "c s e one hundred", "see as e one hundred"],

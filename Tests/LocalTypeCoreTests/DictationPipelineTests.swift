@@ -85,6 +85,21 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testNormalizesMixedDayLabelsToDigits() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "ChatGPT", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "The booth code will change from day 1 to day 2 to day three.", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "The booth code will change from Day 1 to Day 2 to Day 3."
+        )
+    }
+
     func testKeepsLongNumberedResponsesGroupedBySpokenMarkers() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "WhatsApp", profile: .messaging)

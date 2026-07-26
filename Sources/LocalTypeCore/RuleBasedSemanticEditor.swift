@@ -1218,6 +1218,14 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
     private func normalizeInlineNumbers(in text: String) -> String {
         var result = text
         for (word, number) in spokenNumberValues.sorted(by: { $0.key.count > $1.key.count }) {
+            // Treat numbered days as labels. ASR can mix digit and spoken
+            // forms within one sequence ("day 1, day 2, and day three");
+            // normalize both the number and the label casing together.
+            result = result.replacingOccurrences(
+                of: #"\bday\s+\#(word)\b"#,
+                with: "Day \(number)",
+                options: [.regularExpression, .caseInsensitive]
+            )
             result = result.replacingOccurrences(
                 of: #"\b\#(word)\s+(am|pm)\b"#,
                 with: "\(number) $1",
@@ -1250,6 +1258,11 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
                 options: [.regularExpression, .caseInsensitive]
             )
         }
+        result = result.replacingOccurrences(
+            of: #"\bday\s+([0-9]+)\b"#,
+            with: "Day $1",
+            options: [.regularExpression, .caseInsensitive]
+        )
         result = result.replacingOccurrences(
             of: #"\b([0-9]+)\s*am\b"#,
             with: "$1 AM",
