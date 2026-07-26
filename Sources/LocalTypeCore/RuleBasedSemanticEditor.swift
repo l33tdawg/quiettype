@@ -628,9 +628,6 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         let hasExplicitListIntent = [
             "shopping list",
             "grocery list",
-            "todo list",
-            "to do list",
-            "task list",
             "numbered list",
             "bullet list",
             "bulleted list",
@@ -641,6 +638,7 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             "list of",
             "grocery order"
         ].contains { lower.contains($0) }
+            || hasExplicitTaskListIntent(in: text)
         let hasBulletMarkers = lower.contains("bullet point")
             || lower.contains("bullet points")
             || bareBulletMarkerCount(in: text) >= 2
@@ -726,6 +724,17 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
         }
 
         return ListCandidate(intro: embedded.intro, items: items, numbered: numbered)
+    }
+
+    private func hasExplicitTaskListIntent(in text: String) -> Bool {
+        let patterns = [
+            #"^\s*(?:for\s+the\s+|(?:the|my)\s+)?(?:todo|to[- ]do|task)\s+list\b"#,
+            #"\b(?:make|create|write)(?:\s+me)?\s+a\s+(?:todo|to[- ]do|task)\s+list\b"#
+        ]
+
+        return patterns.contains { pattern in
+            text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+        }
     }
 
     private func embeddedItemSegment(in text: String, hasExplicitListIntent: Bool) -> (intro: String?, itemsText: String?) {
@@ -836,10 +845,10 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
     private func stripListLeadIn(from text: String, numbered: Bool) -> String {
         var result = text
         let patterns = [
-            #"\bfor the (?:shopping|grocery|todo|to do|task) list\b"#,
-            #"\b(?:shopping|grocery|todo|to do|task) list(?: is| with| of)?\b"#,
+            #"\b(?:make|create|write)(?: me)? a (?:numbered |bullet |bulleted )?(?:shopping |grocery |todo |to[- ]do |task )?list(?: of| with)?\b"#,
+            #"\bfor the (?:shopping|grocery|todo|to[- ]do|task) list\b"#,
+            #"\b(?:shopping|grocery|todo|to[- ]do|task) list(?: is| with| of)?\b"#,
             #"\b(?:bullet|bulleted) list(?: is| with| of)?\b"#,
-            #"\b(?:make|create|write)(?: me)? a (?:numbered |bullet |bulleted )?(?:shopping |grocery |todo |to do |task )?list(?: of| with)?\b"#,
             #"\blist of\b"#,
             #"\bwe(?: are|'re)? going shopping(?: and)?(?: we)?(?: need| need to get| need to buy| should get| have to get)?\b"#,
             #"^\s*(?:we )?(?:need to buy|need to get|should get|have to get|pick up|buy|get|add|we need|order)\b"#

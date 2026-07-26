@@ -602,6 +602,47 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testDoesNotConvertTaskListReferencesIntoBullets() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Terminal", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "When you get a moment, also check your Sage Task List, mark things as done and add things into the to-do list so that we don't forget.",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            "When you get a moment, also check your SAGE Task List, mark things as done and add things into the to-do list so that we don't forget."
+        )
+        XCTAssertFalse(result.text.contains("\n- "))
+    }
+
+    func testFormatsExplicitTaskListRequestAsBullets() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Terminal", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "make a task list review the release, mark completed work as done and add follow-up items",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            - Review the release
+            - Mark completed work as done
+            - Add follow-up items
+            """
+        )
+    }
+
     func testDoesNotFormatDiscussionAboutListsAsList() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Slack", profile: .messaging)
