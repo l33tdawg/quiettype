@@ -27,8 +27,17 @@ final class CorrectionEngineTests: XCTestCase {
         let engine = CorrectionEngine(profile: .development)
 
         XCTAssertEqual(
-            engine.apply(to: "Make sure Ulama, Ullama, and SAGE are working optimally."),
-            "Make sure Ollama, Ollama, and SAGE are working optimally."
+            engine.apply(to: "Make sure Ulama, Ullama, Olama, Olamah, Ollamah, and SAGE are working optimally."),
+            "Make sure Ollama, Ollama, Ollama, Ollama, Ollama, and SAGE are working optimally."
+        )
+    }
+
+    func testRepairsObservedQuietTypeASRVariant() {
+        let engine = CorrectionEngine(profile: .development)
+
+        XCTAssertEqual(
+            engine.apply(to: "ChoirType bundles SAGE, while QuietType keeps its product spelling."),
+            "QuietType bundles SAGE, while QuietType keeps its product spelling."
         )
     }
 

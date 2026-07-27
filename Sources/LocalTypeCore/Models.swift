@@ -147,9 +147,10 @@ public struct DictationProfile: Codable, Equatable, Sendable {
 
     public static let development = DictationProfile(
         vocabulary: [
+            VocabularyEntry(term: "QuietType", spokenForms: ["quiettype", "choirtype"], preferredSpelling: "QuietType", category: "technical_term", confidenceBoost: 0.97),
             VocabularyEntry(term: "SAGE", spokenForms: ["sage"], preferredSpelling: "SAGE", category: "technical_term", confidenceBoost: 0.95),
             VocabularyEntry(term: "CometBFT", spokenForms: ["comet bft", "comet bee eff tee", "comet b f t"], preferredSpelling: "CometBFT", category: "technical_term", confidenceBoost: 0.95),
-            VocabularyEntry(term: "Ollama", spokenForms: ["ollama", "all llama", "ulama", "ullama"], preferredSpelling: "Ollama", category: "technical_term", confidenceBoost: 0.92),
+            VocabularyEntry(term: "Ollama", spokenForms: ["ollama", "all llama", "ulama", "ullama", "olama", "olamah", "ollamah"], preferredSpelling: "Ollama", category: "technical_term", confidenceBoost: 0.92),
             VocabularyEntry(term: "Utimaco", spokenForms: ["utimaco", "ultimate go"], preferredSpelling: "Utimaco", category: "technical_term", confidenceBoost: 0.92),
             VocabularyEntry(term: "CSe100", spokenForms: ["cse100", "see as e one hundred"], preferredSpelling: "CSe100", category: "technical_term", confidenceBoost: 0.92),
             VocabularyEntry(term: "Ed25519", spokenForms: ["ed25519", "ed twenty five five nineteen"], preferredSpelling: "Ed25519", category: "technical_term", confidenceBoost: 0.92),
