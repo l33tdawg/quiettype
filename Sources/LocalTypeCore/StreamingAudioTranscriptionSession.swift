@@ -206,19 +206,31 @@ public actor StreamingAudioTranscriptionSession {
             return 0
         }
         for lhsStart in existingStart..<existing.count {
+            let overlapLength = existing.count - lhsStart
+            let allowedMismatchCount = overlapLength >= 6 ? 1 : 0
             for rhsStart in 0..<nextStartLimit {
-                var run = 0
-                while lhsStart + run < existing.count,
-                      rhsStart + run < next.count,
-                      !existing[lhsStart + run].isEmpty,
-                      existing[lhsStart + run] == next[rhsStart + run] {
-                    run += 1
+                guard rhsStart + overlapLength <= next.count else {
+                    continue
                 }
-                if lhsStart + run == existing.count,
-                   run >= 4,
-                   run > bestRun {
-                    bestRun = run
-                    bestDropCount = rhsStart + run
+                var mismatchCount = 0
+                var matchedCount = 0
+                for offset in 0..<overlapLength {
+                    let lhs = existing[lhsStart + offset]
+                    let rhs = next[rhsStart + offset]
+                    if !lhs.isEmpty, lhs == rhs {
+                        matchedCount += 1
+                    } else {
+                        mismatchCount += 1
+                    }
+                    if mismatchCount > allowedMismatchCount {
+                        break
+                    }
+                }
+                if matchedCount >= 4,
+                   mismatchCount <= allowedMismatchCount,
+                   overlapLength > bestRun {
+                    bestRun = overlapLength
+                    bestDropCount = rhsStart + overlapLength
                 }
             }
         }

@@ -115,6 +115,32 @@ final class StreamingAudioTranscriptionSessionTests: XCTestCase {
         )
     }
 
+    func testMergesLiveOverlapWhenFinalWordIsDecodedDifferently() {
+        let existing = "Let's drive an end-to-end test from here. See whether it actually works as we anticipate."
+        let next = "see whether it actually works as we participate. Then verify the result."
+
+        XCTAssertEqual(
+            StreamingAudioTranscriptionSession.mergeOverlappingTranscripts([
+                (text: existing, hasOverlap: false),
+                (text: next, hasOverlap: true)
+            ]),
+            "Let's drive an end-to-end test from here. See whether it actually works as we anticipate. Then verify the result."
+        )
+    }
+
+    func testDoesNotFuzzyMergeShortOverlap() {
+        let existing = "Please go home now."
+        let next = "go home later."
+
+        XCTAssertEqual(
+            StreamingAudioTranscriptionSession.mergeOverlappingTranscripts([
+                (text: existing, hasOverlap: false),
+                (text: next, hasOverlap: true)
+            ]),
+            "Please go home now. go home later."
+        )
+    }
+
     func testDoesNotDeduplicateWordsWhenChunksDoNotOverlap() async throws {
         let transcriber = StubAudioTranscriber(outputs: [
             "chunk-0000.wav": "go",
