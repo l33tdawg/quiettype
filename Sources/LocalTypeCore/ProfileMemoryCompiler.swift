@@ -141,6 +141,7 @@ public enum ProfileMemoryCompiler {
         forms.append(contentsOf: custom[term] ?? [])
 
         let splitCamel = term
+            .replacingOccurrences(of: #"[-.]"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: #"([a-z])([A-Z])"#, with: "$1 $2", options: .regularExpression)
             .replacingOccurrences(of: #"([A-Za-z])([0-9])"#, with: "$1 $2", options: .regularExpression)
             .replacingOccurrences(of: #"([0-9])([A-Za-z])"#, with: "$1 $2", options: .regularExpression)

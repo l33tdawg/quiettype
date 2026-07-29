@@ -7701,7 +7701,7 @@ private final class SageGitHubInstaller {
 
 private extension QuietTypeReleaseVersion {
     static func current() -> QuietTypeReleaseVersion {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.11"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.12"
         let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
         let releaseLabel = Bundle.main.object(forInfoDictionaryKey: "QuietTypeReleaseLabel") as? String
         return fromBundleMetadata(version: version, build: build, releaseLabel: releaseLabel)
@@ -8104,7 +8104,11 @@ final class MenuBarModel: ObservableObject {
     @Published var teachingSampleStatus = "Record a sample so QuietType can hear the word."
     @Published var teachingInputLevel = 0.0
     @Published var teachingDetectedForms: [String] = []
-    @Published var localMemories: [DictationMemory] = []
+    @Published var localMemories: [DictationMemory] = [] {
+        didSet {
+            rebuildRememberedVocabulary()
+        }
+    }
     @Published var memoryFilter = MemoryFilter.all
     @Published var didSaveTeachingMemory = false
     @Published var voiceNoteQuery = ""
@@ -8155,6 +8159,8 @@ final class MenuBarModel: ObservableObject {
     private let updateService = QuietTypeGitHubUpdater()
     private let sageInstaller = SageGitHubInstaller()
     private var sageDirectClient: SageDirectClient?
+    private var sageRememberedTexts: [String] = []
+    private var rememberedVocabulary: [DictationMemory] = []
     private var sageServeProcess: Process?
     private var whisperKitSupervisor: WhisperKitServerSupervisor?
     private var nativeInferencePrewarmed = false
@@ -10369,7 +10375,8 @@ final class MenuBarModel: ObservableObject {
     private func refreshDictionaryMemoriesPreservingRegistration(using client: SageDirectClient) async {
         do {
             await flushPendingSageTranscriptNotes(using: client)
-            sageMemories = try await loadSageMemories(using: client, limit: Self.reviewMemoryLimit)
+            let memories = try await loadSageMemories(using: client, limit: Self.reviewMemoryLimit)
+            cacheRecalledSageMemories(memories)
             if lastError?.hasPrefix("SAGE memory") == true || lastError?.hasPrefix("SAGE setup") == true {
                 lastError = nil
             }
@@ -10397,6 +10404,23 @@ final class MenuBarModel: ObservableObject {
             }
         }
         return Array(memories.filter { !hiddenReviewMemoryIDs.contains($0.id) }.prefix(limit))
+    }
+
+    private func cacheRecalledSageMemories(_ memories: [SageMemoryRecord]) {
+        sageMemories = memories
+        sageRememberedTexts = memories.compactMap { memory in
+            memory.content
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfBlank
+        }
+        rebuildRememberedVocabulary()
+    }
+
+    private func rebuildRememberedVocabulary() {
+        let localRememberedTexts = SageDictationVocabulary.rememberedTexts(from: localMemories)
+        rememberedVocabulary = SageDictationVocabulary.memories(
+            fromRemembered: sageRememberedTexts + localRememberedTexts
+        )
     }
 
     private func hideReviewMemoryID(_ memoryID: String) {
@@ -10593,7 +10617,8 @@ final class MenuBarModel: ObservableObject {
 
         do {
             await flushPendingSageTranscriptNotes(using: sageDirectClient)
-            sageMemories = try await loadSageMemories(using: sageDirectClient, limit: Self.reviewMemoryLimit)
+            let memories = try await loadSageMemories(using: sageDirectClient, limit: Self.reviewMemoryLimit)
+            cacheRecalledSageMemories(memories)
             if lastError?.hasPrefix("SAGE memory") == true {
                 lastError = nil
             }
@@ -12780,7 +12805,10 @@ final class MenuBarModel: ObservableObject {
     }
 
     private func currentDictationProfile() -> DictationProfile {
-        var profile = ProfileMemoryCompiler.enrich(.development, with: localMemories)
+        var profile = ProfileMemoryCompiler.enrich(
+            .development,
+            with: localMemories + rememberedVocabulary
+        )
         profile.spellingPreference = spellingPreference
         profile.profanityFilterEnabled = profanityFilterEnabled
         return profile
