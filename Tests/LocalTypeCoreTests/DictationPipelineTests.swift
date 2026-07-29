@@ -552,6 +552,46 @@ final class DictationPipelineTests: XCTestCase {
         )
     }
 
+    func testShoppingListPhraseSeparatesLeadingProseFromFollowingItems() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Terminal", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(
+                text: "Okay this is a test before the item names Venteract TII Najwa Amy Noreen. Shopping list iPad Apple Microsoft QuietType SAGE",
+                isFinal: true
+            ),
+            context: context
+        )
+
+        XCTAssertEqual(
+            result.text,
+            """
+            Okay this is a test before the item names Venteract TII Najwa Amy Noreen.
+
+            We need:
+            - IPad
+            - Apple
+            - Microsoft
+            - QuietType
+            - SAGE
+            """
+        )
+    }
+
+    func testLoneListWordRemainsProse() async throws {
+        let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
+        let context = AppContext(appName: "Terminal", profile: .balanced)
+
+        let result = try await pipeline.processStableSegment(
+            StableSegment(text: "list", isFinal: true),
+            context: context
+        )
+
+        XCTAssertEqual(result.text, "List.")
+        XCTAssertFalse(result.text.contains("- "))
+    }
+
     func testTreatsSpokenNewLineAsListDelimiter() async throws {
         let pipeline = DictationPipeline(profile: .development, semanticEditor: RuleBasedSemanticEditor())
         let context = AppContext(appName: "Notes", profile: .notes)

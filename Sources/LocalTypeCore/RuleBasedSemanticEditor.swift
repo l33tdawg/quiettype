@@ -742,6 +742,23 @@ public struct RuleBasedSemanticEditor: SemanticEditor {
             return (nil, nil)
         }
 
+        if let shoppingListRange = text.range(
+            of: #"\bshopping\s+list\b"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) {
+            let directiveAndIntro = String(text[..<shoppingListRange.upperBound])
+            let rawIntro = stripListLeadIn(from: directiveAndIntro, numbered: false)
+            let rawItems = String(text[shoppingListRange.upperBound...])
+            let intro = cleanEmbeddedIntro(rawIntro)
+            let itemsText = trimFillerTail(rawItems)
+
+            // "Shopping list" is an explicit boundary: prose before it remains
+            // prose, and only speech after it is eligible to become list items.
+            // Keep an empty items string non-nil so a trailing phrase cannot
+            // fall back to splitting all of the preceding prose into bullets.
+            return (intro.isEmpty ? nil : intro, itemsText)
+        }
+
         let itemStartPatterns = [
             #"\b(?:i|we)\s+need(?:\s+to\s+(?:get|buy|order))?\b"#,
             #"\b(?:need\s+to\s+(?:get|buy|order)|should\s+get|have\s+to\s+get|pick\s+up)\b"#
